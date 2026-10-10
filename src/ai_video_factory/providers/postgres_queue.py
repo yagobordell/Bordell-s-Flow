@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -160,7 +161,7 @@ class PostgresJobQueueClient(JobQueueClient):
             row = connection.execute(
                 """
                 SELECT job_id, request_sha256, request, status, attempt_count, lease_expires_at,
-                       result, last_error, run_id, run_job_count
+                       result, last_error, run_id, run_job_count, r2_pruned_at
                 FROM gpu.jobs
                 WHERE job_id = %s
                 FOR UPDATE
@@ -225,6 +226,38 @@ class PostgresJobQueueClient(JobQueueClient):
                     "run_job_count": legacy_run_job_count,
                 }
             else:
+                # R2 output bundles are disposable after a verified final MP4.
+                # Preserve the succeeded row/timestamps for predictive autoscaling,
+                # but explicitly reopen pruned requests if regeneration is needed.
+                if row.get("r2_pruned_at") is not None:
+                    connection.execute(
+                        """
+                        UPDATE gpu.jobs
+                        SET status = 'pending',
+                            attempt_count = 0,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            result = NULL,
+                            last_error = NULL,
+                            started_at = NULL,
+                            finished_at = NULL,
+                            r2_pruned_at = NULL,
+                            updated_at = now()
+                        WHERE job_id = %s
+                          AND request_sha256 = %s
+                          AND r2_pruned_at IS NOT NULL
+                        """,
+                        (request.job_id, request_sha256),
+                    )
+                    row = {
+                        **row,
+                        "status": "pending",
+                        "attempt_count": 0,
+                        "lease_expires_at": None,
+                        "result": None,
+                        "last_error": None,
+                        "r2_pruned_at": None,
+                    }
                 existing_run_id = row.get("run_id")
                 if run_id is not None and existing_run_id is None:
                     connection.execute(
@@ -493,6 +526,84 @@ class PostgresJobQueueClient(JobQueueClient):
                 """,
                 (transport_job_id,),
             )
+
+    @contextmanager
+    def prune_scoped_video_run(
+        self, scope: str, required_job_ids: Sequence[str],
+    ) -> Iterator[list[str]]:
+        """Lock and retire every terminal, isolated GPU request in a video run.
+
+        All jobs are validated before deleting a single R2 object. In-flight
+        jobs prevent pruning. The queue cache rows are removed only after R2
+        deletion succeeds, so fresh requests never replay an evicted success.
+        """
+        if len(scope) != 24 or any(char not in "0123456789abcdef" for char in scope):
+            raise ValueError("Invalid R2 run scope")
+        required = set(required_job_ids)
+        if not required:
+            raise ValueError("No required LTX jobs for cleanup")
+        suffix = f"-r{scope}"
+        with self._pool.connection() as connection, connection.transaction():
+            rows = connection.execute(
+                """
+                SELECT job_id, status, request
+                FROM gpu.jobs
+                WHERE job_id LIKE %s
+                ORDER BY job_id
+                FOR UPDATE
+                """,
+                (f"%{suffix}",),
+            ).fetchall()
+            found = {str(row["job_id"]) for row in rows}
+            if not required.issubset(found):
+                raise RuntimeError("R2 cleanup requires all completed LTX queue rows")
+            for row in rows:
+                job_id = str(row["job_id"])
+                request = row["request"]
+                prefix = f"jobs/{job_id}/"
+                if row["status"] not in {"succeeded", "failed", "cancelled"}:
+                    raise RuntimeError("R2 cleanup deferred: GPU job is not terminal")
+                if not isinstance(request, dict):
+                    raise RuntimeError("R2 cleanup requires a valid immutable request")
+                inputs = request.get("inputs", [])
+                output = request.get("output")
+                sidecars = request.get("sidecar_outputs", {})
+                if (
+                    not isinstance(inputs, list)
+                    or not all(
+                        isinstance(item, dict)
+                        and (
+                            (item.get("name") == "reference_audio"
+                             and isinstance(item.get("key"), str)
+                             and bool(item["key"]))
+                            or str(item.get("key", "")).startswith(prefix + "inputs/")
+                        )
+                        for item in inputs
+                    )
+                    or not isinstance(output, dict)
+                    or not str(output.get("key", "")).startswith(prefix)
+                    or not isinstance(sidecars, dict)
+                    or not all(
+                        isinstance(item, dict)
+                        and str(item.get("key", "")).startswith(prefix)
+                        for item in sidecars.values()
+                    )
+                ):
+                    raise RuntimeError(f"R2 cleanup refused an unscoped input: {job_id}")
+            ids = sorted(found)
+            yield ids
+            result = connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET r2_pruned_at = now(),
+                    updated_at = now()
+                WHERE job_id = ANY(%s)
+                  AND status IN ('succeeded', 'failed', 'cancelled')
+                """,
+                (ids,),
+            )
+            if result.rowcount != len(ids):
+                raise RuntimeError("R2 cleanup cache-pruning marker was incomplete")
 
     def close(self) -> None:
         self._pool.close()

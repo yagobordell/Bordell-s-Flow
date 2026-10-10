@@ -397,9 +397,11 @@ def test_upscaler_524_without_output_preserves_r2_objects(
 
 
 
-def test_upscaler_retries_transient_503_with_same_request(
+@pytest.mark.parametrize("gateway_status", [502, 503])
+def test_upscaler_retries_transient_gateway_error_with_same_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    gateway_status: int,
 ) -> None:
     storage = FakeStorage()
     output_bytes = _png(192, 108)
@@ -419,7 +421,9 @@ def test_upscaler_retries_transient_503_with_same_request(
             del url, headers, timeout_seconds
             self.calls.append(payload)
             if len(self.calls) == 1:
-                raise ImageUpscalerError("HTTP 503", status_code=503)
+                raise ImageUpscalerError(
+                    f"HTTP {gateway_status}", status_code=gateway_status,
+                )
             request = payload["request"]
             assert isinstance(request, Mapping)
             output = request["output"]
@@ -471,3 +475,38 @@ def test_upscaler_retries_transient_503_with_same_request(
     assert len(runtime.calls) == 2
     assert runtime.calls[0] == runtime.calls[1]
     assert storage.objects == {}
+
+def test_upscaler_recovers_previous_gateway_result_from_r2_without_post(
+    tmp_path: Path,
+) -> None:
+    storage = FakeStorage()
+    class InitialFailure:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post_json(self, *_args, **_kwargs):
+            self.calls += 1
+            raise ImageUpscalerError("gateway transport lost")
+
+    runtime = InitialFailure()
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="salad-secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        http_client=runtime,
+    )
+    source = _png(64, 36)
+    with pytest.raises(ImageUpscalerError, match="transport lost"):
+        provider.upscale(source, target_width=192, target_height=108)
+    assert runtime.calls == 1
+
+    output_key = next(key for key in storage.objects if key.endswith("/output.png") is False)
+    output_key = output_key.rsplit("/", 1)[0] + "/output.png"
+    expected = _png(192, 108)
+    storage.objects[output_key] = expected
+    assert provider.upscale(source, target_width=192, target_height=108) == expected
+    assert runtime.calls == 1
+    assert storage.objects == {}
+
+

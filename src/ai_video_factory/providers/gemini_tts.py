@@ -33,11 +33,6 @@ _KNOWN_PREBUILT_VOICES = frozenset({
 })
 
 _VERBATIM = "The text is the verbatim transcript. Do not add, omit, or rewrite words."
-_PROFESSIONAL_STYLE_PREFIX = (
-    "Respect the next style indications while keeping a normal voice speed, "
-    "not paused, its for a youtube video:"
-)
-
 
 class GeminiTtsError(RuntimeError):
     """The Gemini response or its audio did not satisfy the TTS contract."""
@@ -70,14 +65,14 @@ def _build_style(instructions: str, speed: float) -> str:
 def validate_gemini_voice_name(value: str) -> str:
     """Accept legacy provider IDs and exact Google Studio display names.
 
-    Names may contain ordinary spaces, e.g. "Uncle Enzo 3". Never silently
+    Names may contain spaces and periods, e.g. "Enzo m. 3". Never silently
     normalize internal whitespace: Google resolves the literal selected name.
     """
     if (
         not isinstance(value, str) or not 2 <= len(value) <= 256
         or value != value.strip() or not value[0].isalnum()
         or not value[-1].isalnum()
-        or any(not (char.isalnum() or char in " -_") for char in value)
+        or any(not (char.isalnum() or char in " -_.") for char in value)
         or "  " in value
     ):
         raise ValueError("Gemini voice must be a valid ID or exact Studio display name")
@@ -216,9 +211,7 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
             raise ValueError("Gemini directed TTS requires non-empty transcript turns")
         if not isinstance(style, str) or not style.strip():
             raise ValueError("Gemini directed TTS requires a concise style on each turn")
-        rendered_style = (
-            _PROFESSIONAL_STYLE_PREFIX + "\n" + style.strip() + "\n" + _VERBATIM
-        )
+        rendered_style = style.strip() + "\n" + _VERBATIM
         if len(rendered_style.encode("utf-8")) > (6000 if len(turns) == 1 else 1500):
             raise ValueError("Gemini directed TTS requires a concise style on each turn")
         parts.append({

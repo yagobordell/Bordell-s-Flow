@@ -71,6 +71,44 @@ def _provider_without_rate_limit_wait(responses: FakeResponses) -> OpenAIProvide
     )
 
 
+def test_metered_structured_input_accepts_multiple_ordered_images() -> None:
+    expected = StructuredResult(title="Demo", hook="Hook", narration="Speech.")
+    responses = FakeResponses(expected)
+    provider = _provider(responses)
+
+    parsed, _raw = asyncio.run(
+        provider.generate_structured_with_response(
+            model="test-model",
+            instructions="Inspect both frames",
+            input_text="first=1A, second=1B",
+            input_image_urls=[
+                "data:image/png;base64,Zmlyc3Q=",
+                "data:image/png;base64,c2Vjb25k",
+            ],
+            output_type=StructuredResult,
+        )
+    )
+    assert parsed == expected
+    assert responses.last_call["input"] == [{
+        "role": "user",
+        "content": [
+            {"type": "input_text", "text": "first=1A, second=1B"},
+            {"type": "input_image", "image_url": "data:image/png;base64,Zmlyc3Q="},
+            {"type": "input_image", "image_url": "data:image/png;base64,c2Vjb25k"},
+        ],
+    }]
+
+    with pytest.raises(ValueError, match="either one image"):
+        asyncio.run(
+            provider.generate_structured_with_response(
+                model="test-model", instructions="prompt",
+                input_text="text", output_type=StructuredResult,
+                input_image_url="data:image/png;base64,Zmlyc3Q=",
+                input_image_urls=["data:image/png;base64,c2Vjb25k"],
+            )
+        )
+
+
 def test_openai_provider_uses_high_reasoning_and_flex() -> None:
     expected = StructuredResult(title="Demo", hook="Hook", narration="Hook. Narración.")
     responses = FakeResponses(expected)

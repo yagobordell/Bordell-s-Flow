@@ -42,7 +42,8 @@ _PROFESSIONAL_IMAGE_PREFIX = (
     "not luxury editorial."
 )
 _NUMBERED_PROFESSIONAL_PROMPT = re.compile(r"^([1-9]\.\s+)(.+)$", flags=re.DOTALL)
-_GRID_IMAGE_QUALITY = "medium"
+_GRID_IMAGE_QUALITY = "high"
+_DEFAULT_MAX_PARALLEL_IMAGES = 6
 # Tolerate spaces, punctuation after the marker, case and line breaks.
 _FOR_CONTEXT = re.compile(r"\(\s*for\s+context\b", flags=re.IGNORECASE)
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
@@ -107,11 +108,10 @@ class ImageOptions:
 
 
 def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
-    """Use medium only for grids or a beat's own (For context...) marker."""
+    """Use high for grids, medium for context-marked standalone images."""
     return (
-        _GRID_IMAGE_QUALITY
-        if job.get("grid") is not None
-        or _FOR_CONTEXT.search(job["description"]) is not None
+        _GRID_IMAGE_QUALITY if job.get("grid") is not None
+        else "medium" if _FOR_CONTEXT.search(job["description"]) is not None
         else options.quality
     )
 
@@ -237,6 +237,14 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
             "description": description,
             **({"generation": generation} if generation is not None else {}),
             **(
+                {"cta_group_id": beat["cta_group_id"]}
+                if beat.get("cta_group_id") is not None else {}
+            ),
+            **(
+                {"cta_reference_sources": beat["cta_reference_sources"]}
+                if beat.get("cta_group_id") is not None else {}
+            ),
+            **(
                 {
                     "reference": beat["reference"],
                     "visual_style": visual_style,
@@ -322,6 +330,38 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
             )
     return result
 
+def _ebook_reference(output: Path, plan: dict[str, Any]) -> tuple[str, str] | None:
+    record = plan.get("ebook_reference")
+    if record is None:
+        return None
+    if not isinstance(record, dict) or record.get("file") != "ebook/cover_1.png":
+        raise ImageGenerationError("Invalid pinned professional ebook reference")
+    file = output / "ebook" / "cover_1.png"
+    if file.is_symlink() or not file.is_file():
+        raise ImageGenerationError("Missing or linked professional ebook cover")
+    data = file.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != record.get("sha256"):
+        raise ImageGenerationError("Professional ebook cover differs from pinned run")
+    with Image.open(BytesIO(data)) as image:
+        if image.format != "PNG":
+            raise ImageGenerationError("Professional ebook reference must be PNG")
+        image.verify()
+    return digest, "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+
+
+def _job_reference_sources(job: dict[str, Any]) -> list[str]:
+    panels = job.get("panels", [job])
+    required: set[str] = set()
+    for panel in panels:
+        selections = panel.get("cta_reference_sources")
+        if selections is not None:
+            required.update(selections)
+        elif panel.get("reference"):
+            required.add("presenter")
+    return [source for source in ("presenter", "ebook") if source in required]
+
+
 def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
     identity = {
         "beat_id": job["beat_id"],
@@ -340,6 +380,9 @@ def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
         )
         identity["image_endpoint"] = "/v1/images/edits"
         identity["avatar_reference_sha256"] = job["avatar_reference_sha256"]
+    if job.get("cta_reference_hashes"):
+        identity["image_endpoint"] = "/v1/images/edits"
+        identity["cta_reference_hashes"] = job["cta_reference_hashes"]
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -410,10 +453,18 @@ def _one_image(
     api_key: str | None,
     direct_client: OpenAIImageClient | None,
     avatar_image_url: str | None,
+    ebook_image_url: str | None = None,
 ) -> dict[str, Any]:
     reference_url = (
         avatar_image_url if job.get("avatar_reference_sha256") is not None else None
     )
+    cta_sources = _job_reference_sources(job)
+    ordered_urls = [
+        avatar_image_url if source == "presenter" else ebook_image_url
+        for source in cta_sources
+    ] if job.get("cta_reference_hashes") else []
+    if ordered_urls and any(url is None for url in ordered_urls):
+        raise ImageGenerationError("Missing selected CTA reference image")
     folder, state_path, image_path = _job_paths(output, job)
     if any(path.is_symlink() for path in (
         output / "images", folder, state_path, image_path
@@ -489,7 +540,8 @@ def _one_image(
     try:
         kwargs: dict[str, Any] = {
             "prompt": effective_image_prompt(
-                job["description"], avatar_reference=reference_url is not None,
+                job["description"],
+                avatar_reference=reference_url is not None or bool(ordered_urls),
                 visual_style=job.get("visual_style", "casero"),
             ),
             "model": options.model_id,
@@ -498,7 +550,21 @@ def _one_image(
             "output_format": "png",
             "destination": image_path,
         }
-        if reference_url is not None:
+        if ordered_urls:
+            ordered_labels = ", ".join(
+                f"reference image {i}: {source}"
+                for i, source in enumerate(cta_sources, start=1)
+            )
+            kwargs["prompt"] += (
+                "\n\nAttached references in this exact order: "
+                + ordered_labels
+                + ". Preserve the recognizable presenter's identity whenever"
+                " presenter is selected. Reproduce the actual ebook cover"
+                " artwork and lettering faithfully whenever ebook is selected."
+                " Do not invent a QR code: a real QR is composited later."
+            )
+            kwargs["reference_image_urls"] = ordered_urls
+        elif reference_url is not None:
             kwargs["reference_image_url"] = reference_url
         generated = direct_client.generate_png(**kwargs)
     except OpenAIImageRequestRejected as exc:
@@ -537,6 +603,7 @@ def generate_b2_images(
     except GridPlanError as exc:
         raise ImageGenerationError(str(exc)) from exc
     reference = _avatar_reference(output, plan, described)
+    ebook_reference = _ebook_reference(output, plan)
     visual_style = plan.get("visual_style", "casero")
     if reference is not None:
         digest, _url = reference
@@ -550,6 +617,26 @@ def generate_b2_images(
             else job
             for job in jobs
         ]
+
+    # CTA references are selected per final image job, not by the old B2
+    # boolean, which remains unchanged for B2.1/B3.
+    cta_jobs = []
+    for job in jobs:
+        sources = _job_reference_sources(job)
+        if not any(
+            panel.get("cta_reference_sources") is not None
+            for panel in job.get("panels", [job])
+        ):
+            cta_jobs.append(job)
+            continue
+        hashes = []
+        for source in sources:
+            asset = reference if source == "presenter" else ebook_reference
+            if asset is None:
+                raise ImageGenerationError(f"Missing CTA {source} reference")
+            hashes.append([source, asset[0]])
+        cta_jobs.append({**job, "cta_reference_hashes": hashes})
+    jobs = cta_jobs
 
     planned_grid_states: set[Path] = set()
     for job in jobs:
@@ -591,6 +678,13 @@ def generate_b2_images(
             )
     if jobs and direct_client is None and not api_key:
         raise ImageGenerationError("OPENAI_API_KEY is required for official GPT images")
+    # One real client is shared by all workers so its sliding-window quota
+    # protects the whole batch rather than resetting for each image job.
+    if jobs and direct_client is None:
+        direct_client = OpenAIImageClient(api_key)
+    worker_count = min(
+        options.max_parallel_images or _DEFAULT_MAX_PARALLEL_IMAGES, len(jobs)
+    ) if jobs else 0
 
     manifest_path = output / "images" / "manifest.json"
     manifest: dict[str, Any] = {
@@ -600,7 +694,7 @@ def generate_b2_images(
         "size": options.size,
         "quality": options.quality,
         "grid_quality": _GRID_IMAGE_QUALITY,
-        "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
+        "max_parallel_images": worker_count,
         "status": "running",
         "total_described_beats": len({
             (item["block_id"], item["beat_id"]) for item in described
@@ -616,13 +710,15 @@ def generate_b2_images(
     failures: list[tuple[str, Exception]] = []
     try:
         if jobs:
-            worker_count = min(options.max_parallel_images or len(jobs), len(jobs))
             with ThreadPoolExecutor(max_workers=worker_count) as pool:
                 futures = {
                     pool.submit(
                         _one_image, job, output, options, api_key=api_key,
                         direct_client=direct_client,
                         avatar_image_url=reference[1] if reference is not None else None,
+                        ebook_image_url=(
+                            ebook_reference[1] if ebook_reference is not None else None
+                        ),
                     ): (i, job.get("asset_id", job["beat_id"]))
                     for i, job in enumerate(jobs)
                 }

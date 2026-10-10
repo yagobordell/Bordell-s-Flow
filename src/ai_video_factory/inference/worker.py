@@ -33,6 +33,7 @@ from .gpu_failures import (
     is_fatal_gpu_context_failure,
     is_retryable_gpu_failure,
 )
+from .ltx_telemetry import build_ltx_job_telemetry
 from .ports import (
     ClaimDecision,
     JobRepository,
@@ -131,6 +132,7 @@ class InferenceWorker:
         self.gpu_retry_cooldown_seconds = gpu_retry_cooldown_seconds
         self._execution_lock = threading.Lock()
         self._fatal_gpu_context = threading.Event()
+        self._completed_telemetry: dict[str, object] | None = None
 
     def prepare(self) -> None:
         self.runners.prepare()
@@ -199,6 +201,7 @@ class InferenceWorker:
             claim.attempt_count,
             self.worker_id,
         )
+        self._completed_telemetry = None
         try:
             response = self._execute_claimed(request, request_sha256, claim.attempt_count)
         except LeaseLostError:
@@ -288,6 +291,15 @@ class InferenceWorker:
             owner=self.worker_id,
             result=response.model_dump(mode="json"),
         )
+        telemetry = self._completed_telemetry
+        self._completed_telemetry = None
+        recorder = getattr(self.repository, "record_ltx_telemetry", None)
+        if telemetry is not None and callable(recorder):
+            try:
+                recorder(telemetry)
+            except Exception:
+                # Observability must never turn a committed MP4 into a failed job.
+                logger.exception("LTX_TELEMETRY_PERSIST_FAILED job_id=%s", request.job_id)
         logger.info(
             "INFERENCE_JOB_SUCCEEDED task=%s job_id=%s attempt=%d replayed=%s",
             request.task,
@@ -556,12 +568,21 @@ class InferenceWorker:
                         diagnostic_checkpoint("task.run.done")
                 else:
                     artifact = runner.run(request, inputs, work_dir)
+                task_seconds = time.monotonic() - task_started
+                self._completed_telemetry = build_ltx_job_telemetry(
+                    request,
+                    artifact.telemetry,
+                    worker_id=self.worker_id,
+                    instance_id=self.salad_instance_id,
+                    attempt_count=attempt_count,
+                    task_seconds=task_seconds,
+                )
                 logger.info(
                     "INFERENCE_JOB_TASK_DONE task=%s job_id=%s attempt=%d task_seconds=%.3f",
                     request.task,
                     request.job_id,
                     attempt_count,
-                    time.monotonic() - task_started,
+                    task_seconds,
                 )
                 self._validate_local_artifact(artifact.path, work_dir)
                 if artifact.content_type != request.output.content_type:

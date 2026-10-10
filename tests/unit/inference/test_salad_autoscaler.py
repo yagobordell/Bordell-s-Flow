@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -10,6 +11,7 @@ from ai_video_factory.inference.salad_autoscaler import (
     PredictiveAutoscalerConfig,
     PredictiveSaladAutoscaler,
     allocate_project_quota,
+    apply_downscale_hysteresis,
     build_global_demands,
     load_predictive_autoscaler_config,
     next_reconcile_delay_seconds,
@@ -194,19 +196,23 @@ def _config(
     *,
     project_max_replicas: int = 30,
     stage_max_replicas: int = 4,
+    target_drain_seconds: float = 600.0,
+    target_utilization: float = 1.0,
     downscale_stable_polls: int = 1,
     zero_demand_stable_polls: int = 1,
     nonconvergence_failure_polls: int = 4,
     provider_pending_max_seconds: float = 7200.0,
     stage_cold_start_seconds: dict[str, float] | None = None,
     jobs_per_replica: dict[str, int] | None = None,
+    stage_target_drain_seconds: dict[str, float] | None = None,
+    downscale_headroom_ratio: float = 0.90,
 ) -> PredictiveAutoscalerConfig:
     return PredictiveAutoscalerConfig(
         enabled=True,
         project_max_replicas=project_max_replicas,
-        target_drain_seconds=600.0,
+        target_drain_seconds=target_drain_seconds,
         cold_start_seconds=0.0,
-        target_utilization=1.0,
+        target_utilization=target_utilization,
         runtime_percentile=0.75,
         runtime_history_limit=200,
         downscale_stable_polls=downscale_stable_polls,
@@ -220,6 +226,8 @@ def _config(
         fallback_runtime_seconds={stage: 60.0 for stage in stages},
         stage_cold_start_seconds=stage_cold_start_seconds,
         stage_jobs_per_replica=jobs_per_replica,
+        stage_target_drain_seconds=stage_target_drain_seconds,
+        downscale_headroom_ratio=downscale_headroom_ratio,
         drain_grace_seconds=0.0,
         drain_ttl_seconds=120.0,
         provider_pending_max_seconds=provider_pending_max_seconds,
@@ -371,47 +379,165 @@ def test_project_quota_is_shared_across_global_stage_demands() -> None:
     assert all(value <= demands[stage].ideal_replicas for stage, value in allocation.items())
 
 
-
 @pytest.mark.parametrize(
-    ("clip_count", "expected_replicas"),
+    ("clip_count", "runtime_seconds", "expected_replicas"),
     [
-        (0, 0),
-        (1, 1),
-        (30, 1),
-        (31, 2),
-        (60, 2),
-        (61, 3),
-        (90, 3),
-        (91, 4),
-        (120, 4),
-        (121, 4),
+        (0, 235.0, 0),
+        (1, 235.0, 1),
+        (13, 235.0, 1),
+        (14, 235.0, 2),
+        (52, 235.0, 4),
     ],
 )
-def test_ltx_clip_backlog_scales_one_replica_per_thirty_jobs(
+def test_ltx_capacity_scales_from_remaining_gpu_work(
     clip_count: int,
+    runtime_seconds: float,
     expected_replicas: int,
 ) -> None:
     stage = "ltx25_i2v"
     config = _config(
         (stage,),
-        stage_max_replicas=4,
-        jobs_per_replica={stage: 30},
+        stage_max_replicas=6,
+        target_drain_seconds=3600.0,
+        target_utilization=0.85,
+        stage_target_drain_seconds={stage: 3600.0},
     )
     demand = build_global_demands(
         rows_by_stage={stage: _pending_rows(clip_count)},
-        runtime_by_stage={stage: 999.0},
+        runtime_by_stage={stage: runtime_seconds},
         config=config,
-        now=datetime(2026, 9, 30, tzinfo=UTC),
+        now=datetime(2026, 10, 8, tzinfo=UTC),
     )[stage]
 
     assert demand.ideal_replicas == expected_replicas
-    assert demand.jobs_per_replica == 30
-    assert demand.job_count_target == (
-        (clip_count + 29) // 30 if clip_count else 0
+    assert demand.jobs_per_replica is None
+    assert demand.job_count_target is None
+    assert demand.target_drain_seconds == 3600.0
+    assert demand.effective_drain_seconds == 3600.0
+
+
+def test_reference_test07_workload_requests_about_four_i2v_and_three_a2v() -> None:
+    stages = ("ltx25_i2v", "ltx25")
+    config = _config(
+        stages,
+        project_max_replicas=7,
+        stage_max_replicas=6,
+        target_drain_seconds=3600.0,
+        target_utilization=0.85,
+        stage_target_drain_seconds={stage: 3600.0 for stage in stages},
+    )
+    demands = build_global_demands(
+        rows_by_stage={
+            "ltx25_i2v": _pending_rows(52),
+            "ltx25": _pending_rows(32),
+        },
+        runtime_by_stage={
+            "ltx25_i2v": 235.0,
+            "ltx25": 279.0,
+        },
+        config=config,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
     )
 
+    assert demands["ltx25_i2v"].remaining_work_seconds == pytest.approx(12_220.0)
+    assert demands["ltx25"].remaining_work_seconds == pytest.approx(8_928.0)
+    assert demands["ltx25_i2v"].ideal_replicas == 4
+    assert demands["ltx25"].ideal_replicas == 3
+    assert allocate_project_quota(
+        demands=demands,
+        project_max_replicas=config.project_max_replicas,
+    ) == {"ltx25_i2v": 4, "ltx25": 3}
 
-def test_ltx_active_worker_drains_before_partial_downscale() -> None:
+
+def test_ltx_29_a2v_jobs_do_not_collapse_two_gpus_to_one() -> None:
+    stage = "ltx25"
+    config = _config(
+        (stage,),
+        stage_max_replicas=4,
+        target_drain_seconds=3600.0,
+        target_utilization=0.85,
+        stage_target_drain_seconds={stage: 3600.0},
+    )
+    demand = build_global_demands(
+        rows_by_stage={stage: _pending_rows(29)},
+        runtime_by_stage={stage: 279.0},
+        config=config,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
+    )[stage]
+
+    assert demand.remaining_work_seconds == pytest.approx(8_091.0)
+    assert demand.ideal_replicas == 3
+
+
+def test_ltx_downscale_hysteresis_requires_eta_headroom() -> None:
+    stage = "ltx25"
+    config = _config(
+        (stage,),
+        stage_max_replicas=4,
+        target_drain_seconds=600.0,
+        target_utilization=1.0,
+        stage_target_drain_seconds={stage: 600.0},
+        downscale_headroom_ratio=0.90,
+    )
+    near_boundary = build_global_demands(
+        rows_by_stage={stage: _pending_rows(18)},
+        runtime_by_stage={stage: 100.0},
+        config=config,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
+    )
+    assert near_boundary[stage].ideal_replicas == 3
+    assert apply_downscale_hysteresis(
+        demands=near_boundary,
+        targets={stage: 3},
+        current_replicas={stage: 4},
+        config=config,
+    )[stage] == 4
+
+    safely_inside = build_global_demands(
+        rows_by_stage={stage: _pending_rows(16)},
+        runtime_by_stage={stage: 100.0},
+        config=config,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
+    )
+    assert safely_inside[stage].ideal_replicas == 3
+    assert apply_downscale_hysteresis(
+        demands=safely_inside,
+        targets={stage: 3},
+        current_replicas={stage: 4},
+        config=config,
+    )[stage] == 3
+
+
+def test_project_cap_prioritizes_ltx_pools_by_remaining_eta() -> None:
+    stages = ("ltx25_i2v", "ltx25")
+    config = _config(
+        stages,
+        project_max_replicas=5,
+        stage_max_replicas=6,
+        target_drain_seconds=3600.0,
+        target_utilization=0.85,
+        stage_target_drain_seconds={stage: 3600.0 for stage in stages},
+    )
+    demands = build_global_demands(
+        rows_by_stage={
+            "ltx25_i2v": _pending_rows(52),
+            "ltx25": _pending_rows(32),
+        },
+        runtime_by_stage={
+            "ltx25_i2v": 235.0,
+            "ltx25": 279.0,
+        },
+        config=config,
+        now=datetime(2026, 10, 8, tzinfo=UTC),
+    )
+
+    assert allocate_project_quota(
+        demands=demands,
+        project_max_replicas=5,
+    ) == {"ltx25_i2v": 3, "ltx25": 2}
+
+
+def test_ltx_running_workers_are_not_targeted_below_active_capacity() -> None:
     stage = "ltx25_i2v"
     now = datetime.now(UTC)
     rows = {
@@ -441,36 +567,31 @@ def test_ltx_active_worker_drains_before_partial_downscale() -> None:
         ],
     )
     autoscaler = PredictiveSaladAutoscaler(
-        config=_config(
-            (stage,),
-            jobs_per_replica={stage: 30},
-        ),
+        config=_config((stage,)),
         store=store,
         clients={stage: client},
         bindings={stage: _binding(stage)},
         logger=lambda _message: None,
     )
 
-    draining = autoscaler.reconcile()[stage]
+    stable = autoscaler.reconcile()[stage]
 
-    assert draining.target_replicas == 1
-    assert draining.applied_replicas == 2
-    assert draining.reason == "draining_active_instances"
+    assert stable.target_replicas == 2
+    assert stable.applied_replicas == 2
+    assert stable.reason == "stable"
     assert client.replica_updates == []
-    assert len(store.drains[stage]) == 1
-    drained_instance = next(iter(store.drains[stage]))
+    assert store.drains.get(stage) in (None, {})
 
-    store.rows[stage] = [
-        row
-        for row in store.rows[stage]
-        if drained_instance not in str(row["worker_id"])
-    ]
+    store.rows[stage] = [store.rows[stage][0]]
+    draining = autoscaler.reconcile()[stage]
+    assert draining.target_replicas == 1
+    assert draining.reason == "drain_grace_pending"
+    assert client.replica_updates == []
+
     requested = autoscaler.reconcile()[stage]
-
     assert requested.target_replicas == 1
     assert requested.reason == "resize_requested_pending_confirmation"
     assert client.replica_updates == [1]
-
 
 def test_stopped_group_starts_without_rewriting_matching_configured_replicas() -> None:
     stage = "ltx25"
@@ -1246,14 +1367,15 @@ def test_unknown_provider_state_fails_closed() -> None:
     assert client.stop_calls == 0
 
 
-def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
+def test_ltx_groups_have_independent_runtime_and_time_target_calibration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_COLD_START_SECONDS", "3090")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS", "1200")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS", "240")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS", "320")
-    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA", "30")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_TARGET_DRAIN_MINUTES", "50")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_TARGET_DRAIN_MINUTES", "70")
     monkeypatch.setenv("SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS", "1")
 
     config = load_predictive_autoscaler_config(
@@ -1271,17 +1393,20 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
         "ltx25_i2v": 240.0,
         "ltx25": 320.0,
     }
-    assert config.stage_jobs_per_replica == {
-        "ltx25_i2v": 30,
-        "ltx25": 30,
+    assert config.stage_jobs_per_replica == {}
+    assert config.stage_target_drain_seconds == {
+        "ltx25_i2v": 3000.0,
+        "ltx25": 4200.0,
     }
+    assert config.downscale_headroom_ratio == pytest.approx(0.90)
     assert config.zero_demand_stable_polls == 1
 
 
-def test_ltx_backlog_scaling_allows_cost_ceiling_overrides(
+def test_ltx_time_target_and_cost_ceiling_allow_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", "40")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_TARGET_DRAIN_MINUTES", "45")
+    monkeypatch.setenv("SALAD_AUTOSCALER_DOWNSCALE_HEADROOM_RATIO", "0.80")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", "1")
     monkeypatch.setenv("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", "1")
 
@@ -1291,13 +1416,17 @@ def test_ltx_backlog_scaling_allows_cost_ceiling_overrides(
 
     assert config.project_max_replicas == 1
     assert config.stage_max_replicas["ltx25"] == 1
-    assert config.stage_jobs_per_replica == {"ltx25": 40}
+    assert config.stage_target_drain_seconds == {"ltx25": 2700.0}
+    assert config.downscale_headroom_ratio == pytest.approx(0.80)
+    assert config.stage_jobs_per_replica == {}
 
 
-def test_ltx_defaults_scale_from_global_backlog_only(
+def test_ltx_defaults_use_one_hour_time_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for name in (
+        "SALAD_AUTOSCALER_LTX25_I2V_TARGET_DRAIN_MINUTES",
+        "SALAD_AUTOSCALER_LTX25_TARGET_DRAIN_MINUTES",
         "SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA",
         "SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA",
     ):
@@ -1310,29 +1439,30 @@ def test_ltx_defaults_scale_from_global_backlog_only(
         )
     )
 
-    assert config.stage_jobs_per_replica == {
-        "ltx25_i2v": 30,
-        "ltx25": 30,
+    assert config.stage_jobs_per_replica == {}
+    assert config.stage_target_drain_seconds == {
+        "ltx25_i2v": 3600.0,
+        "ltx25": 3600.0,
     }
 
-    for count, expected in ((2, 1), (30, 1), (31, 2), (60, 2), (100, 2)):
+    for count, expected in ((2, 1), (13, 1), (14, 2), (100, 2)):
         demands = build_global_demands(
             rows_by_stage={
                 "ltx25_i2v": _pending_rows(count),
                 "ltx25": _pending_rows(count),
             },
-            runtime_by_stage={"ltx25_i2v": 200.0, "ltx25": 200.0},
+            runtime_by_stage={"ltx25_i2v": 235.0, "ltx25": 235.0},
             config=config,
-            now=datetime(2026, 10, 5, tzinfo=UTC),
+            now=datetime(2026, 10, 8, tzinfo=UTC),
         )
         assert demands["ltx25_i2v"].ideal_replicas == expected
         assert demands["ltx25"].ideal_replicas == expected
 
 
-def test_ltx_capacity_ignores_run_boundaries_and_legacy_run_size(
+def test_ltx_capacity_aggregates_multi_run_work_and_ignores_legacy_run_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", raising=False)
+    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_TARGET_DRAIN_MINUTES", raising=False)
     config = load_predictive_autoscaler_config(
         stage_bindings=(_binding("ltx25", max_replicas=2),)
     )
@@ -1344,7 +1474,7 @@ def test_ltx_capacity_ignores_run_boundaries_and_legacy_run_size(
         rows_by_stage={"ltx25": rows},
         runtime_by_stage={"ltx25": 200.0},
         config=config,
-        now=datetime(2026, 10, 5, tzinfo=UTC),
+        now=datetime(2026, 10, 8, tzinfo=UTC),
     )["ltx25"]
     assert demand.ideal_replicas == 2
     assert demand.run_counts == {"run-a": 20, "run-b": 20}
@@ -1352,34 +1482,38 @@ def test_ltx_capacity_ignores_run_boundaries_and_legacy_run_size(
     tail = _pending_rows(29)
     for index, row in enumerate(tail):
         row["run_id"] = "run-a" if index < 15 else "run-b"
-        row["run_job_count"] = 100  # legacy metadata must not pin a second GPU
+        row["run_job_count"] = 100
     tail_demand = build_global_demands(
         rows_by_stage={"ltx25": tail},
         runtime_by_stage={"ltx25": 200.0},
         config=config,
-        now=datetime(2026, 10, 5, tzinfo=UTC),
+        now=datetime(2026, 10, 8, tzinfo=UTC),
     )["ltx25"]
-    assert tail_demand.ideal_replicas == 1
-    assert tail_demand.jobs_per_replica == 30
-    assert tail_demand.job_count_target == 1
+    assert tail_demand.ideal_replicas == 2
+    assert tail_demand.run_counts == {"run-a": 15, "run-b": 14}
+    assert tail_demand.jobs_per_replica is None
+    assert tail_demand.job_count_target is None
 
 
-def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:
+def test_ltx_cold_start_is_excluded_from_inference_drain_horizon() -> None:
     stage = "ltx25"
     config = _config(
         (stage,),
         stage_max_replicas=4,
+        target_drain_seconds=600.0,
+        stage_target_drain_seconds={stage: 600.0},
         stage_cold_start_seconds={stage: 1934.0},
     )
 
     demands = build_global_demands(
-        rows_by_stage={stage: _pending_rows(1)},
+        rows_by_stage={stage: _pending_rows(10)},
         runtime_by_stage={stage: 240.0},
         config=config,
-        now=datetime(2026, 9, 28, tzinfo=UTC),
+        now=datetime(2026, 10, 8, tzinfo=UTC),
     )
 
-    assert demands[stage].ideal_replicas == 1
+    assert demands[stage].effective_drain_seconds == 600.0
+    assert demands[stage].ideal_replicas == 4
 
 
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
@@ -1603,3 +1737,59 @@ def test_nonconvergence_counter_resets_when_capacity_target_recovers() -> None:
     ]
     deferred = autoscaler.reconcile()[stage]
     assert deferred.reason == "active_instance_mapping_incomplete"
+
+
+def test_opt_in_cost_aware_controller_does_not_buy_useless_cold_replica() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(replicas=1, status="running")
+    store = FakeStore(
+        rows={stage: _pending_rows(10)},
+        runtimes={stage: [100.0]},
+    )
+    config = replace(
+        _config(
+            (stage,),
+            target_drain_seconds=600,
+            stage_target_drain_seconds={stage: 600},
+            stage_cold_start_seconds={stage: 1400},
+        ),
+        ltx_cost_aware=True,
+    )
+    scaler = PredictiveSaladAutoscaler(
+        config=config,
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+    )
+    result = scaler.reconcile()[stage]
+    assert result.target_replicas == 1
+    assert client.replica_updates == []
+
+
+def test_opt_in_cost_aware_controller_can_request_more_for_large_backlog() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(replicas=0, status="stopped")
+    store = FakeStore(
+        rows={stage: _pending_rows(52)},
+        runtimes={stage: [235.0]},
+    )
+    config = replace(
+        _config(
+            (stage,),
+            target_drain_seconds=3600,
+            target_utilization=0.85,
+            stage_target_drain_seconds={stage: 3600},
+            stage_cold_start_seconds={stage: 900},
+        ),
+        ltx_cost_aware=True,
+    )
+    scaler = PredictiveSaladAutoscaler(
+        config=config,
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+    )
+    result = scaler.reconcile()[stage]
+    assert result.target_replicas == 4
+    assert client.replica_updates == [4]
+    assert result.reason == "resize_before_start_pending_confirmation"

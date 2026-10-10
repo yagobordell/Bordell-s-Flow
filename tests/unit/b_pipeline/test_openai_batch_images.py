@@ -102,6 +102,28 @@ def test_standard_requests_generate_one_image_per_job_and_cache_results(
 
 
 
+def test_real_image_batch_shares_one_rate_limited_client_and_caps_parallelism(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[FakeDirect] = []
+
+    def make_client(api_key: str) -> FakeDirect:
+        assert api_key == "test-key"
+        client = FakeDirect()
+        constructed.append(client)
+        return client
+
+    monkeypatch.setattr(images, "OpenAIImageClient", make_client)
+    plan = _plan(*(f"Scene number {number}" for number in range(9)))
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key="test-key", options=_opts(),
+    )
+    assert result["status"] == "completed"
+    assert result["max_parallel_images"] == 6
+    assert len(constructed) == 1
+    assert len(constructed[0].calls) == 9
+
+
 @pytest.mark.parametrize(("scene", "expected"), [
     ("A table with a glass of water", "low"),
     ("A laptop. (For context: the page contains a report.)", "medium"),
@@ -320,15 +342,15 @@ def test_numbered_sequence_uses_one_standard_request_for_grid(tmp_path: Path) ->
     assert result["openai_direct_count"] == 1
     assert len(direct.calls) == 1
     assert direct.calls[0]["size"] == "2560x1440"
-    assert direct.calls[0]["quality"] == "medium"
+    assert direct.calls[0]["quality"] == "high"
     assert result["quality"] == "low"
-    assert result["grid_quality"] == "medium"
-    assert result["items"][0]["quality"] == "medium"
+    assert result["grid_quality"] == "high"
+    assert result["items"][0]["quality"] == "high"
     saved_grid = json.loads(
         (tmp_path / "images/grids/block_1_1B.json").read_text(encoding="utf-8")
     )
-    assert saved_grid["quality"] == "medium"
-    assert saved_grid["artifact"]["quality"] == "medium"
+    assert saved_grid["quality"] == "high"
+    assert saved_grid["artifact"]["quality"] == "high"
     assert result["items"][0]["provider"] == "openai_direct"
     assert result["items"][0]["grid"]["columns"] == 2
     assert (
@@ -432,10 +454,10 @@ def test_mixed_grid_and_individual_jobs_use_separate_qualities(
     assert manifest["grid_count"] == 1
     assert manifest["total_generation_jobs"] == 2
     assert {(call["size"], call["quality"]) for call in direct.calls} == {
-        ("2560x1440", "medium"), ("1280x720", "low"),
+        ("2560x1440", "high"), ("1280x720", "low"),
     }
     assert {(item["size"], item["quality"]) for item in manifest["items"]} == {
-        ("2560x1440", "medium"), ("1280x720", "low"),
+        ("2560x1440", "high"), ("1280x720", "low"),
     }
     assert len(direct.calls) == 2
 
@@ -447,7 +469,7 @@ def test_mixed_grid_and_individual_jobs_use_separate_qualities(
     assert len(direct.calls) == 2
 
 
-def test_saved_low_quality_grid_cannot_be_silently_resubmitted_as_medium(
+def test_saved_low_quality_grid_cannot_be_silently_resubmitted_as_high(
     tmp_path: Path,
 ) -> None:
     plan = _plan("1. First", "2. Second")

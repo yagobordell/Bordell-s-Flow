@@ -27,7 +27,8 @@ _IMAGE_PRICING = {
     "image_output": Decimal("30.00"),
 }
 _STAGES = (
-    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B2.1", "B3",
+    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2",
+    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3",
     "V1", "V2", "V3", "V4", "Fish director", _IMAGE_STAGE, "CTA image",
 )
 
@@ -420,7 +421,7 @@ class ApiCostLedger:
         )
         expected = (
             {"B1.1": max(1, expected_b11_calls), "CTA": 0, "CTA Ebook": 0,
-             "CTA Motion": 0,
+             "CTA Motion": 0, "CTA Detector": 0, "B2 CTA": 0,
              "B1.2": blocks, "B2": blocks, "B2.1": 0, "B3": None,
              "CTA image": 0}
             if expected_calls is None
@@ -428,7 +429,8 @@ class ApiCostLedger:
                 stage: expected_calls.get(
                     stage,
                     0 if stage in {
-                        "CTA", "CTA Ebook", "CTA Motion", "B2.1", "CTA image"
+                        "CTA", "CTA Ebook", "CTA Motion", "CTA Detector",
+                        "B2 CTA", "B2.1", "CTA image"
                     } else None,
                 )
                 for stage in _STAGES

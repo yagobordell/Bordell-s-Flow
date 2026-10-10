@@ -181,6 +181,9 @@ class SaladFishSpeechProvider:
                 "reference_transcript_sha256": reference_transcript_sha256,
             },
         )
+        from ai_video_factory.workflows.r2_run_scope import scope_inference_request
+
+        request = scope_inference_request(request)
         response = self._executor.execute(
             request,
             metadata={

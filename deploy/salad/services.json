@@ -92,7 +92,7 @@
       },
       "capacity": {
         "start_replicas": 1,
-        "max_replicas": 2
+        "max_replicas": 4
       }
     },
     "ltx25": {
@@ -151,7 +151,7 @@
       },
       "capacity": {
         "start_replicas": 1,
-        "max_replicas": 2
+        "max_replicas": 4
       }
     },
     "breeze_tts2": {

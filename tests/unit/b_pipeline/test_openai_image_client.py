@@ -103,6 +103,58 @@ def test_direct_client_retries_http_429_and_honors_retry_after(
 
 
 
+def test_image_start_limiter_enforces_rolling_window_without_bursts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [10.0]
+    starts = []
+    sleeps = []
+
+    monkeypatch.setattr(official.time, "monotonic", lambda: clock[0])
+
+    def advance(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(official.time, "sleep", advance)
+    limiter = official._ImageStartLimiter(per_minute=2, window_seconds=60.0)
+    for _ in range(5):
+        limiter.acquire()
+        starts.append(clock[0])
+    assert starts == [10.0, 10.0, 70.0, 70.0, 130.0]
+    assert sleeps == [60.0, 60.0]
+
+
+def test_image_client_recovers_after_more_than_three_definite_429s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    attempts = []
+    waits = []
+
+    class Response:
+        def __enter__(self):
+            return io.BytesIO(b'{"data": []}')
+
+        def __exit__(self, *_args):
+            return False
+
+    def limited_five_times(request, *, timeout):
+        attempts.append(request)
+        if len(attempts) <= 5:
+            raise HTTPError(
+                request.full_url, 429, "Too Many Requests",
+                {"Retry-After": "3"}, io.BytesIO(b"rate limited"),
+            )
+        return Response()
+
+    monkeypatch.setattr(official, "urlopen", limited_five_times)
+    monkeypatch.setattr(official.time, "sleep", waits.append)
+    assert client.request_json({"prompt": "test"}) == {"data": []}
+    assert len(attempts) == 6
+    assert waits == [3.0] * 5
+
+
 def test_direct_client_surfaces_definite_http_400_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

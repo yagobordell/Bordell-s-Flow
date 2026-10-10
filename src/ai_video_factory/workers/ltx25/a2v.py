@@ -2075,6 +2075,7 @@ class LTXAudioToVideoTaskRunner:
                     content_type="application/json",
                 ),
             ),
+            telemetry=metadata,
         )
 
     def _validate_request(

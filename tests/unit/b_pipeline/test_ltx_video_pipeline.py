@@ -100,6 +100,41 @@ def _case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict, 
     return plan, audio, images
 
 
+
+def test_ltx_plan_keeps_legacy_keys_without_explicit_r2_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    _, jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    assert not (tmp_path / "video" / "r2_run_scope.txt").exists()
+    assert any(
+        item.key.startswith("b2-ltx/inputs/audio/")
+        for job in jobs for item in job.request.inputs
+    )
+    assert all("-r" not in job.request.job_id for job in jobs)
+
+
+def test_ltx_plan_uses_private_inputs_when_pipeline_initializes_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.workflows.r2_run_scope import video_run_scope
+
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    scope = video_run_scope(tmp_path, tmp_path / "video" / "runs" / "new")
+    assert scope is not None
+    _, jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    for job in jobs:
+        assert job.request.job_id.endswith(f"-r{scope}")
+        prefix = f"jobs/{job.request.job_id}/"
+        assert job.request.output.key.startswith(prefix)
+        assert all(item.key.startswith(prefix + "inputs/") for item in job.request.inputs)
+    # Repeated planning and future --videos-only retries must reuse the same IDs.
+    _, retry, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    assert [job.request.fingerprint() for job in jobs] == [
+        job.request.fingerprint() for job in retry
+    ]
+
+
 def test_final_compositor_uses_professional_finished_asset_identity() -> None:
     from ai_video_factory.compositor import b_video as compositor
 
@@ -151,6 +186,33 @@ def test_final_compositor_alternates_media_image_zoom_direction() -> None:
     }
     assert "1.020000+(1.000000-1.020000)" in first_filter
     assert "1.000000+(1.020000-1.000000)" in second_filter
+
+
+def test_b22_override_changes_only_target_paid_job_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    _original_timeline, original, original_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images,
+    )
+    _new_timeline, updated, adapted_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images,
+        motion_overrides={"1D": "The bird launches smoothly from its perch."},
+    )
+    original_by_type = {job.beats[0]: job for job in original}
+    updated_by_type = {job.beats[0]: job for job in updated}
+
+    assert original_run != adapted_run
+    assert updated_by_type["1D"].request.parameters["prompt"] == (
+        "The bird launches smoothly from its perch."
+    )
+    assert (
+        updated_by_type["1D"].request.job_id
+        != original_by_type["1D"].request.job_id
+    )
+    # A2V base avatar remains pinned and is not changed by I2V refinement.
+    assert updated_by_type["1A"].request.job_id == original_by_type["1A"].request.job_id
+    assert updated_by_type["2A"].request.job_id == original_by_type["2A"].request.job_id
 
 
 def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(

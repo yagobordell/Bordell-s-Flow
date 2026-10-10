@@ -467,7 +467,11 @@ def test_images_only_auto_renders_from_existing_stt_and_saved_images(
     }
     generated = []
 
-    async def fake_images(destination: Path, visual_plan: dict) -> dict:
+    async def fake_images(
+        destination: Path, visual_plan: dict, *,
+        allow_ambiguous_upscale_resume: bool = False,
+    ) -> dict:
+        assert allow_ambiguous_upscale_resume
         assert all(not (destination / path).exists() for path in original_pngs)
         for relative, data in original_pngs.items():
             image_path = destination / relative

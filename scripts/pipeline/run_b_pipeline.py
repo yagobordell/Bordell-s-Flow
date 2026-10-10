@@ -36,6 +36,11 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
+from ai_video_factory.bots.professional_cta import (
+    ProfessionalCTADetection,
+    ProfessionalCTAVisualBeat,
+    ProfessionalCTAVisuals,
+)
 from ai_video_factory.bots.professional_voice import (
     ProfessionalAudioRegenerationLimitReached,
     generate_professional_audio,
@@ -106,7 +111,8 @@ DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2", "B2.1", "B3")
 _METRIC_STAGES = (
-    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B2.1", "B3",
+    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2",
+    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3",
     "V1", "V2", "V3", "V4",
 )
 
@@ -664,6 +670,22 @@ def _publish_if_ready(
         publish_completed_run(output, script_file, results_root)
     )
     print(f"  Published result: {result}", flush=True)
+    # Clean only the completed video's private GPU job outputs after its
+    # verified MP4 has been published locally. Never delete shared inputs,
+    # persistent voice references, or objects from another run.
+    if _ltx_transport_configured():
+        try:
+            from ai_video_factory.workflows.r2_cleanup import cleanup_published_video_jobs
+
+            deleted = cleanup_published_video_jobs(output, video)
+            print(f"  R2 completed video job cleanup: {deleted} object(s)", flush=True)
+        except Exception as exc:
+            # Cleanup must never invalidate or force regeneration of the MP4.
+            print(
+                f"  R2 cleanup deferred ({type(exc).__name__}); "
+                "verified MP4 retained.",
+                flush=True,
+            )
     # Independent post-publication distribution. Never let YouTube failure
     # invalidate a verified local result or re-run costly generation stages.
     if settings.youtube_enabled:
@@ -921,6 +943,13 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
             if not target.is_dir():
                 raise SystemExit(f"Stage output is not a directory: {target}")
             shutil.rmtree(target)
+    if first_stage <= _STAGES.index("B1.2"):
+        for stage in ("CTA Detector", "B2 CTA"):
+            folder = output / stage
+            if folder.is_symlink():
+                raise SystemExit(f"Refusing linked CTA stage {folder}")
+            if folder.exists():
+                shutil.rmtree(folder)
     visual_plan = output / "visual_plan.json"
     if visual_plan.is_symlink():
         raise SystemExit(f"Refusing to remove linked visual plan: {visual_plan}")
@@ -955,7 +984,10 @@ def _image_options() -> ImageOptions:
     )
 
 
-async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, object]:
+async def _generate_images(
+    output: Path, plan: dict[str, object], *,
+    allow_ambiguous_upscale_resume: bool = False,
+) -> dict[str, object]:
     professional = plan.get("visual_style") == "profesional"
     needs_x2 = professional and any(
         beat.get("prompt") is not None
@@ -1045,6 +1077,7 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
                     manifest,
                     upscaler=upscaler,
                     api_key=settings.openai_api_key,
+                    allow_ambiguous_upscale_resume=allow_ambiguous_upscale_resume,
                 )
 
         try:
@@ -1713,7 +1746,9 @@ async def _run_images_only(
                 removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
                 if removed_images:
                     print(f"Removed {removed_images} previous B2 image(s).", flush=True)
-            manifest = await _generate_images(output, plan)
+            manifest = await _generate_images(
+                output, plan, allow_ambiguous_upscale_resume=True,
+            )
         except Exception:
             report["run"]["image_generation"] = {"status": "incomplete"}
             report["run"]["status"] = "failed"
@@ -2336,16 +2371,16 @@ class BotArtifacts:
         self._output = output
 
     def _folder(self, stage: str, block_id: int | None) -> Path:
-        if stage not in (*_STAGES, "CTA"):
+        if stage not in (*_STAGES, "CTA", "CTA Detector", "B2 CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage in {"B1.1", "B2.1", "CTA"}:
+        if stage in {"B1.1", "B2.1", "CTA", "CTA Detector"}:
             if block_id is not None:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
         if block_id is None or block_id < 1:
             raise ValueError(f"{stage} requires a positive block/group ID")
         return self._output / stage / (
-            f"group_{block_id}" if stage == "B3" else f"block_{block_id}"
+            f"group_{block_id}" if stage in {"B3", "B2 CTA"} else f"block_{block_id}"
         )
 
     def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
@@ -2587,10 +2622,20 @@ async def main() -> None:
         return
     if getattr(args, "videos_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_videos_only(
-            script_file, output_root, results_root=results_root,
-            managed_target=getattr(args, "managed_target", None),
+        from ai_video_factory.workflows.r2_run_scope import (
+            reset_active_video_scope,
+            saved_video_scope,
+            set_active_video_scope,
         )
+
+        token = set_active_video_scope(saved_video_scope(output_root / script_file.stem))
+        try:
+            await _run_videos_only(
+                script_file, output_root, results_root=results_root,
+                managed_target=getattr(args, "managed_target", None),
+            )
+        finally:
+            reset_active_video_scope(token)
         return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
@@ -2602,15 +2647,25 @@ async def main() -> None:
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_audio_only(
-            script_file,
-            output_root,
-            resume=bool(getattr(args, "resume_audio", False)),
-            max_parallel_calls=args.max_parallel_calls,
-            no_video=bool(getattr(args, "no_video", False)),
-            results_root=results_root,
-            managed_target=getattr(args, "managed_target", None),
+        from ai_video_factory.workflows.r2_run_scope import (
+            reset_active_video_scope,
+            saved_video_scope,
+            set_active_video_scope,
         )
+
+        token = set_active_video_scope(saved_video_scope(output_root / script_file.stem))
+        try:
+            await _run_audio_only(
+                script_file,
+                output_root,
+                resume=bool(getattr(args, "resume_audio", False)),
+                max_parallel_calls=args.max_parallel_calls,
+                no_video=bool(getattr(args, "no_video", False)),
+                results_root=results_root,
+                managed_target=getattr(args, "managed_target", None),
+            )
+        finally:
+            reset_active_video_scope(token)
         return
 
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
@@ -2650,8 +2705,6 @@ async def main() -> None:
         raise SystemExit("--replace-professional-voice is available only in Profesional")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
         raise SystemExit("--tts-provider solo está disponible en modo casero.")
-    if visual_style != "casero" and getattr(args, "ebook_cover", None):
-        raise SystemExit("--ebook-cover solo se admite en modo casero.")
     covers = None
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
@@ -2740,12 +2793,22 @@ async def main() -> None:
             avatar_file = organize_avatar(
                 avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
             )
-        if visual_style == "casero":
+        if visual_style in {"casero", "profesional"}:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
-            data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
-            covers = ensure_ebook_covers(
-                avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
+            cover_selected = (
+                visual_style == "casero"
+                or bool(getattr(args, "ebook_cover", None))
+                or (avatar_file.parent / "meta" / "ebook_covers.json").is_file()
             )
+            if cover_selected:
+                data_root = (
+                    args.avatars_dir if managed_target is not None
+                    else args.avatars_dir.parent
+                )
+                covers = ensure_ebook_covers(
+                    avatar_file, data_dir=data_root,
+                    names=getattr(args, "ebook_cover", None),
+                )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
@@ -2818,6 +2881,53 @@ async def main() -> None:
                 avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
             )
         _clear_outputs_from(output, args.from_stage)
+        if (
+            visual_style == "profesional"
+            and (
+                bool(getattr(args, "ebook_cover", None))
+                or (avatar_file.parent / "meta" / "ebook_covers.json").is_file()
+            )
+        ):
+            data_root = (
+                args.avatars_dir if managed_target is not None
+                else args.avatars_dir.parent
+            )
+            covers = ensure_ebook_covers(
+                avatar_file, data_dir=data_root,
+                names=getattr(args, "ebook_cover", None),
+            )
+
+    from ai_video_factory.workflows.r2_run_scope import (
+        saved_video_scope,
+        set_active_video_scope,
+        video_run_scope,
+    )
+
+    # A fresh run receives unique GPU cache identities from its first paid
+    # stage; resumes reuse that identity. Legacy runs stay unscoped.
+    r2_scope = (
+        video_run_scope(output, output / "video" / "runs" / "__new__")
+        if args.from_stage == "B1.1"
+        else saved_video_scope(output)
+    )
+    active_scope_token = set_active_video_scope(r2_scope)
+
+    ebook_reference: dict[str, str] | None = None
+    if visual_style == "profesional" and covers is not None:
+        ebook_copy = output / "ebook" / "cover_1.png"
+        source_ebook = covers.files[0].read_bytes()
+        if ebook_copy.is_symlink() or ebook_copy.parent.is_symlink():
+            raise RuntimeError("Unsafe professional ebook snapshot")
+        ebook_copy.parent.mkdir(parents=True, exist_ok=True)
+        if ebook_copy.is_file():
+            if ebook_copy.read_bytes() != source_ebook:
+                raise RuntimeError("Professional ebook snapshot differs on resume")
+        else:
+            ebook_copy.write_bytes(source_ebook)
+        ebook_reference = {
+            "file": "ebook/cover_1.png",
+            "sha256": hashlib.sha256(source_ebook).hexdigest(),
+        }
 
     # Bind the voice to the run, not merely the mutable avatar library or .env.
     voice_snapshot = voice.snapshot()
@@ -2891,6 +3001,8 @@ async def main() -> None:
                 "CTA Ebook": timings.call_count("CTA Ebook"),
                 "CTA Motion": timings.call_count("CTA Motion"),
                 "CTA image": sum(r["stage"] == "CTA image" for r in ledger.records),
+                "CTA Detector": timings.call_count("CTA Detector"),
+                "B2 CTA": timings.call_count("B2 CTA"),
                 "B1.2": (
                     max(report_blocks, timings.call_count("B1.2"))
                     if report_blocks is not None else None
@@ -2917,6 +3029,8 @@ async def main() -> None:
             expected_calls["CTA image"] = sum(
                 r["stage"] == "CTA image" for r in ledger.records
             )
+            expected_calls["CTA Detector"] = timings.call_count("CTA Detector")
+            expected_calls["B2 CTA"] = timings.call_count("B2 CTA")
             if report_blocks is not None:
                 expected_calls["B1.2"] = max(
                     expected_calls["B1.2"] or 0, timings.call_count("B1.2")
@@ -3068,6 +3182,38 @@ async def main() -> None:
         elif args.from_stage == "B1.1":
             run_metadata["audio_generation"] = {"status": "skipped"}
             save_report("running", None)
+        prior_cta_groups: tuple[tuple[str, ...], ...] | None = None
+        prior_cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None
+        if visual_style == "profesional" and args.from_stage == "B2":
+            previous_detector = output / "CTA Detector" / "output.json"
+            if previous_detector.is_symlink():
+                raise RuntimeError("Unsafe saved professional CTA detector")
+            if previous_detector.is_file():
+                detection = ProfessionalCTADetection.model_validate_json(
+                    previous_detector.read_text(encoding="utf-8")
+                )
+                prior_cta_groups = tuple(
+                    tuple(group) for group in detection.cta_groups
+                )
+                prior_cta_overrides = {}
+                for index, group in enumerate(prior_cta_groups, 1):
+                    previous_director = (
+                        output / "B2 CTA" / f"group_{index}" / "output.json"
+                    )
+                    if previous_director.is_symlink() or not previous_director.is_file():
+                        raise RuntimeError(
+                            "Saved CTA director output is missing; reconcile before retry"
+                        )
+                    decisions = ProfessionalCTAVisuals.model_validate_json(
+                        previous_director.read_text(encoding="utf-8")
+                    )
+                    if [beat.beat_id for beat in decisions.beats] != list(group):
+                        raise RuntimeError("Saved CTA director IDs differ from detector")
+                    for beat in decisions.beats:
+                        if beat.beat_id in prior_cta_overrides:
+                            raise RuntimeError("Duplicate CTA beat in saved checkpoint")
+                        prior_cta_overrides[beat.beat_id] = beat
+
         result = await run_b_pipeline(
             script,
             provider=provider,
@@ -3076,6 +3222,17 @@ async def main() -> None:
             visual_style=visual_style,
             enable_casero_cta=visual_style == "casero",
             avatar_image=avatar_bytes,
+            **(
+                {"ebook_image": covers.files[0].read_bytes()}
+                if visual_style == "profesional" and covers is not None else {}
+            ),
+            **(
+                {
+                    "previous_cta_groups": prior_cta_groups,
+                    "previous_cta_overrides": prior_cta_overrides,
+                }
+                if prior_cta_groups is not None else {}
+            ),
             start_from=args.from_stage,
             stop_after=stop_stage or (
                 "B3" if visual_style == "profesional" else "B2"
@@ -3116,6 +3273,11 @@ async def main() -> None:
             visual_plan = result.visual_plan()
             # This binding is intentionally absent from audited B2 payloads.
             visual_plan["avatar"] = avatar_metadata
+            if visual_style == "profesional":
+                visual_plan["ebook_reference"] = ebook_reference
+                visual_plan["ebook_cta_groups"] = [
+                    list(group) for group in getattr(result, "cta_groups", ())
+                ]
             _write(output / "visual_plan.json", visual_plan)
         if professional_audio_enabled:
             if visual_plan is None:
@@ -3219,6 +3381,15 @@ async def main() -> None:
                         max_parallel_calls=args.max_parallel_calls,
                         visual_style=visual_style,
                         avatar_image=avatar_bytes,
+                        **(
+                            {
+                                "ebook_image": covers.files[0].read_bytes(),
+                                "previous_cta_groups": result.cta_groups,
+                                "previous_cta_overrides": result.cta_overrides,
+                            }
+                            if visual_style == "profesional" and covers is not None
+                            else {}
+                        ),
                         start_from="B2",
                         stop_after=(
                             "B3" if visual_style == "profesional" else "B2"
@@ -3242,6 +3413,11 @@ async def main() -> None:
                     )
                     visual_plan = result.visual_plan()
                     visual_plan["avatar"] = avatar_metadata
+                    if visual_style == "profesional":
+                        visual_plan["ebook_reference"] = ebook_reference
+                        visual_plan["ebook_cta_groups"] = [
+                            list(group) for group in getattr(result, "cta_groups", ())
+                        ]
                     _write(output / "visual_plan.json", visual_plan)
                     if professional_audio_enabled:
                         # This B2 block changed after professional V/audio ran.
@@ -3337,6 +3513,10 @@ async def main() -> None:
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         _print_observed_salad_total(costs)
         raise
+    finally:
+        from ai_video_factory.workflows.r2_run_scope import reset_active_video_scope
+
+        reset_active_video_scope(active_scope_token)
 
     costs, timing_report = save_report("completed", len(result.b12))
     await asyncio.to_thread(

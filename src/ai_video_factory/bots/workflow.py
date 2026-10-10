@@ -43,6 +43,12 @@ from .contracts import (
     ProfessionalB2Output,
 )
 from .cta import CTAPlacement, validate_placement
+from .professional_cta import ProfessionalCTAVisualBeat
+from .professional_cta_workflow import (
+    apply_cta_visuals,
+    detect_professional_ctas,
+    direct_professional_cta,
+)
 from .validation_retries import MAX_VALIDATION_RETRIES, is_schema_failure, validation_feedback
 
 # Transport adaptation to Responses API Structured Outputs.
@@ -475,7 +481,7 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         )
 
 
-_B21_IMAGE_SPLIT_THRESHOLD = 50
+_B21_IMAGE_SPLIT_THRESHOLD = 70
 _B21_NUMBERED_PROMPT = re.compile(r"^\s*([1-9])\.\s+(.+)$", re.DOTALL)
 
 
@@ -486,18 +492,21 @@ def _b21_prompt_body(prompt: str) -> str:
 
 def _professional_plan(
     outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+    *,
+    cta_groups: tuple[tuple[str, ...], ...] = (),
+    cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None,
 ) -> dict[str, object]:
-    return {
-        "visual_style": "profesional",
-        "blocks": [item.blocks[0].model_dump() for item in outputs if item.blocks],
-    }
+    blocks = [item.blocks[0].model_dump() for item in outputs if item.blocks]
+    if cta_groups:
+        blocks = apply_cta_visuals(blocks, cta_groups, cta_overrides or {})
+    return {"visual_style": "profesional", "blocks": blocks}
 
 
 def _b21_split_candidates(plan: dict[str, object]) -> list[dict[str, object]]:
     candidates: list[dict[str, object]] = []
     for block in plan["blocks"]:
         for beat in block["beats"]:
-            if beat.get("visual_type") != "media_image":
+            if beat.get("visual_type") != "media_image" or beat.get("cta_group_id"):
                 continue
             characters = len(str(beat.get("text", "")))
             if characters >= _B21_IMAGE_SPLIT_THRESHOLD:
@@ -673,7 +682,14 @@ def apply_b21_review(
         for patch in result.modified_beats or []
     }
     source_runs = {
-        block["block_id"]: _b21_numbered_runs(block)
+        block["block_id"]: [
+            run for run in _b21_numbered_runs(block)
+            if not any(
+                beat.get("cta_group_id") is not None
+                for beat in block["beats"]
+                if beat["beat_id"] in run
+            )
+        ]
         for block in source_plan["blocks"]
     }
     source_run_keys = {
@@ -686,7 +702,7 @@ def apply_b21_review(
         for beat in block["beats"]:
             key = block["block_id"], beat["beat_id"]
             patch = patches.get(key)
-            if patch is None:
+            if patch is None or beat.get("cta_group_id") is not None:
                 continue
             beat["prompt"] = patch.prompt.strip()
             if beat["visual_type"] == "media_video":
@@ -754,8 +770,13 @@ def apply_b21_review(
 def _reviewed_professional_plan(
     outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
     b21: B21Output | None,
+    *,
+    cta_groups: tuple[tuple[str, ...], ...] = (),
+    cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None,
 ) -> dict[str, object]:
-    plan = _professional_plan(outputs)
+    plan = _professional_plan(
+        outputs, cta_groups=cta_groups, cta_overrides=cta_overrides,
+    )
     return apply_b21_review(plan, b21) if b21 is not None else plan
 
 
@@ -819,6 +840,12 @@ def _professional_audio_groups(
     current: list[tuple[int, dict[str, object]]] = []
     for block in plan["blocks"]:
         for beat in block["beats"]:
+            if (
+                current and beat.get("cta_group_id")
+                != current[-1][1].get("cta_group_id")
+            ):
+                groups.append(current)
+                current = []
             if beat.get("audio") is True:
                 current.append((block["block_id"], beat))
             elif current:
@@ -888,6 +915,8 @@ class BPipelineResult:
     b2: tuple[B2Output | ProfessionalB2Output, ...]
     b21: B21Output | None = None
     b3: tuple[B3Output, ...] = ()
+    cta_groups: tuple[tuple[str, ...], ...] = ()
+    cta_overrides: dict[str, ProfessionalCTAVisualBeat] = field(default_factory=dict)
     visual_style: Literal["casero", "profesional"] = "casero"
     b2_correction_counts: dict[int, int] = field(default_factory=dict)
     b2_response_ids: dict[int, str] = field(default_factory=dict)
@@ -918,7 +947,15 @@ class BPipelineResult:
             "pipeline_stage": "B2",
             **({"visual_style": self.visual_style} if self.visual_style == "profesional" else {}),
             "narrative_core": self.b11.narrative_core.model_dump(),
-            "blocks": [item.blocks[0].model_dump() for item in self.b2 if item.blocks],
+            "blocks": (
+                _professional_plan(
+                    [item for item in self.b2 if isinstance(item, ProfessionalB2Output)],
+                    cta_groups=self.cta_groups,
+                    cta_overrides=self.cta_overrides,
+                )["blocks"]
+                if self.visual_style == "profesional"
+                else [item.blocks[0].model_dump() for item in self.b2 if item.blocks]
+            ),
         }
 
     def merged_b21_output(self) -> dict[str, object]:
@@ -947,7 +984,10 @@ class BPipelineResult:
                 raise BPipelineValidationError(
                     "Professional visual plan requires professional B2"
                 )
-            reviewed = _reviewed_professional_plan(professional, self.b21)
+            reviewed = _reviewed_professional_plan(
+                professional, self.b21, cta_groups=self.cta_groups,
+                cta_overrides=self.cta_overrides,
+            )
             blocks = reviewed["blocks"]
         else:
             blocks = [
@@ -1077,6 +1117,9 @@ async def run_b_pipeline(
     visual_style: Literal["casero", "profesional"] = "casero",
     enable_casero_cta: bool = False,
     avatar_image: bytes | None = None,
+    ebook_image: bytes | None = None,
+    previous_cta_groups: tuple[tuple[str, ...], ...] | None = None,
+    previous_cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
     stop_after: Literal["B1.1", "B1.2", "B2", "B2.1", "B3"] = "B2",
     previous_b11: B11Output | None = None,
@@ -1407,6 +1450,32 @@ async def run_b_pipeline(
             on_stage_complete("B1.2", len(b12_results), partial.merged_b12_output())
     if stop_after == "B1.2":
         return BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
+
+    # The detector sees the complete B1.2 merge in parallel with B2 workers.
+    cta_merged_b12 = BPipelineResult(
+        b11=b11, b12=tuple(b12_results), b2=(),
+    ).merged_b12_output()
+    if previous_cta_groups is not None:
+        from .professional_cta import ProfessionalCTADetection
+        from .professional_cta_workflow import validate_cta_detection
+
+        validate_cta_detection(
+            ProfessionalCTADetection(
+                cta_groups=[list(group) for group in previous_cta_groups],
+            ),
+            cta_merged_b12,
+        )
+    cta_detection_task = (
+        asyncio.create_task(detect_professional_ctas(
+            cta_merged_b12, provider=provider, model=model, semaphore=semaphore,
+            on_input=on_input, on_output=on_output,
+            on_api_response=on_api_response, on_call_duration=on_call_duration,
+        ))
+        if (
+            visual_style == "profesional" and ebook_image is not None
+            and previous_cta_groups is None
+        ) else None
+    )
 
     # One shared retry budget per B2 block. Global avatar-run repairs consume
     # the SAME budget as local schema and source-integrity corrections.
@@ -1818,10 +1887,75 @@ async def run_b_pipeline(
         if on_stage_duration is not None:
             on_stage_duration("B2", perf_counter() - b2_started)
 
+    cta_groups: tuple[tuple[str, ...], ...] = previous_cta_groups or ()
+    cta_overrides: dict[str, ProfessionalCTAVisualBeat] = dict(
+        previous_cta_overrides or {}
+    )
+    if cta_detection_task is not None:
+        cta_groups = await cta_detection_task
+    if cta_groups:
+        if not avatar_image or not ebook_image:
+            raise BPipelineValidationError("CTA images missing")
+
+        async def direct_one(
+            group_number: int, group: tuple[str, ...], feedback: str = "",
+        ) -> dict[str, ProfessionalCTAVisualBeat]:
+            return await direct_professional_cta(
+                group_number, group, cta_merged_b12,
+                presenter=avatar_image, ebook=ebook_image,
+                provider=provider, model=model, semaphore=semaphore,
+                on_input=on_input, on_output=on_output,
+                on_api_response=on_api_response,
+                on_call_duration=on_call_duration, correction=feedback,
+            )
+
+        if not cta_overrides:
+            directed = await asyncio.gather(*(
+                direct_one(i, group) for i, group in enumerate(cta_groups, 1)
+            ))
+            for values in directed:
+                cta_overrides.update(values)
+
+        # The merged CTA and ordinary B2 must obey the global audio/grid
+        # constraints before B2.1 or any paid image work.
+        for attempt in range(MAX_VALIDATION_RETRIES + 1):
+            try:
+                final_cta_plan = _professional_plan(
+                    [x for x in b2_results if isinstance(x, ProfessionalB2Output)],
+                    cta_groups=cta_groups, cta_overrides=cta_overrides,
+                )
+                spoken_run = 0
+                for block in final_cta_plan["blocks"]:
+                    for beat in block["beats"]:
+                        if beat["audio"]:
+                            spoken_run += len(beat["text"].strip())
+                            if spoken_run > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
+                                raise BPipelineValidationError(
+                                    "CTA merged audio=true run exceeds 120 characters"
+                                )
+                        else:
+                            spoken_run = 0
+                _professional_grid_locks(final_cta_plan)
+                break
+            except (BPipelineValidationError, GridPlanError, ValueError) as exc:
+                if attempt >= MAX_VALIDATION_RETRIES:
+                    raise BPipelineValidationError(
+                        f"CTA merged plan failed validation: {exc}"
+                    ) from exc
+                # B2 is frozen. Only B2 CTA may correct the invalid merge.
+                repaired = await asyncio.gather(*(
+                    direct_one(i, group, str(exc))
+                    for i, group in enumerate(cta_groups, 1)
+                ))
+                cta_overrides = {
+                    k: v for values in repaired for k, v in values.items()
+                }
+
     result = BPipelineResult(
         b11=b11,
         b12=tuple(b12_results),
         b2=tuple(b2_results),
+        cta_groups=cta_groups, cta_overrides=cta_overrides,
         visual_style=visual_style,
         b2_correction_counts=b2_correction_counts,
         b2_response_ids=b2_last_response_ids,
@@ -1837,9 +1971,15 @@ async def run_b_pipeline(
     if len(professional_results) != len(b2_results):
         raise BPipelineValidationError("B2.1 requires professional B2 outputs")
 
-    source_plan = _professional_plan(professional_results)
+    source_plan = _professional_plan(
+        professional_results, cta_groups=cta_groups, cta_overrides=cta_overrides,
+    )
     split_candidates = _b21_split_candidates(source_plan)
     b21_payload = result.merged_b2_output()
+    for block in b21_payload["blocks"]:
+        for beat in block["beats"]:
+            beat.pop("cta_group_id", None)
+            beat.pop("cta_reference_sources", None)
     b21_payload["b21_review"] = {
         "split_candidates": [
             {"block_id": item["block_id"], "beat_id": item["beat_id"]}
@@ -1870,6 +2010,16 @@ async def run_b_pipeline(
                         on_api_response=on_api_response,
                         on_call_duration=on_call_duration,
                     )
+                # CTA decisions are immutable: discard B2.1 attempts to
+                # patch those beat IDs BEFORE any structural validation.
+                protected = {id for group in cta_groups for id in group}
+                if candidate.modified_beats is not None:
+                    candidate = candidate.model_copy(update={
+                        "modified_beats": [
+                            patch for patch in candidate.modified_beats
+                            if patch.beat_id not in protected
+                        ]
+                    })
                 validate_b21(
                     candidate,
                     source_plan=source_plan,
@@ -1925,6 +2075,7 @@ async def run_b_pipeline(
         b12=tuple(b12_results),
         b2=tuple(b2_results),
         b21=b21,
+        cta_groups=cta_groups, cta_overrides=cta_overrides,
         visual_style=visual_style,
         b2_correction_counts=b2_correction_counts,
         b2_response_ids=b2_last_response_ids,
@@ -1934,7 +2085,10 @@ async def run_b_pipeline(
     if stop_after == "B2.1":
         return result
 
-    reviewed_plan = _reviewed_professional_plan(professional_results, b21)
+    reviewed_plan = _reviewed_professional_plan(
+        professional_results, b21,
+        cta_groups=cta_groups, cta_overrides=cta_overrides,
+    )
     grid_locks = _professional_grid_locks(reviewed_plan)
     audio_groups = _professional_b3_groups(reviewed_plan)
 
@@ -1945,9 +2099,15 @@ async def run_b_pipeline(
         payload_beats: list[dict[str, object]] = []
         for block_id, beat in source:
             lock = grid_locks.get((block_id, str(beat["beat_id"])))
+            # B3 receives only its normal boolean reference contract.
+            # CTA-only reference selection stays in the application plan.
+            clean_beat = {
+                key: value for key, value in beat.items()
+                if key not in {"cta_group_id", "cta_reference_sources"}
+            }
             payload_beats.append({
                 "block_id": block_id,
-                **beat,
+                **clean_beat,
                 "grid_id": lock.grid_id if lock is not None else None,
                 "grid_source": lock.source if lock is not None else None,
                 "grid_role": lock.role if lock is not None else None,
@@ -2040,6 +2200,7 @@ async def run_b_pipeline(
         b2=tuple(b2_results),
         b21=b21,
         b3=b3_results,
+        cta_groups=cta_groups, cta_overrides=cta_overrides,
         visual_style=visual_style,
         b2_correction_counts=b2_correction_counts,
         b2_response_ids=b2_last_response_ids,

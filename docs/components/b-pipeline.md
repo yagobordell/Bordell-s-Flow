@@ -527,6 +527,87 @@ que requieren LTX. El controlador de capacidad de Salad sigue siendo un servicio
 independiente: el runner no despliega GPUs.
 
 
+## CTA ebook en Profesional: detector + director + merge protegido
+
+Tras B1.2, el **merged B1.2 completo** alimenta a CTA Detector en paralelo
+con el B2 Profesional habitual. El detector devuelve exclusivamente grupos
+cronológicos de IDs de beats completos que promocionan el ebook; nunca cambia
+texto ni segmenta beats. El bot **B2 CTA Profesional** recibe cada grupo, la
+imagen original del avatar y la portada persistente del ebook, y asigna con
+libertad creativa `visual_type`, `prompt`, `video_prompt`, `audio`,
+`reference` y `reference_sources` (presenter, ebook o ambas referencias).
+El campo `reference` sigue siendo booleano para compatibilidad con B2.1 y B3.
+La selección real se guarda separada como `cta_reference_sources`.
+
+La asignación B2 original se preserva en sus checkpoints; el **merged B2**
+y `visual_plan.json` sustituyen únicamente las asignaciones visuales de los
+beats detectados. Las salidas CTA son inmutables para B2.1: todo parche de
+B2.1 que toque esos IDs se descarta; también se excluyen de sus split
+candidates. El merge revalida límites consecutivos de `audio=true` y grids
+antes de continuar. Los grupos A2V de B3 y los trabajos LTX cortan
+forzosamente al entrar y salir de un CTA, sin compartir tomas con la narración
+normal. B2.2 sigue refinando el movimiento post-B3 contra los PNG definitivos.
+
+La biblioteca del avatar fija la portada original con
+`ensure_ebook_covers` (selección inicial mediante `--ebook-cover` y posterior
+reutilización). **Solo se activa el circuito CTA del ebook cuando hay una portada
+configurada**; las ejecuciones Profesional existentes sin ebook siguen el
+pipeline habitual sin requerir nuevas entradas. Cuando está configurado, cada
+run Profesional guarda la copia verificable `ebook/cover_1.png`. El generador OpenAI Images recibe realmente los PNG
+correspondientes a cada `cta_reference_sources` y los vincula al fingerprint
+de la solicitud. Ninguna referencia se sustituye silenciosamente.
+
+**QR:** no es parte de ningún prompt de imagen ni LTX. El compositor inserta
+`qr.png` auténtico y validado por SHA-256 en la esquina superior derecha
+durante cada grupo CTA. Desde el inicio del primer CTA hasta 90 segundos
+después de su final permanece visible, incluso sobre beats narrativos
+posteriores. **Además, `zellenne.com` aparece al pronunciar por primera vez
+«QR» dentro de cada CTA** y desaparece al acabar ese CTA, sin heredar los
+90 segundos adicionales del QR. El comienzo se deriva de la palabra ya
+alineada con OpenAI STT (campo `qr_spoken_seconds` de la timeline); si ese
+CTA no contiene un «QR» pronunciado, no aparece la web. El texto se genera
+por código, blanco con contorno negro fino (2 px), centrado horizontalmente,
+a 145 px del margen inferior para situarse por encima de subtítulos habituales.
+No se incorpora a los prompts ni a los fotogramas LTX. Los intervalos usan la
+timeline STT exacta; no se vuelve a grabar la narración original. Ningún beat
+posterior necesita instrucciones sobre el QR. El vídeo con overlay se verifica
+antes de declararse completado.
+
+Artefactos:
+- `CTA Detector/output.json` — únicamente grupos de beat IDs.
+- `B2 CTA/group_N/output.json` — decisiones creativas del CTA.
+- `visual_plan.json` — `ebook_cta_groups`, `ebook_reference`,
+  `cta_group_id` y `cta_reference_sources`.
+- `video/runs/<fingerprint>/with_ebook_qr.mp4` — composición final.
+
+## B2.2 profesional: adaptación del movimiento después de B3
+
+La generación LTX profesional aplica **B2.2** tras B2.1, B3, los PNG finales
+(incluido el acabado/recorte de grids y las nuevas tomas B3) y el alineamiento
+STT, pero antes de enviar trabajos pagados a Postgres/Salad. B2.2 es un adaptador
+multimodal: ve los fotogramas iniciales **reales** de los trabajos, las
+instrucciones de movimiento efectivas post-B3 y el desarrollo cronológico del
+guion, incluidos los beats estáticos intermedios. Retorna estrictamente pares
+`beat_id` y `video_prompt` por trabajo elegible; no cambia `visual_plan.json`.
+
+Solo se adapta I2V `media_video + audio:false` y tomas A2V cuyo primer beat
+no sea `avatar` y ya tengan un movimiento efectivo. Un A2V que agrupa beats
+produce una sola instrucción, identificada por el primer beat. El código mantiene
+intactos el prefijo canónico de habla, el negativo fijo A2V, el audio y los
+cortes/cámara de B3. Si la imagen contradice la intención de B2, el bot
+reestructura la acción para que pueda animarse en lugar de bloquearla.
+
+B2.2 manda los vídeos elegibles en grupos cronológicos multimodales acotados,
+con el texto completo de los beats posteriores y fotogramas próximos para
+evitar anticipar movimientos o repetir acciones. Los resultados se validan
+por conjunto exacto y orden de identificadores. La respuesta validada se
+cachea por hashes de imágenes, prompts, contexto, instrucciones y modelo en
+`video/b22/groups/`; la identidad de trabajos LTX se vuelve a calcular con
+los nuevos prompts. Un fallo de validación no encola trabajos pagados.
+
+Bot: `src/ai_video_factory/bots/prompts/b2_2_professional.md`.
+Código: `src/ai_video_factory/workflows/b22_motion.py`.
+
 ## Integración LTX para B2 (I2V y A2V agrupado)
 
 El runner inicia LTX después de terminar los PNG de B2 y la alineación de

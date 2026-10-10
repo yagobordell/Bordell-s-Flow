@@ -83,7 +83,7 @@ def test_payload_voice_model_style_and_wav_contract(monkeypatch) -> None:
     assert part["text"] == "Hello, café."
     assert "Soft documentary voice." in part["speech_metadata"]["style"]
     assert "verbatim transcript" in part["speech_metadata"]["style"]
-    assert gemini._PROFESSIONAL_STYLE_PREFIX not in part["speech_metadata"]["style"]
+    assert "Respect the next style indications" not in part["speech_metadata"]["style"]
     assert "Hello, café." not in part["speech_metadata"]["style"]
 
 
@@ -372,7 +372,8 @@ def test_async_provider_yields_to_event_loop(monkeypatch) -> None:
     assert asyncio.run(run_both()).extension == "wav"
 
 
-def test_voice_display_name_resolves_to_voice_library_id(monkeypatch) -> None:
+@pytest.mark.parametrize("display_name", ["Uncle Enzo 3", "Enzo m. 3"])
+def test_voice_display_name_resolves_to_voice_library_id(monkeypatch, display_name) -> None:
     class Response:
         def __enter__(self):
             return self
@@ -384,7 +385,7 @@ def test_voice_display_name_resolves_to_voice_library_id(monkeypatch) -> None:
             return json.dumps({
                 "voices": [{
                     "id": "voice_0da4kq24ctjr",
-                    "display_name": "Uncle Enzo 3",
+                    "display_name": display_name,
                 }],
             }).encode()
 
@@ -396,10 +397,20 @@ def test_voice_display_name_resolves_to_voice_library_id(monkeypatch) -> None:
 
     monkeypatch.setattr(gemini, "urlopen", fake_get)
     assert gemini.resolve_gemini_voice_id(
-        "Uncle Enzo 3", api_key="test-key"
+        display_name, api_key="test-key"
     ) == "voice_0da4kq24ctjr"
     assert requests[0][0].full_url.endswith("/voices?pageSize=1000")
     assert requests[0][0].get_header("X-goog-api-key") == "test-key"
+
+
+def test_dotted_studio_voice_name_uses_exact_spelling_in_payload() -> None:
+    assert gemini.validate_gemini_voice_name("Enzo m. 3") == "Enzo m. 3"
+    payload = gemini._build_payload(
+        text="Hola.", voice="Enzo m. 3", instructions="Natural", speed=1.0,
+    )
+    assert payload["generationConfig"]["speechConfig"]["voiceConfig"] == {
+        "prebuiltVoiceConfig": {"voiceName": "Enzo m. 3"},
+    }
 
 
 def test_custom_studio_voice_uses_exported_name_not_legacy_id(monkeypatch) -> None:
@@ -443,10 +454,9 @@ def test_custom_voice_in_professional_v3_preserves_individual_part_styles() -> N
     assert [part["text"] for part in parts] == ["Hello <breath>there.", "Next."]
     assert "Measured opening." in parts[0]["speech_metadata"]["style"]
     assert "Accelerating." in parts[1]["speech_metadata"]["style"]
-    assert all(
-        part["speech_metadata"]["style"].startswith(gemini._PROFESSIONAL_STYLE_PREFIX + "\n")
-        for part in parts
-    )
+    assert [part["speech_metadata"]["style"].split("\n", 1)[0] for part in parts] == [
+        "Measured opening.", "Accelerating."
+    ]
     assert all("verbatim transcript" in part["speech_metadata"]["style"] for part in parts)
 
 

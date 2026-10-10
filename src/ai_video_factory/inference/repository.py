@@ -632,6 +632,39 @@ class PostgresJobRepository:
                 ),
             )
 
+    def record_ltx_telemetry(self, observation: Mapping[str, Any]) -> None:
+        """Persist an immutable completed LTX attempt, independently of cache jobs."""
+
+        from psycopg.types.json import Jsonb
+
+        fields = (
+            "job_id", "request_sha256", "attempt_count", "instance_id",
+            "instance_identity_source", "worker_id", "stage", "profile",
+            "width", "height", "num_frames",
+            "task_seconds", "inference_seconds", "pipeline_load_seconds",
+            "stage1_seconds", "stage2_seconds", "video_decode_seconds",
+            "encode_seconds", "pipeline_reused",
+        )
+        values = tuple(observation[field] for field in fields)
+        with self._pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO gpu.ltx_job_telemetry (
+                    job_id, request_sha256, attempt_count, instance_id,
+                    instance_identity_source, worker_id, stage, profile, width, height, num_frames,
+                    task_seconds, inference_seconds, pipeline_load_seconds,
+                    stage1_seconds, stage2_seconds, video_decode_seconds,
+                    encode_seconds, pipeline_reused, phase_seconds
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (job_id, attempt_count) DO NOTHING
+                """,
+                (*values, Jsonb(observation["phase_seconds"])),
+            )
+
     def next_pending_request(
         self,
         task_names: tuple[str, ...],
