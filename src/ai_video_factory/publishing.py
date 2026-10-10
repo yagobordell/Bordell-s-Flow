@@ -227,7 +227,26 @@ def _collect(
             f"Media/audios/bloques/bloque_{block['block_id']}{Path(filename).suffix.lower()}",
             filename, block.get("sha256"),
         )
-    add(script.stem + ".mp4", video.get("file"), video.get("sha256"))
+    editorial = run.get("editorial_generation")
+    if editorial is not None:
+        if not isinstance(editorial, dict) or editorial.get("status") != "completed":
+            raise PublicationError("Editorial production did not complete")
+        edit_file = editorial.get("file")
+        if not isinstance(edit_file, str) or Path(edit_file).parent.name == "":
+            raise PublicationError("Invalid editorial file in saved report")
+        editorial_manifest = _json(
+            work, (Path(edit_file).parent / "manifest.json").as_posix(),
+        )
+        if (editorial_manifest != editorial
+            or editorial.get("source_video_sha256") != video.get("sha256")
+            or editorial.get("source_audio_sha256") != audio.get("sha256")):
+            raise PublicationError("Editorial snapshot differs from authoritative LTX/audio")
+        add(script.stem + ".mp4", editorial["file"], editorial["sha256"])
+        add(
+            "Bots/editorial/render_plan.json", editorial["render_plan_file"],
+        )
+    else:
+        add(script.stem + ".mp4", video.get("file"), video.get("sha256"))
     return Path(avatar["filename"]).stem, entries
 
 
