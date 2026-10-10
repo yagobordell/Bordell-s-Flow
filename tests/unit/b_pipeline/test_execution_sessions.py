@@ -56,3 +56,24 @@ def test_unknown_expenses_remain_none_instead_of_claimed_zero() -> None:
     assert latest["billed_cost_usd"] is None
     assert latest["estimated_api_cost_usd"] is None
     assert latest["observed_salad_cost_usd"] is None
+
+
+
+def test_session_costs_are_deltas_not_repeated_cumulative_snapshots() -> None:
+    report = {
+        "api_costs": {"priced_subtotal_usd": "2.50"},
+        "salad_costs": {"priced_subtotal_usd": "7.25"},
+    }
+    first = begin_run_session(report, mode="videos-only")
+    report["api_costs"]["priced_subtotal_usd"] = "2.75"
+    report["salad_costs"]["priced_subtotal_usd"] = "8.10"
+    finish_run_session(
+        report, first, elapsed_seconds=30, status="completed",
+    )
+    snapshot = report["execution_sessions"]["items"][-1]
+    assert snapshot["estimated_api_cost_usd"] == "0.25"
+    assert snapshot["observed_salad_cost_usd"] == "0.85"
+    assert snapshot["billed_cost_usd"] is None
+    second = begin_run_session(report, mode="videos-only")
+    finish_run_session(report, second, elapsed_seconds=2, status="completed")
+    assert report["execution_sessions"]["items"][-1]["observed_salad_cost_usd"] == "0.00"
