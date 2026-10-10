@@ -96,7 +96,10 @@ def _fits(effect: EditorialIntervention, decision: LayoutDecision) -> bool:
     if font is None:
         return False
     widths = [font.getlength(text) for text in texts]
-    max_width = max(widths) * 1.12 + 16
+    if effect.kind in {"comparison_cards", "process_flow"}:
+        max_width = sum(widths) * 1.14 + (len(widths) - 1) * 90 + 60
+    else:
+        max_width = max(widths) * 1.12 + 16
     row_count = len(texts) if effect.kind == "accumulating_list" else 1
     height = row_count * decision.font_size_px * 1.45 + 16
     return max_width <= decision.width * 1920 and height <= decision.height * 1080
