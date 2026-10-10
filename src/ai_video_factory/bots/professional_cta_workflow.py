@@ -28,7 +28,7 @@ def prompt_instructions(name: str) -> str:
     return files("ai_video_factory.bots.prompts").joinpath(name).read_text(encoding="utf-8")
 
 
-_NUMBERED = re.compile(r"^\s*[1-9]\.\s+(.+)$", re.DOTALL)
+_NUMBERED = re.compile(r"^\s*(?:[1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
 
 
 def validate_cta_detection(

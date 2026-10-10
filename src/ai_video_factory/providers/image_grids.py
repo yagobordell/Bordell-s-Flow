@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_NUMBERED = re.compile(r"^([1-9])\.\s+(.+)$", re.DOTALL)
+_NUMBERED = re.compile(r"^([1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
 _SHAPES = {
     2: (2, 2), 3: (2, 2), 4: (2, 2),
     5: (3, 2), 6: (3, 2),
@@ -97,10 +97,55 @@ def _grid_prompt(
     return prompt
 
 
+def _professional_grid_chunks(
+    run: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """Partition logical continuity into 2–4-cell grids without splitting beat subshots."""
+    from functools import lru_cache
+
+    units: list[list[dict[str, Any]]] = []
+    for asset in run:
+        if units and (units[-1][0]["block_id"], units[-1][0]["beat_id"]) == (
+            asset["block_id"], asset["beat_id"],
+        ):
+            units[-1].append(asset)
+        else:
+            units.append([asset])
+
+    @lru_cache(None)
+    def solve(index: int) -> tuple[tuple[int, ...], ...] | None:
+        if index == len(units):
+            return ()
+        candidates: list[tuple[tuple[int, ...], ...]] = []
+        count = 0
+        for end in range(index + 1, len(units) + 1):
+            count += len(units[end - 1])
+            if count > 4:
+                break
+            if count < 2:
+                continue
+            tail = solve(end)
+            if tail is not None:
+                candidates.append((tuple(range(index, end)),) + tail)
+        if not candidates:
+            return None
+        return min(
+            candidates, key=lambda groups: (
+                len(groups),
+                tuple(-sum(len(units[i]) for i in group) for group in groups),
+            ),
+        )
+
+    grouping = solve(0)
+    if grouping is None:
+        raise GridPlanError("Cannot split numbered continuity into 2–4-panel grids")
+    return [[asset for i in group for asset in units[i]] for group in grouping]
+
+
 def plan_image_jobs(
     plan: dict[str, Any], described: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Group 2-9 consecutive numbered visual assets, preserving B2.1 subshots.
+    """Group logical numbered visual assets, then plan 2–4 cell grids.
 
     A beat may now own two image assets. Asset identity, not parent beat identity,
     determines generation state and grid position. Parent beat_id is retained for
@@ -175,7 +220,7 @@ def plan_image_jobs(
                         f"Invalid B2 continuity numbering at {source['beat_id']}: "
                         f"expected {len(current) + 1 if current else 1}, got {number}"
                     )
-                if len(current) == 9:
+                if len(current) == (18 if visual_style == "profesional" else 9):
                     finish()
         finish()
 
@@ -209,116 +254,132 @@ def plan_image_jobs(
     }
 
     grids: list[dict[str, Any]] = []
-    for run in grid_runs:
-        columns, rows = _SHAPES[len(run)]
-        count = columns * rows
-        avatar_media_grid = all(
-            asset["visual_type"] == "avatar_media" for asset in run
+    for logical_run in grid_runs:
+        chunks = (
+            _professional_grid_chunks(logical_run)
+            if visual_style == "profesional" else [logical_run]
         )
-        first = positions[key(run[0])]
-        last = positions[key(run[-1])]
-        forward = sorted(
-            (
-                asset_key for asset_key in available
-                if (
-                    positions[asset_key] > last
-                    and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
-                    and (
-                        available[asset_key]["visual_type"] == "avatar_media"
-                    ) == avatar_media_grid
-                )
-            ),
-            key=positions.__getitem__,
-        )[:count - len(run)]
-        missing = count - len(run) - len(forward)
-        backward = sorted(
-            (
-                asset_key for asset_key in available
-                if (
-                    positions[asset_key] < first
-                    and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
-                    and (
-                        available[asset_key]["visual_type"] == "avatar_media"
-                    ) == avatar_media_grid
-                )
-            ),
-            key=positions.__getitem__,
-            reverse=True,
-        )[:missing]
-        selected = [available[asset_key] for asset_key in forward + backward] + run
-        for asset_key in forward + backward:
-            del available[asset_key]
-        selected.sort(key=lambda asset: positions[key(asset)])
+        for chain_index, run in enumerate(chunks):
+            columns, rows = _SHAPES[len(run)]
+            count = columns * rows
+            avatar_media_grid = all(
+                asset["visual_type"] == "avatar_media" for asset in run
+            )
+            first = positions[key(run[0])]
+            last = positions[key(run[-1])]
+            allow_fillers = len(chunks) == 1
+            forward = sorted(
+                (
+                    asset_key for asset_key in available
+                    if (
+                        positions[asset_key] > last
+                        and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
+                        and (
+                            available[asset_key]["visual_type"] == "avatar_media"
+                        ) == avatar_media_grid
+                    )
+                ),
+                key=positions.__getitem__,
+            )[:count - len(run)] if allow_fillers else []
+            missing = count - len(run) - len(forward)
+            backward = sorted(
+                (
+                    asset_key for asset_key in available
+                    if (
+                        positions[asset_key] < first
+                        and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
+                        and (
+                            available[asset_key]["visual_type"] == "avatar_media"
+                        ) == avatar_media_grid
+                    )
+                ),
+                key=positions.__getitem__,
+                reverse=True,
+            )[:missing] if allow_fillers else []
+            selected = [available[asset_key] for asset_key in forward + backward] + run
+            for asset_key in forward + backward:
+                del available[asset_key]
+            selected.sort(key=lambda asset: positions[key(asset)])
 
-        has_video = any(
-            asset["visual_type"] in {"media_video", "avatar"} for asset in selected
-        )
-        panel_width, panel_height = (
-            (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
-            if avatar_media_grid else (1920, 1080)
-            if visual_style == "profesional" and has_video and (columns, rows) == (2, 2)
-            else (_PANEL_WIDTH, _PANEL_HEIGHT)
-        )
-        black_panel_count = count - len(selected)
-        selected.extend(
-            {
-                "block_id": run[0]["block_id"],
-                "beat_id": (
-                    f"{run[0]['block_id']}BLACKPANEL"
-                    f"{chr(ord('A') + index)}"
+            has_video = any(
+                asset["visual_type"] in {"media_video", "avatar"} for asset in selected
+            )
+            panel_width, panel_height = (
+                (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
+                if avatar_media_grid else (1920, 1080)
+                if visual_style == "profesional" and has_video and (columns, rows) == (2, 2)
+                else (_PANEL_WIDTH, _PANEL_HEIGHT)
+            )
+            black_panel_count = count - len(selected)
+            selected.extend(
+                {
+                    "block_id": run[0]["block_id"],
+                    "beat_id": (
+                        f"{run[0]['block_id']}BLACKPANEL"
+                        f"{chr(ord('A') + index)}"
+                    ),
+                    "asset_id": (
+                        f"{run[0]['block_id']}BLACKPANEL"
+                        f"{chr(ord('A') + index)}"
+                    ),
+                    "visual_type": "media_image",
+                    "description": BLACK_PANEL_DESCRIPTION,
+                    "source": BLACK_PANEL_SOURCE,
+                    "reference": False,
+                }
+                for index in range(black_panel_count)
+            )
+            panels = [
+                {
+                    **asset,
+                    "row": index // columns,
+                    "column": index % columns,
+                    "source": asset.get("source") or (
+                        "numbered" if key(asset) in numbered else "filler"
+                    ),
+                }
+                for index, asset in enumerate(selected)
+            ]
+            anchor = run[0]
+            grids.append({
+                "continuity_chain_id": (
+                    f"{logical_run[0]['block_id']}:"
+                    f"{logical_run[0].get('asset_id', logical_run[0]['beat_id'])}"
                 ),
-                "asset_id": (
-                    f"{run[0]['block_id']}BLACKPANEL"
-                    f"{chr(ord('A') + index)}"
+                "continuity_index": chain_index,
+                **({
+                    "continuity_previous_asset_id": chunks[chain_index - 1][0].get(
+                        "asset_id", chunks[chain_index - 1][0]["beat_id"],
+                    ),
+                } if chain_index else {}),
+                "kind": "grid",
+                "block_id": anchor["block_id"],
+                "beat_id": anchor["beat_id"],
+                "asset_id": anchor.get("asset_id", anchor["beat_id"]),
+                "visual_type": anchor["visual_type"],
+                "description": _grid_prompt(
+                    panels, columns, rows, visual_style=visual_style,
+                    panel_aspect="8:9" if avatar_media_grid else "16:9",
                 ),
-                "visual_type": "media_image",
-                "description": BLACK_PANEL_DESCRIPTION,
-                "source": BLACK_PANEL_SOURCE,
-                "reference": False,
-            }
-            for index in range(black_panel_count)
-        )
-        panels = [
-            {
-                **asset,
-                "row": index // columns,
-                "column": index % columns,
-                "source": asset.get("source") or (
-                    "numbered" if key(asset) in numbered else "filler"
-                ),
-            }
-            for index, asset in enumerate(selected)
-        ]
-        anchor = run[0]
-        grids.append({
-            "kind": "grid",
-            "block_id": anchor["block_id"],
-            "beat_id": anchor["beat_id"],
-            "asset_id": anchor.get("asset_id", anchor["beat_id"]),
-            "visual_type": anchor["visual_type"],
-            "description": _grid_prompt(
-                panels, columns, rows, visual_style=visual_style,
-                panel_aspect="8:9" if avatar_media_grid else "16:9",
-            ),
-            **({"visual_style": visual_style} if visual_style == "profesional" else {}),
-            "size": f"{columns * panel_width}x{rows * panel_height}",
-            "grid": {
-                "columns": columns, "rows": rows,
-                "panel_width": panel_width, "panel_height": panel_height,
-                "width": columns * panel_width,
-                "height": rows * panel_height,
-                "numbered_beat_ids": [asset["beat_id"] for asset in run],
-                "numbered_asset_ids": [
-                    asset.get("asset_id", asset["beat_id"]) for asset in run
-                ],
-            },
-            "panels": panels,
-            **({"video_panel_ids": [
-                panel["beat_id"] for panel in panels
-                if panel.get("source") != BLACK_PANEL_SOURCE
-                and panel["visual_type"] in {"media_video", "avatar"}
-            ]} if visual_style == "profesional" else {}),
-        })
+                **({"visual_style": visual_style} if visual_style == "profesional" else {}),
+                "size": f"{columns * panel_width}x{rows * panel_height}",
+                "grid": {
+                    "columns": columns, "rows": rows,
+                    "panel_width": panel_width, "panel_height": panel_height,
+                    "width": columns * panel_width,
+                    "height": rows * panel_height,
+                    "numbered_beat_ids": [asset["beat_id"] for asset in run],
+                    "numbered_asset_ids": [
+                        asset.get("asset_id", asset["beat_id"]) for asset in run
+                    ],
+                },
+                "panels": panels,
+                **({"video_panel_ids": [
+                    panel["beat_id"] for panel in panels
+                    if panel.get("source") != BLACK_PANEL_SOURCE
+                    and panel["visual_type"] in {"media_video", "avatar"}
+                ]} if visual_style == "profesional" else {}),
+            })
 
     individuals = [*available.values(), *standalone.values()]
     jobs = [

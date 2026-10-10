@@ -482,7 +482,7 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
 
 
 _B21_IMAGE_SPLIT_THRESHOLD = 70
-_B21_NUMBERED_PROMPT = re.compile(r"^\s*([1-9])\.\s+(.+)$", re.DOTALL)
+_B21_NUMBERED_PROMPT = re.compile(r"^\s*([1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
 
 
 def _b21_prompt_body(prompt: str) -> str:
@@ -639,13 +639,13 @@ def validate_b21(
 def _b21_pack_grid_units(
     units: list[tuple[dict[str, object], list[str]]],
 ) -> list[list[tuple[dict[str, object], list[str]]]]:
-    """Pack a numbered continuity run into <=9-panel grids without splitting a beat pair."""
+    """Pack logical continuity runs of up to 18 assets, preserving beat subshot pairs."""
     chunks: list[list[tuple[dict[str, object], list[str]]]] = []
     current: list[tuple[dict[str, object], list[str]]] = []
     count = 0
     for unit in units:
         size = len(unit[1])
-        if current and count + size > 9:
+        if current and count + size > 18:
             chunks.append(current)
             current, count = [], 0
         current.append(unit)
