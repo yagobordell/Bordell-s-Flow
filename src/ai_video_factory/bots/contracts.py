@@ -195,41 +195,12 @@ class ProfessionalVisualBeat(Beat):
                 raise ValueError("media_video requires a nonempty video_prompt")
         elif self.video_prompt is not None:
             raise ValueError("video_prompt must be null unless visual_type is media_video")
-        if (
-            self.visual_type == "media_image"
-            and self.reference
-            and self.beat_type == "action"
-            and self.prompt is not None
-            and re.search(
-                r"\b(?:presenter|avatar|woman|man|person|she|her|he|his)\b",
-                self.prompt,
-                flags=re.IGNORECASE,
-            )
-            and re.search(
-                r"\b(?:applying|massaging|pressing|smoothing|dabbing|blending|"
-                r"rubbing|rinsing|washing|brushing|spreading)\b",
-                self.prompt,
-                flags=re.IGNORECASE,
-            )
-            and not re.search(r"\b(?:after|finished|result)\b", self.prompt, re.IGNORECASE)
-        ):
-            raise ValueError(
-                "Referenced presenter performing an active practical step "
-                "should use media_video, not media_image"
-            )
         if self.visual_type in {"avatar", "avatar_media"} and not self.audio:
             raise ValueError("Presenter visuals must have audio=true")
-        if self.visual_type == "media_image" and self.audio:
-            raise ValueError(
-                "media_image must have audio=false; use media_video for synchronized speech"
-            )
-        if self.visual_type == "media_video" and self.audio and not self.reference:
-            raise ValueError(
-                "Speaking media_video must use the supplied avatar reference; "
-                "audio=true is reserved for the narrator in the preserved narration setup"
-            )
-        if self.visual_type == "avatar" and self.prompt is not None and not self.reference:
-            raise ValueError("Regenerated presenter images require the avatar reference")
+        if self.visual_type in {"media_image", "media_video"} and self.audio:
+            raise ValueError("Only avatar and avatar_media may have audio=true")
+        if self.visual_type == "avatar" and self.prompt is not None:
+            raise ValueError("Talking avatar must reuse its original image")
         return self
 
 
