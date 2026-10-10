@@ -1614,23 +1614,6 @@ def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
         and saved.get("finishing_status") != "completed"
     ):
         return True
-    b3_root = output / "images" / "b3_shots"
-    if b3_root.is_symlink():
-        raise ImageGenerationError("Refusing linked B3 image state directory")
-    for state_path in b3_root.glob("*.json"):
-        if state_path.is_symlink():
-            raise ImageGenerationError("Refusing linked B3 image state")
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise ImageGenerationError("Saved B3 image state is unreadable") from exc
-        if (
-            not isinstance(state, dict)
-            or state.get("schema_version") != "b3-shot-image-v1"
-        ):
-            raise ImageGenerationError("Saved B3 image state has an unexpected schema")
-        if state.get("status") != "completed":
-            return True
     return False
 
 
@@ -2357,7 +2340,7 @@ class BotArtifacts:
         if block_id is None or block_id < 1:
             raise ValueError(f"{stage} requires a positive block/group ID")
         return self._output / stage / (
-            f"group_{block_id}" if stage in {"B3", "B2 CTA"} else f"block_{block_id}"
+            f"group_{block_id}" if stage == "B2 CTA" else f"block_{block_id}"
         )
 
     def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
@@ -2406,31 +2389,6 @@ class BotArtifacts:
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
-    def rejected_b3(
-        self, group_id: int, attempt: int, error: str, payload: dict[str, object]
-    ) -> None:
-        _write(
-            self._folder("B3", group_id) / f"rejected_attempt_{attempt}.json",
-            {"attempt": attempt, "validation_error": error, "response": payload},
-        )
-
-    def require_b3_group_outputs(self, group_count: int) -> None:
-        """Fail closed unless every completed B3 call has durable input/output JSON."""
-        if group_count < 0:
-            raise ValueError("B3 group count cannot be negative")
-        root = self._output / "B3"
-        if root.is_symlink():
-            raise RuntimeError("Refusing linked B3 artifact directory")
-        for group_id in range(1, group_count + 1):
-            folder = self._folder("B3", group_id)
-            if folder.is_symlink():
-                raise RuntimeError(f"Refusing linked B3 group directory: {folder}")
-            for filename in ("input.json", "output.json"):
-                path = folder / filename
-                if path.is_symlink() or not path.is_file():
-                    raise RuntimeError(
-                        f"B3 group {group_id} completed without durable {filename}"
-                    )
 
 
 class TimingLedger:
@@ -2817,7 +2775,7 @@ async def main() -> None:
                      block_count - len(previous_partial_b2)
                      if stage == "B2" else
                      1 if stage == "B2.1" else
-                     0 if stage == "B3" else block_count)
+                     block_count)
                     if rerun_from_index <= stage_index <= stop_index else 0
                 )
                 for stage_index, stage in enumerate(_STAGES)
@@ -3048,13 +3006,11 @@ async def main() -> None:
         merged_output: dict[str, object] | None,
     ) -> None:
         nonlocal planned_blocks
-        if stage not in {"B2.1", "B3"}:
+        if stage != "B2.1":
             planned_blocks = blocks
-        elif stage == "B3":
-            artifacts.require_b3_group_outputs(blocks)
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
-        report_count = planned_blocks if stage in {"B2.1", "B3"} else blocks
+        report_count = planned_blocks if stage == "B2.1" else blocks
         costs, timing_report = save_report("running", report_count)
         elapsed = timing_report["stages"][stage]["elapsed_seconds"]
         if elapsed is None:
@@ -3360,7 +3316,7 @@ async def main() -> None:
                         ),
                         start_from="B2",
                         stop_after=(
-                            "B3" if visual_style == "profesional" else "B2"
+                            "B2.1" if visual_style == "profesional" else "B2"
                         ),
                         previous_b11=result.b11,
                         previous_b12=result.b12,

@@ -806,7 +806,7 @@ def generate_b2_ltx_video(
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     if plan.get("visual_style") == "profesional":
-        # B2.2 sees the real finalized LTX start PNGs *after* B3 grouping.
+        # B2.2 sees the finalized B-roll PNGs after B2.1 review.
         # Produce and validate every override before any paid job submission.
         from ai_video_factory.workflows.b22_motion import adapt_b22_motion
 

@@ -1,4 +1,4 @@
-"""Strict source-preserving interfaces for the B1.1 / B1.2 / B2 / B3 bots.
+"""Strict source-preserving interfaces for the B1.1 / B1.2 / B2 / B2.1 bots.
 
 Models describe the exact JSON object on the wire. API Structured Outputs already
 provide JSON transport, so the Markdown code fences requested by the human-readable
