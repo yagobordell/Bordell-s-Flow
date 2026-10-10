@@ -113,6 +113,45 @@ def test_v3_artistic_contract_and_v4_source_bound_tags():
         pv._check_v3(result, block)
 
 
+def test_v3_repairs_only_verbatim_punctuation_without_positional_intents():
+    source = _block()
+    direction = _v3()
+    spoken = direction.beat_deliveries[0].delivery[0]
+    spoken.speak = "Hola mundo."
+    spoken.vocal_intents = []
+    pv._restore_v3_source_punctuation(direction, source)
+    assert spoken.speak == source["beats"][0]["text"]
+    pv._check_v3(direction, source)
+
+    # Never guess changed words, even if the replacement is plausible.
+    direction = _v3()
+    direction.beat_deliveries[0].delivery[0].speak = "Hola, planeta. "
+    direction.beat_deliveries[0].delivery[0].vocal_intents = []
+    pv._restore_v3_source_punctuation(direction, source)
+    with pytest.raises(pv.VoicePlanError, match="verbatim"):
+        pv._check_v3(direction, source)
+
+    # Offset-bearing intent positions cannot be silently remapped.
+    direction = _v3()
+    direction.beat_deliveries[0].delivery[0].speak = "Hola mundo."
+    pv._restore_v3_source_punctuation(direction, source)
+    assert direction.beat_deliveries[0].delivery[0].speak == "Hola mundo."
+    with pytest.raises(pv.VoicePlanError, match="verbatim"):
+        pv._check_v3(direction, source)
+
+    # Multiple spoken fragments have ambiguous punctuation ownership.
+    direction = _v3()
+    direction.beat_deliveries[0].delivery = [
+        pv.Speak(speak="Hola", delivery_quality="Gentle",
+                 ending_behavior="carry", stress=[], vocal_intents=[]),
+        pv.Speak(speak=" mundo.", delivery_quality="Gentle",
+                 ending_behavior="land", stress=[], vocal_intents=[]),
+    ]
+    pv._restore_v3_source_punctuation(direction, source)
+    with pytest.raises(pv.VoicePlanError, match="verbatim"):
+        pv._check_v3(direction, source)
+
+
 def test_v3_rejects_split_word_and_excess_humanization():
     direction = _v3()
     direction.beat_deliveries[0].delivery[0].vocal_intents = [
@@ -263,6 +302,38 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
         blocks=[_block()], output=tmp_path, provider=provider, model="test",
     ))
     assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
+
+
+def test_v3_narration_retry_identifies_exact_source_drift(tmp_path):
+    class Drifting(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.feedback = []
+
+        async def generate_structured_with_response(self, *, output_type, **kwargs):
+            if output_type is pv.V3 and self.calls.count("V3"):
+                self.feedback.append(json.loads(kwargs["input_text"])["validation_feedback"])
+            result, raw = await super().generate_structured_with_response(
+                output_type=output_type, **kwargs,
+            )
+            if output_type is pv.V3 and self.calls.count("V3") == 1:
+                result.beat_deliveries[0].delivery[0].speak = "Hola, planeta. "
+            return result, raw
+
+    provider = Drifting()
+    asyncio.run(pv.plan_professional_voice(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=provider, model="test",
+    ))
+    assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
+    assert len(provider.feedback) == 1
+    hint = provider.feedback[0]["narration_mismatch"]
+    assert hint["beat_id"] == "1A"
+    assert hint["expected_excerpt"] != hint["received_excerpt"]
+    assert hint["first_difference_at"] >= 0
+    assert "exact full string" in provider.feedback[0]["task"]
+    assert "omitted" in provider.feedback[0]["rejected_response"]
+    assert (tmp_path / "V3/block_1/output.json").is_file()
 
 
 def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
