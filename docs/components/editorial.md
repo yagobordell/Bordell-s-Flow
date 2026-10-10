@@ -5,11 +5,11 @@ This is a postproduction layer for **professional** B-pipeline runs. Casero outp
 ## Operation
 
 - E1 reads the authoritative whole-video B plan and completed STT beat timeline. E1 decides a sparse collection of supported editorial interventions. It does not inspect image files or alter any B output.
-- E1 supports occasional **progressive editorial text**, **accumulating lists**, **number emphasis**, and **single text cards** in v1. There is **no subtitle track** and no generated spoken dialogue.
+- E1 supports occasional **progressive editorial text**, **accumulating lists**, **number emphasis**, **single text cards**, **two-to-three-node process flows**, and **comparison cards** in v1. There is **no subtitle track** and no generated spoken dialogue.
 - The compiler resolves E1's exact spoken anchors against already-saved, SHA-verified STT word records, using the existing token alignment logic. No additional STT request is made.
 - E2 receives only the relevant intervention and chronological JPG samples extracted from the **assembled pre-CTA LTX video**. It decides final normalized placement, font size, color, stroke and alignment, or suppresses duplicate/inappropriate text. E2 never changes E1's wording.
 - A deterministic validation step checks geometry, text sizing and protected CTA regions. Unsupported or unsafe E2 placements are suppressed.
-- Remotion produces a transparent 24-fps ProRes 4444 graphics layer. FFmpeg overlays this layer onto the untouched LTX video and preserves its original audio stream. The existing professional CTA compositor then draws the verified QR and the STT-triggered zellenne.com website **after** the new graphics.
+- Remotion produces short transparent 24-fps ProRes 4444 layers only over occupied editorial intervals. FFmpeg overlays these layers onto the untouched LTX video and preserves its original audio stream. The existing professional CTA compositor then draws the verified QR and the STT-triggered zellenne.com website **after** the new graphics.
 - Source media, narration, visual_plan.json, LTX fingerprints and completed LTX job manifests remain untouched.
 
 The editorial content is independently content-addressed. E1 and E2 cache keys include model, instructions and verified relevant inputs; their associated API usage is stored in `editorial/e1/` and `editorial/e2/`. A completed render gets its own manifest with a source-video SHA and narration SHA.
@@ -61,7 +61,7 @@ Use the normal run or `--no-editorial` for the legacy FFmpeg-only production.
 
 ## Supported scope and limitations
 
-The initial renderer supports typography-based editorial interventions, not all future motion graphics. Sounds, diagrams and customized object tracking are out of scope of this first implementation. E2 sees sampled frames rather than every frame and does not guarantee that moving subjects cannot cross the text later. Its decisions remain bounded by deterministic layout and CTA safety checks.
+The initial renderer supports editorial typography plus compact comparison and process diagrams. Sound effects, full-screen complex diagrams and customized object tracking are out of scope of this first implementation. E2 sees sampled frames rather than every frame and does not guarantee that moving subjects cannot cross the text later. Its decisions remain bounded by deterministic layout and CTA safety checks.
 
 Remotion + FFmpeg introduce an additional decode/encode pass and should be benchmarked on real completed videos before becoming the professional default.
 
