@@ -1762,12 +1762,6 @@ async def _run_images_only(
             raise
         if video is not None:
             report["run"]["video_generation"] = video
-    if editorial:
-        from ai_video_factory.editorial.workflow import generate_editorial_video
-
-        report["run"]["editorial_generation"] = await asyncio.to_thread(
-            generate_editorial_video, output, report,
-        )
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
@@ -1841,6 +1835,12 @@ async def _run_videos_only(
         _write(report_path, report)
         raise
     report["run"]["video_generation"] = video
+    if editorial:
+        from ai_video_factory.editorial.workflow import generate_editorial_video
+
+        report["run"]["editorial_generation"] = await asyncio.to_thread(
+            generate_editorial_video, output, report,
+        )
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
