@@ -1,0 +1,85 @@
+{
+  "schema_version": "editorial-render-v1",
+  "fps": 24,
+  "width": 1920,
+  "height": 1080,
+  "duration_frames": 24,
+  "events": [
+    {
+      "id": "graphic-0",
+      "kind": "process_flow",
+      "start_frame": 0,
+      "end_frame": 24,
+      "elements": [
+        {
+          "text": "Item 1",
+          "frame": 0
+        },
+        {
+          "text": "Item 2",
+          "frame": 3
+        },
+        {
+          "text": "Item 3",
+          "frame": 6
+        },
+        {
+          "text": "Item 4",
+          "frame": 9
+        },
+        {
+          "text": "Item 5",
+          "frame": 12
+        }
+      ],
+      "animation": "fade",
+      "layout": {
+        "x": 0.05,
+        "y": 0.06,
+        "width": 0.9,
+        "height": 0.88,
+        "font_size_px": 48,
+        "color": "#FFFFFF",
+        "stroke_color": "#000000",
+        "stroke_width_px": 2,
+        "align": "center"
+      }
+    },
+    {
+      "id": "graphic-1",
+      "kind": "comparison_cards",
+      "start_frame": 0,
+      "end_frame": 24,
+      "elements": [
+        {
+          "text": "Item 1",
+          "frame": 0
+        },
+        {
+          "text": "Item 2",
+          "frame": 3
+        },
+        {
+          "text": "Item 3",
+          "frame": 6
+        },
+        {
+          "text": "Item 4",
+          "frame": 9
+        }
+      ],
+      "animation": "fade",
+      "layout": {
+        "x": 0.05,
+        "y": 0.06,
+        "width": 0.9,
+        "height": 0.88,
+        "font_size_px": 48,
+        "color": "#FFFFFF",
+        "stroke_color": "#000000",
+        "stroke_width_px": 2,
+        "align": "center"
+      }
+    }
+  ]
+}
