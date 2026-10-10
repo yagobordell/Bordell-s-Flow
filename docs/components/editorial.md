@@ -5,7 +5,7 @@ This is a postproduction layer for **professional** B-pipeline runs. Casero outp
 ## Operation
 
 - E1 reads the authoritative whole-video B plan and completed STT beat timeline. E1 decides a sparse collection of supported editorial interventions. It does not inspect image files or alter any B output.
-- E1 supports occasional **progressive editorial text**, **accumulating lists**, **number emphasis**, **single text cards**, **two-to-three-node process flows**, and **comparison cards** in v1. There is **no subtitle track** and no generated spoken dialogue.
+- E1 supports occasional **progressive editorial text**, **accumulating lists**, **number emphasis**, **single text cards**, **adaptive process flows (2–8 nodes)**, and **comparison cards (2–8 items)** in v1. There is **no subtitle track** and no generated spoken dialogue.
 - The compiler resolves E1's exact spoken anchors against already-saved, SHA-verified STT word records, using the existing token alignment logic. No additional STT request is made.
 - E2 receives only the relevant intervention and chronological JPG samples extracted from the **assembled pre-CTA LTX video**. It decides final normalized placement, font size, color, stroke and alignment, or suppresses duplicate/inappropriate text. E2 never changes E1's wording.
 - A deterministic validation step checks geometry, text sizing and protected CTA regions. Unsupported or unsafe E2 placements are suppressed.
