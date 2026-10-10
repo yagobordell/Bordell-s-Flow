@@ -14,7 +14,6 @@ from ai_video_factory.inference.salad_autoscaler import (
     build_global_demands,
 )
 
-
 NOW = datetime(2026, 10, 10, tzinfo=UTC)
 
 
