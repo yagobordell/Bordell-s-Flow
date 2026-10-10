@@ -13,7 +13,7 @@ Composition
 Select one normalized rectangle for the fully expanded composition, adequate for its longest and most visually demanding state. Maintain the rectangle throughout progressive reveals and accumulating lists. Favor balance, legibility, coherent hierarchy and safe clearances. Prefer regions that preserve important faces, gestures, objects and code-owned overlays. Adapt E1's layout preference when actual framing indicates a stronger placement.
 
 Typography
-Choose an appropriate actual font size, RGB text color, stroke color and thickness, and text alignment from the allowed properties. Use strong contrast and a polished consistent aesthetic. A clear reserved panel-style composition is suitable when the footage leaves little negative space. Resolve your recommendation from the entire sequence of supplied images, not only the first frame.
+Choose an appropriate actual font size, RGB text color, stroke color and thickness, and text alignment from the allowed properties. Use strong contrast and a polished consistent aesthetic. A clear reserved panel-style composition is suitable when the footage leaves little negative space. Resolve your recommendation from the entire sequence of supplied images, not only the first frame. A multi-element diagram or comparison can use an adaptive multi-row arrangement. Reserve enough height and width for its complete final state and choose typography that can accommodate all of the selected elements without clipping.
 
 Protected areas
 Honor all protected screen regions and CTA time windows supplied by the application. Preserve QR visibility and the website overlay at its established location. When a direct overlay cannot coexist with the scene, prefer the safest supported design or suppress the intervention.
