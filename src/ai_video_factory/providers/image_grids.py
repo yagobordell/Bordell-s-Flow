@@ -86,12 +86,31 @@ def _grid_prompt(
             "Keep the resulting panels visually distinct while following "
             "each panel's specific described content and natural framing."
         )
-        reference_panels = [str(i) for i, p in enumerate(panels, 1) if p.get("reference")]
-        if reference_panels:
-            prompt += ("\n\nThe attached avatar reference image may be used ONLY for panels "
-                       + ", ".join(reference_panels)
-                       + "; all other panels follow their own independent scene "
-                       "descriptions and subjects.")
+        presenter_panels = [
+            str(i) for i, panel in enumerate(panels, 1)
+            if panel.get("reference") and (
+                panel.get("cta_reference_sources") is None
+                or "presenter" in panel["cta_reference_sources"]
+            )
+        ]
+        ebook_panels = [
+            str(i) for i, panel in enumerate(panels, 1)
+            if "ebook" in (panel.get("cta_reference_sources") or [])
+        ]
+        if presenter_panels:
+            prompt += (
+                "\n\nThe attached presenter identity reference is for panels "
+                + ", ".join(presenter_panels)
+                + " ONLY. Preserve recognizable identity where needed, but never "
+                "copy the presenter's original narration room into a generated scene."
+            )
+        if ebook_panels:
+            prompt += (
+                "\n\nThe attached authentic ebook-cover reference applies to panels "
+                + ", ".join(ebook_panels)
+                + " ONLY. Preserve the actual cover when it appears in a panel; "
+                "do not force an ebook to be visible solely because it is attached."
+            )
     if len(prompt) + 400 > 32_000:
         raise GridPlanError("Grid prompt exceeds the supported GPT Image prompt limit")
     return prompt

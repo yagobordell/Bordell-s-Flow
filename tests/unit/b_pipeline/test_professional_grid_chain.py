@@ -113,3 +113,29 @@ def test_cta_avatar_media_uses_ebook_only_and_generated_video_cannot_speak():
             **fields, "visual_type": "media_image", "audio": False,
             "reference_sources": ["presenter"],
         })
+
+
+def test_cta_ebook_only_grid_does_not_claim_presenter_reference():
+    plan = {
+        "visual_style": "profesional",
+        "blocks": [{
+            "block_id": 1, "type": "development",
+            "beats": [{
+                "block_id": 1,
+                "beat_id": f"1{chr(ord('A') + i)}",
+                "visual_type": "avatar_media",
+                "text": f"Book context {i}",
+                "prompt": f"{i + 1}. A useful desk-side support image.",
+                "video_prompt": None,
+                "audio": True,
+                "reference": True,
+                "cta_group_id": 1,
+                "cta_reference_sources": ["ebook"],
+            } for i in range(2)],
+        }],
+    }
+    jobs = plan_image_jobs(plan, described_beats(plan))
+    assert len(jobs) == 1
+    assert jobs[0]["grid"] is not None
+    assert "ebook-cover reference" in jobs[0]["description"]
+    assert "presenter identity reference" not in jobs[0]["description"]
