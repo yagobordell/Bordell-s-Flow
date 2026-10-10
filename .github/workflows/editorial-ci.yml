@@ -20,7 +20,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked --extra dev
       - run: uv run --no-sync ruff check src/ai_video_factory/editorial scripts/pipeline/run_b_pipeline.py scripts/pipeline/run_managed.py src/ai_video_factory/publishing.py src/ai_video_factory/managed_media.py tests/unit/editorial
-      - run: uv run --no-sync python -m pytest tests/unit/editorial -q
+      - run: uv run --no-sync python -m pytest tests/unit/editorial tests/unit/b_pipeline/test_professional_ebook_cta.py tests/unit/b_pipeline/test_b22_motion.py tests/unit/b_pipeline/test_professional_grid_chain.py -q
 
   remotion-editorial:
     runs-on: ubuntu-latest
