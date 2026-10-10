@@ -1,4 +1,4 @@
-"""Post-B3, image-aware LTX motion adaptation; never edits the saved visual plan.
+"""Post-B2.1, image-aware LTX I2V motion adaptation; never edits the saved visual plan.
 
 A call sees a chronological context window and the actual finalized start PNGs.
 Cache keys bind its result to those PNGs, the effective LTX prompts and the bot
@@ -75,23 +75,12 @@ def _shots(jobs: list[Any], timeline: dict[str, Any]) -> list[MotionShot]:
         first = beats[job.beats[0]]
         motion = _effective_motion(job)
         source = (
-            "b3_shot_video_prompt"
-            if isinstance(first.get("b3_shot_video_prompt"), str)
-            and first["b3_shot_video_prompt"].strip()
-            else "video_prompt"
+            "video_prompt"
             if isinstance(first.get("video_prompt"), str)
             and first["video_prompt"].strip()
             else "none"
         )
-        eligible = (
-            bool(motion)
-            and first["visual_type"] == "media_video"
-            and job.kind == "i2v"
-        ) or (
-            bool(motion)
-            and job.kind == "a2v"
-            and first["visual_type"] != "avatar"
-        )
+        eligible = bool(motion) and first["visual_type"] == "media_video" and job.kind == "i2v"
         shots.append(MotionShot(
             beat_id=job.beats[0],
             beat_ids=job.beats,
@@ -148,7 +137,7 @@ def _chronology(timeline: dict[str, Any]) -> list[dict[str, Any]]:
             name: beat.get(name)
             for name in (
                 "block_id", "beat_id", "text", "beat_type", "visual_type",
-                "audio", "continuous", "b3_group_id", "grid_id",
+                "audio", "grid_id",
                 "start_seconds", "end_seconds",
             )
             if name in beat
@@ -198,10 +187,9 @@ async def _call_group(
             "effective_motion_prompt": shot.prompt,
             "motion_source": shot.motion_source,
             "b2_video_prompt": first.get("video_prompt"),
-            "b3_shot_video_prompt": first.get("b3_shot_video_prompt"),
             "eligible_for_b22": shot in selected,
             "speaking_setup": (
-                "Frozen B3 speaker setup; fixed camera"
+                "Original avatar speaking setup; fixed camera"
                 if shot.kind == "a2v" else None
             ),
         })
@@ -330,7 +318,7 @@ def adapt_b22_motion(
     provider: Any | None = None,
     model: str | None = None,
 ) -> dict[str, str]:
-    """Adapt the *effective post-B3* prompts before issuing any LTX requests.
+    """Adapt the *effective post-B2.1* prompts before issuing any LTX requests.
 
     Whole-video text context is supplied to every bounded group, including later
     beats. Video start images and nearby stills provide the visual evidence.

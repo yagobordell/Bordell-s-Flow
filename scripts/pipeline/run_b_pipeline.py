@@ -84,7 +84,6 @@ from ai_video_factory.providers.avatar_library import (
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
-from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
@@ -109,10 +108,10 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
-_STAGES = ("B1.1", "B1.2", "B2", "B2.1", "B3")
+_STAGES = ("B1.1", "B1.2", "B2", "B2.1")
 _METRIC_STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2",
-    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3",
+    "CTA Detector", "B2", "B2 CTA", "B2.1",
     "V1", "V2", "V3", "V4",
 )
 
@@ -1135,28 +1134,6 @@ async def _generate_images(
         }
         for item in manifest["items"] if item.get("grid") is not None
     ]
-    has_b3 = any(
-        isinstance(beat.get("continuous"), bool)
-        for block in plan["blocks"] for beat in block["beats"]
-        if beat.get("audio") is True
-    )
-    if professional and has_b3:
-        try:
-            b3_shots = await asyncio.to_thread(
-                generate_b3_shot_images,
-                output,
-                plan,
-                api_key=settings.openai_api_key,
-                options=_image_options(),
-            )
-        except B3ShotImageError as exc:
-            raise ImageGenerationError(str(exc)) from exc
-        plan["b3_shot_assets"] = b3_shots
-        manifest["b3_shot_assets"] = b3_shots
-        manifest["total_generation_jobs"] = int(
-            manifest.get("total_generation_jobs", 0)
-        ) + len(b3_shots)
-        _write(output / "images" / "manifest.json", manifest)
     _write(output / "visual_plan.json", plan)
     return manifest
 
@@ -2745,7 +2722,7 @@ async def main() -> None:
     stop_index = (
         _STAGES.index(stop_stage)
         if stop_stage is not None
-        else _STAGES.index("B3" if visual_style == "profesional" else "B2")
+        else _STAGES.index("B2.1" if visual_style == "profesional" else "B2")
     )
     planned_blocks: int | None = None
     previous_b11: B11Output | None = None
@@ -3015,10 +2992,6 @@ async def main() -> None:
                     max(1, timings.call_count("B2.1"))
                     if visual_style == "profesional" and stop_index >= 3 else 0
                 ),
-                "B3": (
-                    timings.call_count("B3")
-                    if visual_style == "profesional" and stop_index >= 4 else 0
-                ),
             }
         else:
             expected_calls = dict(resume_expected_calls)
@@ -3044,10 +3017,6 @@ async def main() -> None:
                         expected_calls.get("B2.1") or 0,
                         1,
                         timings.call_count("B2.1"),
-                    )
-                if visual_style == "profesional" and stop_index >= 4:
-                    expected_calls["B3"] = max(
-                        expected_calls.get("B3") or 0, timings.call_count("B3")
                     )
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
@@ -3235,7 +3204,7 @@ async def main() -> None:
             ),
             start_from=args.from_stage,
             stop_after=stop_stage or (
-                "B3" if visual_style == "profesional" else "B2"
+                "B2.1" if visual_style == "profesional" else "B2"
             ),
             previous_b11=previous_b11,
             previous_b12=previous_b12,
@@ -3253,7 +3222,6 @@ async def main() -> None:
             on_rejected_b12_output=artifacts.rejected_b12,
             on_rejected_b2_output=artifacts.rejected_b2,
             on_rejected_b21_output=artifacts.rejected_b21,
-            on_rejected_b3_output=artifacts.rejected_b3,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
@@ -3405,8 +3373,7 @@ async def main() -> None:
                         on_output=output_and_start_audio,
                         on_rejected_b2_output=artifacts.rejected_b2,
                         on_rejected_b21_output=artifacts.rejected_b21,
-                        on_rejected_b3_output=artifacts.rejected_b3,
-                        on_api_response=ledger.record,
+                                    on_api_response=ledger.record,
                         on_call_duration=timings.record_call,
                         on_stage_duration=timings.record_stage,
                         on_stage_complete=stage_complete,
