@@ -84,31 +84,47 @@ export const EditorialOverlay: React.FC<RenderProps> = ({events}) => {
               </div>
             ) : (isFlow || isComparison) ? (
               <div style={{
-                display: 'flex', flexDirection: 'row', width: '100%',
-                justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                display: 'grid',
+                gridTemplateColumns: isFlow && event.elements.length > 3
+                  ? 'minmax(0, 1fr)'
+                  : isComparison && event.elements.length > 3
+                    ? 'repeat(2, minmax(0, 1fr))'
+                    : 'repeat(' + event.elements.length + ', minmax(0, 1fr))',
+                gridTemplateRows: 'repeat(' + (
+                  isFlow && event.elements.length > 3
+                    ? event.elements.length
+                    : isComparison && event.elements.length > 3
+                      ? Math.ceil(event.elements.length / 2)
+                      : 1
+                ) + ', minmax(0, 1fr))',
+                width: '100%', height: '100%',
+                gap: event.elements.length > 3 ? 8 : 14,
                 color: area.color, fontWeight: 800,
                 fontFamily: 'Arial, sans-serif',
               }}>
                 {event.elements.map((element, index) => (
-                  <React.Fragment key={index}>
-                    {index > 0 && isFlow ? (
-                      <div style={{fontSize: area.font_size_px * 0.7}}>→</div>
-                    ) : null}
-                    <div style={{
-                      ...revealStyle(frame, element.frame, event.animation),
-                      opacity: frame < element.frame ? 0
-                        : revealStyle(frame, element.frame, event.animation).opacity,
-                      flex: 1, minWidth: 0,
-                      borderRadius: 12,
-                      border: '2px solid rgba(255,255,255,0.75)',
-                      padding: '12px',
-                      backgroundColor: 'rgba(0,0,0,0.62)',
-                      textAlign: area.align,
-                      fontSize: area.font_size_px * 0.68,
-                      lineHeight: 1.12,
-                      overflowWrap: 'anywhere',
-                    }}>{element.text}</div>
-                  </React.Fragment>
+                  <div key={index} style={{
+                    ...revealStyle(frame, element.frame, event.animation),
+                    opacity: frame < element.frame ? 0
+                      : revealStyle(frame, element.frame, event.animation).opacity,
+                    position: 'relative', minWidth: 0, minHeight: 0,
+                    borderRadius: 12,
+                    border: '2px solid rgba(255,255,255,0.75)',
+                    padding: '10px',
+                    backgroundColor: 'rgba(0,0,0,0.62)',
+                    textAlign: area.align,
+                    fontSize: area.font_size_px * 0.68,
+                    lineHeight: 1.12,
+                    overflowWrap: 'anywhere',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: area.align === 'left' ? 'flex-start'
+                      : area.align === 'right' ? 'flex-end' : 'center',
+                    overflow: 'hidden',
+                  }}>
+                    {isFlow && event.elements.length > 3
+                      ? (index + 1) + '. ' : ''}{element.text}
+                  </div>
                 ))}
               </div>
             ) : items.map((el, index) => {
