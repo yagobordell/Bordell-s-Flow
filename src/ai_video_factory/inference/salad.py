@@ -129,6 +129,22 @@ class SaladClient:
             payload={"deletion_cost": int(deletion_cost)},
         )
 
+    def reallocate_container_group_instance(self, instance_id: str) -> None:
+        """Request Salad to move one idle, fenced instance to a different node.
+
+        Only the singleton controller may invoke this provider mutation.
+        Do not use this operation while a worker has any active leased job.
+        """
+        self._validate_config()
+        resolved = str(instance_id or "").strip()
+        import uuid
+
+        try:
+            resolved = str(uuid.UUID(resolved))
+        except ValueError as exc:
+            raise ValueError("Salad instance ID must be a UUID") from exc
+        self._post(self._build_container_url() + f"/instances/{resolved}/reallocate")
+
     def list_container_group_instances(self) -> list[dict[str, object]]:
         self._validate_config()
         payload = self._get(self._build_container_url() + "/instances")
