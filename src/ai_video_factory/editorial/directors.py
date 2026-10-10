@@ -81,7 +81,8 @@ def e1_payload(plan: dict[str, Any], timeline: dict[str, Any]) -> dict[str, Any]
             for block in plan["blocks"]
         ],
         "available_operations": [
-            "progressive_text", "number_emphasis", "accumulating_list", "text_card",
+            "progressive_text", "number_emphasis", "accumulating_list",
+            "text_card", "comparison_cards", "process_flow",
         ],
         "protected_cta_groups": plan.get("ebook_cta_groups", []),
     }
