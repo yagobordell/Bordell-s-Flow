@@ -1574,7 +1574,10 @@ class PredictiveSaladAutoscaler:
             f"eta_current={current_eta_text}, eta_target={target_eta_text}, "
             f"target_drain={demand.target_drain_seconds / 60.0:.1f}m, "
             f"effective_drain={demand.effective_drain_seconds / 60.0:.1f}m, "
-            f"goal_feasibility={'optimistically_reachable' if demand.target_attainable_under_quota else 'infeasible_under_quota'}"
+            "goal_feasibility=" + (
+                "optimistically_reachable"
+                if demand.target_attainable_under_quota else "infeasible_under_quota"
+            )
             + (
                 f", jobs_per_replica={demand.jobs_per_replica}, "
                 f"job_target={demand.job_count_target}"
