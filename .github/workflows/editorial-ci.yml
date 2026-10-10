@@ -48,8 +48,8 @@ jobs:
           import subprocess
           pixel = subprocess.check_output([
               "ffmpeg", "-hide_banner", "-loglevel", "error",
-              "-i", "tests/smoke-composed.mp4", "-vf", "crop=1:1:0:0,format=rgb24",
+              "-i", "tests/smoke-composed.mp4", "-vf", "crop=2:2:0:0,format=rgb24",
               "-frames:v", "1", "-f", "rawvideo", "-",
           ])
-          assert len(pixel) == 3 and pixel[2] > 150 and pixel[0] < 100, pixel
+          assert len(pixel) == 12 and pixel[2] > 150 and pixel[0] < 100, pixel
           PY
