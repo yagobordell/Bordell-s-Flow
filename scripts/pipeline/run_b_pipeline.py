@@ -2335,9 +2335,14 @@ async def _run_audio_only(
             report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
             report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
             report["run"]["audio_generation"] = artifact
+            # Managed sync re-opens run_report.json from disk. Persist the
+            # regenerated Gemini audio SHA before publication reads it.
+            _refresh_audio_costs(report, output)
+            _write(report_path, report)
             if managed_target is not None:
                 await asyncio.to_thread(sync_managed_outputs, output, managed_target)
-        _write(report_path, report)
+        else:
+            _write(report_path, report)
     try:
         preview = await _preview_if_ready(output, report)
     except Exception:
