@@ -2173,19 +2173,31 @@ async def _run_audio_only(
                         "blocks": [block], "error": None,
                     })
                 pending = unfinished_audio_runs(output)
-                if resume and len(pending) != 1:
+                if resume and len(pending) > 1:
                     raise RuntimeError(
-                        "Professional --resume-audio requires one pending Gemini task"
+                        "Professional --resume-audio found multiple pending Gemini "
+                        "tasks; reconcile them before resuming"
+                    )
+                if resume and not pending and (
+                    isinstance(previous_audio, dict)
+                    and previous_audio.get("status") == "completed"
+                ):
+                    raise RuntimeError(
+                        "A completed professional audio run has no verified reusable "
+                        "artifact; reconcile before starting another paid task"
                     )
                 if pending and not resume:
                     raise RuntimeError(
                         "An incomplete paid audio task exists; reconcile before regeneration"
                     )
+                # V1–V4 can fail before any Gemini task exists. In that case
+                # resume validated voice checkpoints with a fresh task nonce;
+                # when paid work exists, reuse precisely its saved nonce.
                 nonce = (
                     json.loads(pending[0].read_text(encoding="utf-8")).get("generation_nonce", "")
-                    if resume else uuid4().hex
+                    if resume and pending else uuid4().hex
                 )
-                if resume and not pending[0].parent.name.startswith("gemini-"):
+                if resume and pending and not pending[0].parent.name.startswith("gemini-"):
                     raise RuntimeError("Pending audio task is not a professional Gemini run")
                 artifact = await generate_professional_audio(
                     core=core, blocks=blocks, output=output,
