@@ -42,12 +42,7 @@ export const EditorialOverlay: React.FC<RenderProps> = ({events}) => {
         const area = event.layout;
         const list = event.kind === 'accumulating_list';
         const items = event.elements.filter((el) => frame >= el.frame);
-        const visibleText = event.kind === 'progressive_text'
-          ? items.map((el) => el.text).join(' ')
-          : null;
-        const rows = visibleText === null
-          ? items
-          : [{text: visibleText, frame: items.at(-1)?.frame ?? event.start_frame}];
+        const isProgressive = event.kind === 'progressive_text';
         const ending = interpolate(
           frame, [event.end_frame - 6, event.end_frame], [1, 0],
           {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}
@@ -70,7 +65,22 @@ export const EditorialOverlay: React.FC<RenderProps> = ({events}) => {
             overflow: 'hidden',
             padding: 8,
           }}>
-            {rows.map((el, index) => {
+            {isProgressive ? (
+              <div style={{
+                color: area.color, fontSize: area.font_size_px, fontWeight: 800,
+                fontFamily: 'Arial, sans-serif', lineHeight: 1.08,
+                textAlign: area.align, maxWidth: '100%',
+                WebkitTextStroke: area.stroke_width_px + 'px ' + area.stroke_color,
+                paintOrder: 'stroke fill', overflowWrap: 'break-word',
+              }}>
+                {items.map((item, index) => (
+                  <span key={index} style={{
+                    ...revealStyle(frame, item.frame, event.animation),
+                    display: 'inline-block', marginRight: '0.23em',
+                  }}>{item.text}</span>
+                ))}
+              </div>
+            ) : items.map((el, index) => {
               const appearance = list ? el.frame : event.start_frame;
               return (
                 <div key={index} style={{
@@ -87,6 +97,10 @@ export const EditorialOverlay: React.FC<RenderProps> = ({events}) => {
                   wordBreak: 'normal',
                   overflowWrap: 'break-word',
                   whiteSpace: 'normal',
+                  backgroundColor: event.kind === 'text_card'
+                    ? 'rgba(0, 0, 0, 0.55)' : 'transparent',
+                  padding: event.kind === 'text_card' ? 18 : 0,
+                  borderRadius: event.kind === 'text_card' ? 12 : 0,
                 }}>
                   {list ? (index + 1) + '. ' : ''}{el.text}
                 </div>
