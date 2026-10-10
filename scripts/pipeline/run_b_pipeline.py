@@ -44,6 +44,7 @@ from ai_video_factory.bots.professional_cta import (
 from ai_video_factory.bots.professional_voice import (
     ProfessionalAudioRegenerationLimitReached,
     generate_professional_audio,
+    reconcile_completed_gemini_narration,
     regenerate_professional_audio_block,
 )
 from ai_video_factory.bots.workflow import (
@@ -2215,6 +2216,33 @@ async def _run_audio_only(
     previous_sha = (
         previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
     )
+    if is_professional and resume and isinstance(previous_audio, dict):
+        if previous_audio.get("status") == "completed":
+            # A complete Gemini task may have a master WAV that no longer
+            # matches its saved digest after STT-triggered group replacements.
+            # Verify/rejoin only the already-paid group WAVs, before any new
+            # provider call or managed-publication sync.
+            published = managed_target / "manifest.json" if managed_target else None
+            if published is not None and published.exists():
+                audio_file = output / previous_audio.get("file", "")
+                if audio_file.is_file() and not audio_file.is_symlink():
+                    with audio_file.open("rb") as stream:
+                        current_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+                    if current_sha != previous_audio.get("sha256"):
+                        raise RuntimeError(
+                            "Cannot reconcile Gemini narration after immutable final "
+                            "publication; preserve the existing video and inspect the run"
+                        )
+            if reconcile_completed_gemini_narration(output, previous_audio):
+                report["run"]["stt_alignment"] = {"status": "pending_recheck"}
+                report["run"]["video_preview"] = {"status": "stale_audio_reconciliation"}
+                report["run"]["video_generation"] = {"status": "stale_audio_reconciliation"}
+                _write(report_path, report)
+                print(
+                    "  Reconciled Gemini narration from SHA-verified group WAVs "
+                    "without paid TTS calls.",
+                    flush=True,
+                )
     if not is_professional:
         _activate_pending_avatar_clone(output, report)
 
