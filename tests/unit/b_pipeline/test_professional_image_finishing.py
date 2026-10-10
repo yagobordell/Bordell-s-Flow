@@ -660,7 +660,8 @@ def test_r2_preflight_failure_preserves_originals_without_starting_salad(
     import asyncio
 
     from ai_video_factory.providers.optium_image_upscaler import (
-        ImageUpscalerError, OptiumLabsImageUpscaler,
+        ImageUpscalerError,
+        OptiumLabsImageUpscaler,
     )
     from scripts.pipeline import run_b_pipeline as runner
 
