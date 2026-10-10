@@ -250,7 +250,7 @@ def _is_resume(flags: list[str]) -> bool:
     if any(flag in flags for flag in (
         "--images-only", "--generate-video", "--videos-only",
         "--regenerate-audio", "--resume-audio", "--publish-only",
-        "--youtube-only", "--sync-only",
+        "--youtube-only", "--sync-only", "--edit-only",
     )):
         return True
     return "--from" in flags and (
@@ -375,7 +375,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for flag in (
                 "--from", "--images-only", "--generate-video", "--videos-only",
                 "--regenerate-audio", "--resume-audio", "--publish-only",
-                "--youtube-only", "--sync-only",
+                "--youtube-only", "--sync-only", "--edit-only",
             )
         ):
             raise SystemExit(
@@ -458,6 +458,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not any(flag in flags for flag in (
         "--images-only", "--generate-video", "--videos-only",
         "--regenerate-audio", "--resume-audio", "--publish-only", "--youtube-only",
+        "--edit-only",
     )):
         command.extend(["--avatar", avatar])
     print(f"  Avatar: {avatar} | Script: {source} | Work: {work_root}")
