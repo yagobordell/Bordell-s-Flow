@@ -9,7 +9,7 @@ type Layout = {
 };
 type EditorialEvent = {
   id: string;
-  kind: 'progressive_text' | 'number_emphasis' | 'accumulating_list' | 'text_card';
+  kind: 'progressive_text' | 'number_emphasis' | 'accumulating_list' | 'text_card' | 'comparison_cards' | 'process_flow';
   start_frame: number;
   end_frame: number;
   elements: Element[];
@@ -43,6 +43,8 @@ export const EditorialOverlay: React.FC<RenderProps> = ({events}) => {
         const list = event.kind === 'accumulating_list';
         const items = event.elements.filter((el) => frame >= el.frame);
         const isProgressive = event.kind === 'progressive_text';
+        const isFlow = event.kind === 'process_flow';
+        const isComparison = event.kind === 'comparison_cards';
         const ending = interpolate(
           frame, [event.end_frame - 6, event.end_frame], [1, 0],
           {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}
@@ -78,6 +80,35 @@ export const EditorialOverlay: React.FC<RenderProps> = ({events}) => {
                     ...revealStyle(frame, item.frame, event.animation),
                     display: 'inline-block', marginRight: '0.23em',
                   }}>{item.text}</span>
+                ))}
+              </div>
+            ) : (isFlow || isComparison) ? (
+              <div style={{
+                display: 'flex', flexDirection: 'row', width: '100%',
+                justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                color: area.color, fontWeight: 800,
+                fontFamily: 'Arial, sans-serif',
+              }}>
+                {event.elements.map((element, index) => (
+                  <React.Fragment key={index}>
+                    {index > 0 && isFlow ? (
+                      <div style={{fontSize: area.font_size_px * 0.7}}>→</div>
+                    ) : null}
+                    <div style={{
+                      ...revealStyle(frame, element.frame, event.animation),
+                      opacity: frame < element.frame ? 0
+                        : revealStyle(frame, element.frame, event.animation).opacity,
+                      flex: 1, minWidth: 0,
+                      borderRadius: 12,
+                      border: '2px solid rgba(255,255,255,0.75)',
+                      padding: '12px',
+                      backgroundColor: 'rgba(0,0,0,0.62)',
+                      textAlign: area.align,
+                      fontSize: area.font_size_px * 0.68,
+                      lineHeight: 1.12,
+                      overflowWrap: 'anywhere',
+                    }}>{element.text}</div>
+                  </React.Fragment>
                 ))}
               </div>
             ) : items.map((el, index) => {
