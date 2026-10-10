@@ -796,6 +796,99 @@ def test_tagged_modern_v3_checkpoint_is_repaired_only_for_its_block(tmp_path):
     assert "<sigh>" in rejected.read_text(encoding="utf-8")
 
 
+def _completed_gemini_with_mismatched_master(tmp_path):
+    run_dir = tmp_path / "audio" / "runs" / "gemini-recover"
+    folder = run_dir / "blocks" / "block_7"
+    folder.mkdir(parents=True)
+    group_data = _wav(24000)
+    group_sha = hashlib.sha256(group_data).hexdigest()
+    (folder / "audio.wav").write_bytes(group_data)
+    (folder / "task.json").write_text(json.dumps({
+        "status": "completed", "sha256": group_sha,
+    }), encoding="utf-8")
+    master = run_dir / "narration.wav"
+    master.write_bytes(_wav(32000))
+    # The saved digest differs from the physical master, as in interrupted
+    # group-regeneration/publication recovery.
+    saved_sha = hashlib.sha256(_wav(48000)).hexdigest()
+    artifact = {
+        "status": "completed", "provider": "gemini",
+        "run_id": "gemini-recover", "voice_id": "Algenib",
+        "file": master.relative_to(tmp_path).as_posix(),
+        "sha256": saved_sha, "bytes": len(_wav(48000)),
+        "block_count": 1, "stt_complete": True,
+        "blocks": [{
+            "block_id": 7,
+            "file": (folder / "audio.wav").relative_to(tmp_path).as_posix(),
+            "sha256": group_sha,
+        }],
+    }
+    (run_dir / "task.json").write_text(json.dumps({
+        "run_id": "gemini-recover", "status": "completed",
+        "audio": artifact,
+    }), encoding="utf-8")
+    (tmp_path / "audio" / "latest.json").write_text(
+        json.dumps(artifact), encoding="utf-8",
+    )
+    return artifact, master, folder
+
+
+def test_reconcile_gemini_master_uses_verified_paid_wavs_only(tmp_path, monkeypatch):
+    artifact, master, folder = _completed_gemini_with_mismatched_master(tmp_path)
+    original = master.read_bytes()
+    joined_audio = _wav(44100)
+    joins = []
+
+    def join(sources, destination):
+        joins.append(list(sources))
+        assert sources == [folder / "audio.wav"]
+        destination.write_bytes(joined_audio)
+        return {
+            "sha256": hashlib.sha256(joined_audio).hexdigest(),
+            "bytes": len(joined_audio), "duration_seconds": 0.2,
+            "block_start_seconds": [0.0], "block_end_seconds": [0.2],
+            "block_durations_seconds": [0.2],
+        }
+
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is True
+    assert master.read_bytes() == joined_audio
+    backup = list(master.parent.glob("narration.before_reconciliation.*.wav"))
+    assert len(backup) == 1 and backup[0].read_bytes() == original
+    assert artifact["sha256"] == hashlib.sha256(joined_audio).hexdigest()
+    task = json.loads((master.parent / "task.json").read_text())
+    latest = json.loads((tmp_path / "audio" / "latest.json").read_text())
+    assert task["audio"] == latest == artifact
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is False
+    assert len(joins) == 1  # No redundant join, and absolutely no provider call.
+
+
+@pytest.mark.parametrize("corruption", ["group_wav", "group_task", "latest"])
+def test_reconcile_gemini_refuses_untrusted_paid_state(
+    tmp_path, monkeypatch, corruption,
+):
+    artifact, master, folder = _completed_gemini_with_mismatched_master(tmp_path)
+    original = master.read_bytes()
+    if corruption == "group_wav":
+        (folder / "audio.wav").write_bytes(b"tampered paid audio")
+    elif corruption == "group_task":
+        (folder / "task.json").write_text(json.dumps({
+            "status": "completed", "sha256": "0" * 64,
+        }), encoding="utf-8")
+    else:
+        (tmp_path / "audio" / "latest.json").write_text(
+            json.dumps({"status": "incomplete"}), encoding="utf-8",
+        )
+    def should_not_join(*_args):
+        pytest.fail("Untrusted paid audio must not trigger a local join")
+
+    monkeypatch.setattr(pv, "join_audio_blocks", should_not_join)
+    with pytest.raises(pv.VoicePlanError, match="Cannot reconcile"):
+        pv.reconcile_completed_gemini_narration(tmp_path, artifact)
+    assert master.read_bytes() == original
+    assert not list(master.parent.glob("narration.before_reconciliation.*.wav"))
+
+
 def test_gemini_fidelity_regeneration_replaces_only_failed_group(
     tmp_path, monkeypatch,
 ) -> None:
