@@ -44,10 +44,8 @@ class EditorialIntervention(StrictModel):
     def size_matches_kind(self) -> EditorialIntervention:
         if self.kind in {"number_emphasis", "text_card"} and len(self.elements) != 1:
             raise ValueError("Single-element effect received multiple elements")
-        if self.kind in {"comparison_cards", "process_flow"} and not (
-            2 <= len(self.elements) <= 3
-        ):
-            raise ValueError("Graphical comparison/flow requires two or three elements")
+        if self.kind in {"comparison_cards", "process_flow"} and len(self.elements) < 2:
+            raise ValueError("Graphical comparison/flow requires at least two elements")
         return self
 
 
