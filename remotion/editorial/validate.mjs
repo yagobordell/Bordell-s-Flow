@@ -1,5 +1,10 @@
 // Dependency-free preflight for the Remotion renderer. Never trust model output.
 const hex = /^#[0-9a-fA-F]{6}$/;
+const kinds = new Set([
+  'progressive_text', 'number_emphasis', 'accumulating_list', 'text_card',
+  'comparison_cards', 'process_flow',
+]);
+const animations = new Set(['fade', 'pop', 'slide']);
 export const validateRenderPlan = (plan) => {
   if (!plan || plan.schema_version !== 'editorial-render-v1'
       || plan.fps !== 24 || plan.width !== 1920 || plan.height !== 1080
@@ -16,8 +21,18 @@ export const validateRenderPlan = (plan) => {
       throw new Error('Invalid editorial event');
     }
     seen.add(event.id);
-    if (!Array.isArray(event.elements) || !event.elements.length) {
-      throw new Error('Missing editorial content');
+    if (!kinds.has(event.kind) || !animations.has(event.animation)
+        || !Array.isArray(event.elements)
+        || event.elements.length < 1 || event.elements.length > 8) {
+      throw new Error('Invalid editorial content or effect type');
+    }
+    if ((event.kind === 'process_flow' || event.kind === 'comparison_cards')
+        && event.elements.length < 2) {
+      throw new Error('Graphical editing requires multiple nodes');
+    }
+    if ((event.kind === 'text_card' || event.kind === 'number_emphasis')
+        && event.elements.length !== 1) {
+      throw new Error('Single-value effect has multiple elements');
     }
     for (const item of event.elements) {
       if (typeof item.text !== 'string' || item.text.length > 100 || !item.text.trim()
