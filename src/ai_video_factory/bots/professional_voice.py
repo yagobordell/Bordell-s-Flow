@@ -350,6 +350,37 @@ def _check_v2(result: V2, block: dict[str, Any], rhythm: BlockRhythm) -> None:
             raise VoicePlanError(f"V2 baseline_misfit {item.axis} contains unknown beat_ids")
 
 
+def _restore_v3_source_punctuation(result: V3, block: dict[str, Any]) -> None:
+    """Restore only copy errors that leave every source letter/digit intact.
+
+    The B2 narration is authoritative. One-Speak beats without positional
+    vocal intents can safely recover whitespace/punctuation transcription
+    errors. Never guess word changes, multi-fragment cut positions, or vocal
+    intent character offsets; those remain validation failures and retries.
+    """
+    sources = block["beats"]
+    if (result.block_id != block["block_id"]
+        or [entry.beat_id for entry in result.beat_deliveries]
+        != [entry["beat_id"] for entry in sources]):
+        return
+    for source, delivery in zip(sources, result.beat_deliveries, strict=True):
+        speaks = [item for item in delivery.delivery if isinstance(item, Speak)]
+        if len(speaks) != 1 or speaks[0].vocal_intents:
+            continue
+        authored = speaks[0].speak
+        original = source["text"]
+        if authored == original or re.search(r"<[^>]+>", authored):
+            continue
+        # Non-word characters are separators/punctuation; do not change any
+        # letter, digit, accent, or word order.
+        letters = lambda value: re.sub(r"[\\W_]+", "", value, flags=re.UNICODE)
+        if not letters(original) or letters(authored) != letters(original):
+            continue
+        if any(stress not in original for stress in speaks[0].stress):
+            continue
+        speaks[0].speak = original
+
+
 def _check_v3(result: V3, block: dict[str, Any]) -> None:
     performance = result.block_performance
     if any(not text.strip() for text in (
@@ -621,13 +652,50 @@ async def _direct(
                 stage == "V3" and output_type is V3
                 and str(exc).startswith("V3 inline-tag leakage")
             )
+            v3_text_mismatch = (
+                stage == "V3" and output_type is V3
+                and str(exc).startswith("V3 altered verbatim narration in beat ")
+            )
+            narration_hint = None
+            if v3_text_mismatch:
+                beat_id = str(exc).rsplit(" ", 1)[-1]
+                source_beat = next(
+                    (beat for beat in payload["current_block"]["beats"]
+                     if beat["beat_id"] == beat_id), None,
+                )
+                emitted_beat = next(
+                    (beat for beat in response_obj.beat_deliveries
+                     if beat.beat_id == beat_id), None,
+                )
+                if source_beat is not None and emitted_beat is not None:
+                    expected = source_beat["text"]
+                    actual = "".join(
+                        part.speak for part in emitted_beat.delivery
+                        if isinstance(part, Speak)
+                    )
+                    offset = next(
+                        (index for index, (a, b) in enumerate(
+                            zip(actual, expected, strict=False)
+                        ) if a != b),
+                        min(len(actual), len(expected)),
+                    )
+                    narration_hint = {
+                        "beat_id": beat_id,
+                        "first_difference_at": offset,
+                        "expected_excerpt": expected[offset:offset + 45],
+                        "received_excerpt": actual[offset:offset + 45],
+                        "expected_length": len(expected),
+                        "received_length": len(actual),
+                    }
             validation_feedback = {
                 "error": str(exc),
                 # Feeding literal rejected tokens back to V3 encourages it
                 # to repeat the same markup. Keep those tokens in V4 only.
                 "rejected_response": (
                     {"omitted": "Previous V3 output contained forbidden technical tags"}
-                    if v3_tag_leak else response_obj.model_dump(
+                    if v3_tag_leak else
+                    {"omitted": "Narration changed: read exact characters from current_block.beats"}
+                    if v3_text_mismatch else response_obj.model_dump(
                         mode="json", by_alias=True,
                     )
                 ),
@@ -638,10 +706,18 @@ async def _direct(
                     "their translation and insertion. Keep semantic "
                     "vocal_intents and functional pauses if justified."
                     if v3_tag_leak else
+                    "The original current_block.beats[].text is immutable. "
+                    "For the flagged beat, copy the exact full string into ordered "
+                    "speak segments without changing any character, whitespace, "
+                    "line break, capitalization or punctuation. Pauses carry "
+                    "zero characters. Never rewrite source narration."
+                    if v3_text_mismatch else
                     "Correct only the stated contract violations; "
                     "all source strings and IDs are immutable."
                 ),
             }
+            if narration_hint is not None:
+                validation_feedback["narration_mismatch"] = narration_hint
             if attempt == 2:
                 raise VoicePlanError(
                     f"{stage} block {block_id}: validation failed after 2 retries: {exc}"
@@ -787,7 +863,10 @@ async def plan_professional_voice(
                        "block_rhythm": rhythms[bid].model_dump(),
                        "beat_intents": [_resolved(rhythms[bid], beat) for beat in v2.beat_intents],
                        "landing_beat_id": v2.landing_beat_id},
-                V3, lambda value: _check_v3(value, block),
+                V3, lambda value: (
+                    _restore_v3_source_punctuation(value, block),
+                    _check_v3(value, block),
+                ),
                 provider, model, root / "V3" / f"block_{bid}",
                 on_response, on_timing, bid,
             )
