@@ -833,6 +833,32 @@ def _completed_gemini_with_mismatched_master(tmp_path):
     return artifact, master, folder
 
 
+def test_reconcile_gemini_adopts_newer_trusted_manifest_without_rejoin(
+    tmp_path, monkeypatch,
+):
+    # Regression for video03: STT replaced Gemini groups 7 and 13, and
+    # persisted task/latest before the managed report could be rewritten.
+    artifact, master, _folder = _completed_gemini_with_mismatched_master(tmp_path)
+    latest = {**artifact, "sha256": hashlib.sha256(master.read_bytes()).hexdigest(),
+              "bytes": master.stat().st_size}
+    (master.parent / "task.json").write_text(json.dumps({
+        "run_id": "gemini-recover", "status": "completed", "audio": latest,
+    }), encoding="utf-8")
+    (tmp_path / "audio" / "latest.json").write_text(
+        json.dumps(latest), encoding="utf-8",
+    )
+
+    def no_join(*_args):
+        pytest.fail("A valid latest master must not be rejoined or billed")
+
+    monkeypatch.setattr(pv, "join_audio_blocks", no_join)
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is True
+    assert artifact == latest
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is False
+    assert master.read_bytes() == _wav(32000)
+    assert not list(master.parent.glob("narration.before_reconciliation.*.wav"))
+
+
 def test_reconcile_gemini_master_uses_verified_paid_wavs_only(tmp_path, monkeypatch):
     artifact, master, folder = _completed_gemini_with_mismatched_master(tmp_path)
     original = master.read_bytes()
