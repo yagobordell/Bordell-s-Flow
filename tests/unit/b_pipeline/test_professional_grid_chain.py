@@ -6,6 +6,9 @@ from io import BytesIO
 
 import pytest
 from PIL import Image
+from pydantic import ValidationError
+
+from ai_video_factory.bots.professional_cta import ProfessionalCTAVisualBeat
 
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai_batch_images import (
@@ -42,7 +45,7 @@ def test_logical_run_packs_into_at_most_four_panels(count):
     assert sum(len(job["grid"]["numbered_asset_ids"]) for job in grids) == count
     assert len(grids) == (count + 3) // 4
     assert [job["continuity_index"] for job in grids] == list(range(len(grids)))
-    for previous, current in zip(grids, grids[1:]):
+    for previous, current in zip(grids, grids[1:], strict=False):
         assert current["continuity_previous_asset_id"] == previous["asset_id"]
         assert current["continuity_chain_id"] == previous["continuity_chain_id"]
 
@@ -90,9 +93,6 @@ def test_grid_continuation_uses_actual_previous_png_and_resumes_without_paid_cal
 
 
 def test_cta_avatar_media_uses_ebook_only_and_generated_video_cannot_speak():
-    from pydantic import ValidationError
-    from ai_video_factory.bots.professional_cta import ProfessionalCTAVisualBeat
-
     fields = {
         "beat_id": "1A", "visual_type": "avatar_media",
         "prompt": "A still supporting the original narrator.",
