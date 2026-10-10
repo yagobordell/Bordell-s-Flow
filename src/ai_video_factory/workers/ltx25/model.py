@@ -740,9 +740,23 @@ class DirectLTX25Backend:
                 metrics.timings["total_generation_seconds"] = (
                     time.monotonic() - generation_started
                 )
+                # These are residual wall-clock times inside stage boundaries,
+                # not measured PCIe traffic or proof of the offload root cause.
+                for stage in ("stage1", "stage2"):
+                    total = metrics.timings.get(f"{stage}_total_seconds")
+                    diffusion = metrics.timings.get(f"{stage}_diffusion_seconds")
+                    if total is not None and diffusion is not None:
+                        metrics.timings[f"{stage}_nondiffusion_seconds"] = max(
+                            total - diffusion, 0.0
+                        )
+                system_metrics = metrics.diagnostic_snapshot()
                 self._pipeline_successful_generations += 1
                 self._last_generation_metrics = {
                     "pipeline_reused": pipeline_reused,
+                    "pipeline_prior_successful_generations": (
+                        pipeline_prior_successful_generations
+                    ),
+                    **system_metrics,
                     "internal_width": pipeline_width,
                     "internal_height": pipeline_height,
                     "frames": parameters.num_frames,
@@ -783,7 +797,7 @@ class DirectLTX25Backend:
                             "pipeline_known_warm": pipeline_prior_successful_generations > 0,
                             "cuda_peak_reset": metrics.cuda_peak_reset,
                             **metrics.timings,
-                            **metrics.cuda_peak(),
+                            **system_metrics,
                         },
                         sort_keys=True,
                     ),

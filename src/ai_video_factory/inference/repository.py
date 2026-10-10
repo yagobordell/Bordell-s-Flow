@@ -654,15 +654,18 @@ class PostgresJobRepository:
                     instance_identity_source, worker_id, stage, profile, width, height, num_frames,
                     task_seconds, inference_seconds, pipeline_load_seconds,
                     stage1_seconds, stage2_seconds, video_decode_seconds,
-                    encode_seconds, pipeline_reused, phase_seconds
+                    encode_seconds, pipeline_reused, phase_seconds,
+                    resource_metrics, pipeline_prior_successful_generations
                 )
                 VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (job_id, attempt_count) DO NOTHING
                 """,
-                (*values, Jsonb(observation["phase_seconds"])),
+                (*values, Jsonb(observation["phase_seconds"]),
+                 Jsonb(observation.get("resource_metrics", {})),
+                 observation.get("pipeline_prior_successful_generations")),
             )
 
     def next_pending_request(

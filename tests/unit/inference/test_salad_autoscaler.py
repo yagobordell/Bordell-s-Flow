@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -1793,3 +1793,154 @@ def test_opt_in_cost_aware_controller_can_request_more_for_large_backlog() -> No
     assert result.target_replicas == 4
     assert client.replica_updates == [4]
     assert result.reason == "resize_before_start_pending_confirmation"
+
+
+class FakeHealthReallocationStore(FakeStore):
+    def __init__(self, observations):
+        super().__init__(rows={}, runtimes={})
+        self.observations = observations
+        self.intents: dict[str, dict[str, object]] = {}
+        self.requested: list[str] = []
+
+    def list_recent_ltx_health_observations(self, *, stage, limit=1500):
+        del limit
+        return [row for row in self.observations if row["stage"] == stage]
+
+    def list_ltx_reallocation_intents(self, *, stage):
+        del stage
+        return {key: dict(value) for key, value in self.intents.items()}
+
+    def begin_ltx_reallocation_drain(
+        self, *, stage, instance_id, ttl_seconds, original_machine_id=None,
+    ):
+        del ttl_seconds
+        if instance_id in self.intents:
+            return False
+        self.intents[instance_id] = {
+            "state": "draining",
+            "original_machine_id": original_machine_id,
+            "detected_at": datetime.now(UTC) - timedelta(seconds=5),
+        }
+        self.drains.setdefault(stage, {})[instance_id] = datetime.now(UTC)
+        return True
+
+    def request_ltx_reallocation(self, *, stage, instance_id):
+        del stage
+        self.intents[instance_id]["state"] = "requested"
+        self.intents[instance_id]["requested_at"] = datetime.now(UTC)
+        self.requested.append(instance_id)
+        return True
+
+    def complete_ltx_reallocation(self, *, stage, instance_id):
+        self.intents[instance_id]["state"] = "recovered"
+        self.drains[stage].pop(instance_id, None)
+
+    def flag_stalled_ltx_reallocation(self, *, stage, instance_id):
+        del stage
+        self.intents[instance_id]["state"] = "manual_review"
+
+
+def _health_reference_rows():
+    rows = []
+    for instance, speed, count in (("slow-id", 14.4, 9), ("fast-id", 1.7, 12)):
+        for number in range(count):
+            rows.append({
+                "job_id": f"{instance}-{number}",
+                "attempt_count": 1,
+                "instance_id": instance,
+                "instance_identity_source": "salad_instance",
+                "stage": "ltx25_i2v", "profile": "fp8",
+                "width": 1920, "height": 1088, "num_frames": 153,
+                "inference_seconds": speed * 153,
+                "pipeline_reused": True, "recorded_at": datetime.now(UTC),
+            })
+    return rows
+
+
+def test_opt_in_reallocation_fences_active_job_and_requests_targeted_move_only_idle():
+    from dataclasses import replace
+
+    store = FakeHealthReallocationStore(_health_reference_rows())
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "slow-id", "state": "running", "machine_id": "bad-host"},
+            {"id": "fast-id", "state": "running", "machine_id": "good-host"},
+        ],
+    )
+    client.reallocated = []
+    client.reallocate_container_group_instance = client.reallocated.append
+    cfg = replace(
+        _config(("ltx25_i2v",), project_max_replicas=2, stage_max_replicas=2),
+        ltx_health_mode="replace",
+    )
+    scaler = PredictiveSaladAutoscaler(
+        config=cfg, store=store, clients={"ltx25_i2v": client},
+        bindings={"ltx25_i2v": _binding("ltx25_i2v", 2)},
+    )
+    kwargs = {
+        "groups": {"ltx25_i2v": client.describe_container_group()},
+        "transitioning": {"ltx25_i2v": False},
+    }
+    # Active slow worker is neither drained nor reallocated.
+    result = scaler._reconcile_ltx_reallocations(
+        rows_by_stage={"ltx25_i2v": [
+            {"status": "running", "worker_id": "worker-slow-id"},
+        ]}, **kwargs,
+    )
+    assert result == set()
+    assert client.reallocated == []
+    # Once idle, first poll merely fences future claims.
+    assert scaler._reconcile_ltx_reallocations(
+        rows_by_stage={"ltx25_i2v": [
+            {"status": "running", "worker_id": "worker-fast-id"},
+        ]}, **kwargs,
+    ) == {"ltx25_i2v"}
+    assert store.intents["slow-id"]["state"] == "draining"
+    assert client.reallocated == []
+    # Second poll confirms no active lease, then commits intent before POST.
+    scaler._reconcile_ltx_reallocations(
+        rows_by_stage={"ltx25_i2v": [
+            {"status": "running", "worker_id": "worker-fast-id"},
+        ]}, **kwargs,
+    )
+    assert client.reallocated == ["slow-id"]
+    assert store.intents["slow-id"]["state"] == "requested"
+    scaler._reconcile_ltx_reallocations(
+        rows_by_stage={"ltx25_i2v": []}, **kwargs,
+    )
+    assert client.reallocated == ["slow-id"]  # No duplicate dispatch
+    # Confirm a different Salad physical machine before unlocking.
+    client.instances[0] = {
+        "id": "slow-id", "state": "running", "machine_id": "replacement-host",
+    }
+    scaler._reconcile_ltx_reallocations(
+        rows_by_stage={"ltx25_i2v": []}, **kwargs,
+    )
+    assert store.intents["slow-id"]["state"] == "recovered"
+    assert store.drains["ltx25_i2v"] == {}
+
+
+def test_reallocation_recommend_mode_does_not_touch_provider_or_drains():
+    from dataclasses import replace
+
+    store = FakeHealthReallocationStore(_health_reference_rows())
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "slow-id", "state": "running"},
+            {"id": "fast-id", "state": "running"},
+        ],
+    )
+    scaler = PredictiveSaladAutoscaler(
+        config=replace(_config(("ltx25_i2v",)), ltx_health_mode="recommend"),
+        store=store, clients={"ltx25_i2v": client},
+        bindings={"ltx25_i2v": _binding("ltx25_i2v")},
+    )
+    result = scaler._reconcile_ltx_reallocations(
+        rows_by_stage={"ltx25_i2v": []},
+        groups={"ltx25_i2v": client.describe_container_group()},
+        transitioning={"ltx25_i2v": False},
+    )
+    assert result == set()
+    assert store.intents == {}
