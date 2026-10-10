@@ -23,10 +23,10 @@ def test_local_r2_client_uses_fast_fail_network_defaults(monkeypatch) -> None:
     )
 
     config = captured["config"]
-    assert config.connect_timeout == 5.0
+    assert config.connect_timeout == 15.0
     assert config.read_timeout == 30.0
     assert config.max_pool_connections == 32
-    assert config.retries == {"total_max_attempts": 3, "mode": "standard"}
+    assert config.retries == {"total_max_attempts": 4, "mode": "standard"}
     assert config.tcp_keepalive is True
     assert storage.bucket == "bucket"
 
