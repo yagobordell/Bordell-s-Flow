@@ -178,15 +178,106 @@ def test_e1_cache_reuses_exact_response_without_new_paid_call(tmp_path, monkeypa
     assert provider.calls == 1
 
 
-def test_comparison_and_process_flow_need_small_coherent_compositions():
+def test_graphical_compositions_accept_two_through_eight_elements():
     valid = _one().interventions[0].model_dump(mode="json")
-    valid["kind"] = "process_flow"
-    valid["elements"] = [
-        {"text": "Person", "anchor": {"beat_id": "1A", "phrase": "cloned"}},
-        {"text": "Message", "anchor": {"beat_id": "1A", "phrase": "voice"}},
+    phrases = ["cloned", "voice"]
+    for kind in ("process_flow", "comparison_cards"):
+        valid["kind"] = kind
+        for count in (2, 3, 4, 6, 8):
+            valid["elements"] = [
+                {
+                    "text": f"Step {i + 1}",
+                    "anchor": {"beat_id": "1A", "phrase": phrases[i % 2]},
+                }
+                for i in range(count)
+            ]
+            result = E1Output.model_validate({
+                "schema_version": "e1-v1", "interventions": [valid],
+            })
+            assert len(result.interventions[0].elements) == count
+        valid["elements"] = valid["elements"][:1]
+        with pytest.raises(ValidationError):
+            E1Output.model_validate({
+                "schema_version": "e1-v1", "interventions": [valid],
+            })
+        valid["elements"] = [valid["elements"][0]] * 9
+        with pytest.raises(ValidationError):
+            E1Output.model_validate({
+                "schema_version": "e1-v1", "interventions": [valid],
+            })
+
+
+def test_multinode_graphics_use_adaptive_fit_by_layout(monkeypatch):
+    from ai_video_factory.editorial import workflow
+
+    class Font:
+        def getlength(self, text):
+            return len(text) * 8
+
+    monkeypatch.setattr(workflow, "_font", lambda _size: Font())
+    content = _one().interventions[0].model_dump(mode="json")
+    content["kind"] = "process_flow"
+    content["elements"] = [
+        {"text": f"Step {i + 1}", "anchor": {"beat_id": "1A", "phrase": "cloned"}}
+        for i in range(5)
     ]
-    E1Output.model_validate({"schema_version": "e1-v1", "interventions": [valid]})
-    valid["elements"].append(valid["elements"][-1])
-    valid["elements"].append(valid["elements"][-1])
-    with pytest.raises(ValidationError):
-        E1Output.model_validate({"schema_version": "e1-v1", "interventions": [valid]})
+    effect = E1Output.model_validate({
+        "schema_version": "e1-v1", "interventions": [content],
+    }).interventions[0]
+    decision = _e2().decisions[0].model_copy(update={
+        "x": 0.05, "y": 0.05, "width": 0.9, "height": 0.9,
+        "font_size_px": 44,
+    })
+    assert workflow._fits(effect, decision)
+    tiny = decision.model_copy(update={"height": 0.10})
+    assert not workflow._fits(effect, tiny)
+
+
+def test_e1_repairs_single_schema_validation_error(tmp_path, monkeypatch):
+    from ai_video_factory.editorial import directors
+
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_structured_with_response(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                invalid = _one().model_dump(mode="json")
+                invalid["interventions"][0]["kind"] = "process_flow"
+                invalid["interventions"][0]["elements"] = invalid["interventions"][0][
+                    "elements"
+                ][:1]
+                E1Output.model_validate(invalid)
+            class Response:
+                id = "repaired"
+                model = "model-one"
+                service_tier = "standard"
+                usage = None
+
+            return _one(), Response()
+
+    provider = Provider()
+    monkeypatch.setattr(directors, "_instructions", lambda _: "fixed")
+    plan = {
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [{
+            "block_id": 1, "type": "intro",
+            "beats": [{
+                "beat_id": "1A", "text": "cloned voice",
+                "visual_type": "media_image", "beat_type": "claim",
+                "prompt": "A person speaking on a phone",
+            }],
+        }],
+    }
+    result, _ = asyncio.run(run_e1(
+        tmp_path, plan, _timeline(), provider=provider, model="model-one",
+    ))
+    assert result == _one()
+    assert len(provider.calls) == 2
+    assert "Structured-output repair" in provider.calls[1]["instructions"]
+    assert provider.calls[0]["input_text"] == provider.calls[1]["input_text"]
+    asyncio.run(run_e1(
+        tmp_path, plan, _timeline(), provider=provider, model="model-one",
+    ))
+    assert len(provider.calls) == 2
