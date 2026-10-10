@@ -654,6 +654,59 @@ def test_managed_partial_image_checkpoint_uses_recovered_final_sha(tmp_path, mon
     assert files["block_1/1B.png"][1] != original["items"][0]["sha256"]
 
 
+def test_r2_preflight_failure_preserves_originals_without_starting_salad(
+    monkeypatch, tmp_path,
+):
+    import asyncio
+
+    from ai_video_factory.providers.optium_image_upscaler import (
+        ImageUpscalerError, OptiumLabsImageUpscaler,
+    )
+    from scripts.pipeline import run_b_pipeline as runner
+
+    class UnreachableR2Upscaler(OptiumLabsImageUpscaler):
+        def __init__(self):
+            pass
+
+        def check_storage_ready(self) -> None:
+            raise ImageUpscalerError("Cloudflare R2 is unavailable")
+
+    direct = RecordingGPT()
+    plan = professional(beat("1B", "media_image", "Forest"))
+    monkeypatch.setattr(
+        runner,
+        "generate_b2_images",
+        lambda output, visual_plan, **kwargs: gpt.generate_b2_images(
+            output, visual_plan, options=kwargs["options"], api_key=None,
+            direct_client=direct,
+        ),
+    )
+    for setting in (
+        "salad_api_key", "r2_endpoint_url", "r2_bucket",
+        "r2_access_key_id", "r2_secret_access_key", "postgres_dsn",
+    ):
+        monkeypatch.setattr(runner.settings, setting, "test-value")
+    monkeypatch.setattr(
+        runner.settings, "image_upscaler_url", "https://gateway.salad.cloud",
+    )
+    monkeypatch.setattr(
+        runner, "create_optium_image_upscaler",
+        lambda **kwargs: UnreachableR2Upscaler(),
+    )
+
+    def should_not_start_salad(**kwargs):
+        pytest.fail("Salad must not be started if R2 preflight fails")
+
+    monkeypatch.setattr(runner, "image_upscaler_usage", should_not_start_salad)
+    with pytest.raises(gpt.ImageGenerationError, match="Cloudflare R2"):
+        asyncio.run(runner._generate_images(tmp_path, plan))
+    assert len(direct.calls) == 1
+    assert (tmp_path / "images" / "block_1" / "1B.png").is_file()
+    state = json.loads((tmp_path / "images" / "manifest.json").read_text())
+    assert state["finishing_status"] == "pending_upscaler"
+    assert runner._resume_unfinished_images(tmp_path, plan)
+
+
 def test_professional_paid_originals_survive_transient_salad_start_error(
     monkeypatch, tmp_path,
 ):
