@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import {createReadStream} from 'node:fs';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -7,6 +8,13 @@ import {selectComposition, renderMedia} from '@remotion/renderer';
 import {validateRenderPlan} from './validate.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+const digestFile = async (filename) => {
+  const hash = createHash('sha256');
+  for await (const bytes of createReadStream(filename)) {
+    hash.update(bytes);
+  }
+  return hash.digest('hex');
+};
 if (process.argv.length !== 4) {
   throw new Error('Usage: node render.mjs <render-plan.json> <layers-directory>');
 }
@@ -33,7 +41,7 @@ for (let i = 0; i < plan.events.length; i++) {
   clips.push({
     file: basename, start_frame: event.start_frame,
     end_frame: event.end_frame, id: event.id,
-    sha256: createHash('sha256').update(await fs.readFile(location)).digest('hex'),
+    sha256: await digestFile(location),
   });
 }
 await fs.writeFile(
