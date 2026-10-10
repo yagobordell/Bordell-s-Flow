@@ -91,6 +91,34 @@ def test_stop_cli_rejects_invalid_or_conflicting_modes(
     assert message in capsys.readouterr().err
 
 
+def test_professional_audio_resume_before_gemini_task_is_safe(tmp_path: Path) -> None:
+    nonce = runner._professional_audio_nonce(
+        [], resume=True, previous_audio={"status": "incomplete"},
+    )
+    assert isinstance(nonce, str) and len(nonce) == 32
+
+    # Reuse the immutable saved paid task identity when Gemini is pending.
+    pending = tmp_path / "gemini-existing" / "task.json"
+    pending.parent.mkdir(parents=True)
+    pending.write_text(json.dumps({"generation_nonce": "paid-task"}), encoding="utf-8")
+    assert runner._professional_audio_nonce(
+        [pending], resume=True, previous_audio={"status": "incomplete"},
+    ) == "paid-task"
+
+    with pytest.raises(RuntimeError, match="multiple pending Gemini"):
+        runner._professional_audio_nonce(
+            [pending, pending], resume=True, previous_audio={"status": "incomplete"},
+        )
+    with pytest.raises(RuntimeError, match="incomplete paid audio task"):
+        runner._professional_audio_nonce(
+            [pending], resume=False, previous_audio={"status": "incomplete"},
+        )
+    with pytest.raises(RuntimeError, match="completed professional audio"):
+        runner._professional_audio_nonce(
+            [], resume=True, previous_audio={"status": "completed"},
+        )
+
+
 def test_default_scripts_location_is_input_root() -> None:
     assert runner.DEFAULT_SCRIPTS_DIR == Path("data/input")
 
