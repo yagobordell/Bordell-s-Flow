@@ -9,7 +9,6 @@ from ai_video_factory.workflows.execution_sessions import (
     finish_run_session,
 )
 
-
 NOW = datetime(2026, 10, 10, tzinfo=UTC)
 
 
