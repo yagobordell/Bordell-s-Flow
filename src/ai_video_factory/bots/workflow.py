@@ -1223,12 +1223,23 @@ async def run_b_pipeline(
                     if candidate.error is not None:
                         _require_success("B1.2", candidate.error)
                     validate_beats(candidate, block)
-                    if attempt > 1 and "".join(
-                        beat.text for beat in candidate.beats or []
-                    ) != block.text:
-                        raise BPipelineValidationError(
-                            "B1.2 corrected beats do not reconstruct the original block exactly"
-                        )
+                    if attempt > 1:
+                        reconstructed = "".join(beat.text for beat in candidate.beats or [])
+                        if reconstructed != block.text:
+                            mismatch = next(
+                                (
+                                    offset for offset, (actual, expected) in enumerate(
+                                        zip(reconstructed, block.text, strict=False)
+                                    ) if actual != expected
+                                ),
+                                min(len(reconstructed), len(block.text)),
+                            )
+                            raise BPipelineValidationError(
+                                "B1.2 corrected beats do not reconstruct the original block "
+                                f"exactly; first difference at character {mismatch}: "
+                                f"expected {block.text[mismatch:mismatch + 30]!r}, "
+                                f"received {reconstructed[mismatch:mismatch + 30]!r}"
+                            )
                     output = candidate
                     break
                 except (ValidationError, BPipelineValidationError, RuntimeError) as error:
@@ -1261,14 +1272,18 @@ async def run_b_pipeline(
                         instructions=(
                             "B1.2 automatic beat-length correction when lengths are invalid. "
                             "Previous invalid B1.2 response: correct this block only. "
-                            "Keep every source word in the same order without insertion, "
-                            "deletion or replacement. Return consecutive beat IDs. "
-                            "Use at most 40 words and 100 characters per beat, at least "
-                            "13 characters except for a single unavoidable short block. "
-                            "Split long beats, merge short beats with a neighbor and "
-                            "adjust boundaries if necessary. The concatenation of ALL "
-                            "returned beat texts MUST equal the frozen input block "
-                            "character for character, including punctuation and spaces."
+                            "The input block text is immutable: choose boundary positions "
+                            "within that exact source string; each beat.text is a verbatim "
+                            "contiguous slice, never rewritten or normalized. "
+                            "Keep every source character in order, including punctuation, "
+                            "accents, newlines and separator whitespace. "
+                            "Return consecutive beat IDs. Every beat must contain content "
+                            "and have at most 40 words and 100 characters after stripping "
+                            "only boundary whitespace; there is NO minimum character count. "
+                            "Split overlong beats at natural source boundaries without "
+                            "manufacturing fragments. Before submitting, concatenate all "
+                            "beat.text values and verify byte-for-byte-equivalent text "
+                            "to the supplied decoded block string."
                         ),
                     )
             if on_output is not None:
