@@ -6,7 +6,6 @@ import pytest
 
 from ai_video_factory.inference.ltx_performance_health import assess_ltx_instance_health
 
-
 NOW = datetime(2026, 10, 10, tzinfo=UTC)
 
 
