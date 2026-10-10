@@ -245,6 +245,7 @@ def generate_editorial_video(
     provider: Any | None = None,
 ) -> dict[str, Any]:
     """Only reads completed LTX media and verified STT; no B, TTS, I2V or A2V calls."""
+    preflight_editorial_renderer()
     plan_path = output / "visual_plan.json"
     if plan_path.is_symlink() or not plan_path.is_file():
         raise EditorialError("Missing immutable visual plan")
