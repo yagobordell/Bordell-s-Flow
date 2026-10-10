@@ -1,0 +1,37 @@
+{
+  "schema_version": "editorial-render-v1",
+  "fps": 24,
+  "width": 1920,
+  "height": 1080,
+  "duration_frames": 12,
+  "events": [
+    {
+      "id": "smoke-text",
+      "kind": "progressive_text",
+      "start_frame": 1,
+      "end_frame": 11,
+      "elements": [
+        {
+          "text": "CLONED",
+          "frame": 1
+        },
+        {
+          "text": "VOICE",
+          "frame": 6
+        }
+      ],
+      "animation": "pop",
+      "layout": {
+        "x": 0.17,
+        "y": 0.36,
+        "width": 0.66,
+        "height": 0.25,
+        "font_size_px": 88,
+        "color": "#FFFFFF",
+        "stroke_color": "#111111",
+        "stroke_width_px": 2,
+        "align": "center"
+      }
+    }
+  ]
+}
