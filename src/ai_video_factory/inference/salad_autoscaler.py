@@ -307,29 +307,105 @@ class PostgresAutoscalerStore:
                     )
 
     def clear_draining_instances(
-        self,
-        *,
-        stage: str,
-        keep_instance_ids: tuple[str, ...] = (),
+        self, *, stage: str, keep_instance_ids: tuple[str, ...] = (),
+    ) -> None:
+        # Normal capacity downscale cleanup cannot discard remediation fences.
+        with self._pool.connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM gpu.capacity_drains d
+                WHERE d.service = %s
+                  AND (
+                      cardinality(%s::text[]) = 0
+                      OR (d.expires_at <= now() AND NOT d.hold_until_confirmed)
+                      OR NOT (d.instance_id = ANY(%s))
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM gpu.ltx_instance_reallocations r
+                      WHERE r.stage = d.service AND r.instance_id = d.instance_id
+                        AND r.state IN ('draining', 'requested', 'manual_review')
+                  )
+                """, (stage, list(keep_instance_ids), list(keep_instance_ids)),
+            )
+
+    def list_ltx_reallocation_intents(
+        self, *, stage: str,
+    ) -> dict[str, dict[str, object]]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT instance_id, state, detected_at, requested_at
+                FROM gpu.ltx_instance_reallocations WHERE stage = %s
+                """, (stage,),
+            ).fetchall()
+        return {str(row["instance_id"]): dict(row) for row in rows}
+
+    def begin_ltx_reallocation_drain(
+        self, *, stage: str, instance_id: str, ttl_seconds: float,
+    ) -> bool:
+        """Atomically fence future claims and persist exactly one drain intent."""
+        with self._pool.connection() as connection, connection.transaction():
+            acquire_instance_drain_lock(connection, instance_id)
+            cursor = connection.execute(
+                """
+                INSERT INTO gpu.ltx_instance_reallocations(stage, instance_id, state)
+                VALUES (%s, %s, 'draining') ON CONFLICT DO NOTHING
+                """, (stage, instance_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            publish_instance_drains(
+                connection, stage=stage, instance_ids=(instance_id,),
+                ttl_seconds=ttl_seconds, hold_until_confirmed=True,
+            )
+        return True
+
+    def request_ltx_reallocation(
+        self, *, stage: str, instance_id: str,
+    ) -> bool:
+        """Persist provider intent before dispatch; no automatic retries."""
+        with self._pool.connection() as connection, connection.transaction():
+            acquire_instance_drain_lock(connection, instance_id)
+            updated = connection.execute(
+                """
+                UPDATE gpu.ltx_instance_reallocations
+                SET state = 'requested', requested_at = now(), updated_at = now()
+                WHERE stage = %s AND instance_id = %s AND state = 'draining'
+                """, (stage, instance_id),
+            )
+            return updated.rowcount == 1
+
+    def complete_ltx_reallocation(
+        self, *, stage: str, instance_id: str,
+    ) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            acquire_instance_drain_lock(connection, instance_id)
+            connection.execute(
+                """
+                UPDATE gpu.ltx_instance_reallocations
+                SET state = 'recovered', updated_at = now()
+                WHERE stage = %s AND instance_id = %s
+                  AND state IN ('requested', 'draining')
+                """, (stage, instance_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM gpu.capacity_drains
+                WHERE service = %s AND instance_id = %s
+                """, (stage, instance_id),
+            )
+
+    def flag_stalled_ltx_reallocation(
+        self, *, stage: str, instance_id: str,
     ) -> None:
         with self._pool.connection() as connection:
-            if keep_instance_ids:
-                connection.execute(
-                    """
-                    DELETE FROM gpu.capacity_drains
-                    WHERE service = %s
-                      AND (
-                          (expires_at <= now() AND NOT hold_until_confirmed)
-                          OR NOT (instance_id = ANY(%s))
-                      )
-                    """,
-                    (stage, list(keep_instance_ids)),
-                )
-            else:
-                connection.execute(
-                    "DELETE FROM gpu.capacity_drains WHERE service = %s",
-                    (stage,),
-                )
+            connection.execute(
+                """
+                UPDATE gpu.ltx_instance_reallocations
+                SET state = 'manual_review', updated_at = now()
+                WHERE stage = %s AND instance_id = %s AND state = 'requested'
+                """, (stage, instance_id),
+            )
 
     def list_recent_ltx_health_observations(
         self, *, stage: str, limit: int = 1500,
