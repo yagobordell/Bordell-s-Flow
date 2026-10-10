@@ -128,6 +128,61 @@ def _professional_beat(
     }
 
 
+def test_audio_resume_accepts_cta_enriched_b2_without_mutating_narration() -> None:
+    import copy
+
+    # B2/merged_output.json contains these post-CTA fields even though the
+    # strict B2 model on the wire intentionally does not.
+    original = _professional_anchor_output("close", [
+        _professional_beat("1A", visual_type="media_image"),
+        _professional_beat("1B", visual_type="avatar"),
+    ])
+    broll, presenter = original["blocks"][0]["beats"]
+    broll.update(reference=True, cta_group_id=1, cta_reference_sources=["ebook"])
+    presenter.update(cta_group_id=1, cta_reference_sources=[])
+    snapshot = copy.deepcopy(original)
+    pipeline_cli._validate_professional_audio_b2(
+        original["narrative_core"], original["blocks"],
+    )
+    assert original == snapshot
+    assert broll["cta_reference_sources"] == ["ebook"]
+    assert broll["text"] == "Preserve the narration exactly."
+    assert presenter["cta_group_id"] == 1
+
+
+@pytest.mark.parametrize("malformation", [
+    "missing_cta_sources",
+    "invalid_cta_group",
+    "unsupported_reference_source",
+    "invalid_cta_audio",
+    "unknown_field",
+])
+def test_audio_resume_still_rejects_invalid_cta_or_b2(
+    malformation: str,
+) -> None:
+    output = _professional_anchor_output("close", [
+        _professional_beat("1A", visual_type="media_image"),
+        _professional_beat("1B", visual_type="avatar"),
+    ])
+    beat = output["blocks"][0]["beats"][0]
+    beat.update(reference=True, cta_group_id=1, cta_reference_sources=["ebook"])
+    if malformation == "missing_cta_sources":
+        beat.pop("cta_reference_sources")
+    elif malformation == "invalid_cta_group":
+        beat["cta_group_id"] = True
+    elif malformation == "unsupported_reference_source":
+        beat["cta_reference_sources"] = ["presenter"]
+    elif malformation == "invalid_cta_audio":
+        beat["audio"] = True
+    else:
+        beat["unrecognized_metadata"] = "cannot be silently discarded"
+
+    with pytest.raises((ValueError, ValidationError, KeyError)):
+        pipeline_cli._validate_professional_audio_b2(
+            output["narrative_core"], output["blocks"],
+        )
+
+
 @pytest.mark.parametrize(
     ("kind", "visuals"),
     [
