@@ -27,4 +27,24 @@ COMMENT ON TABLE gpu.ltx_instance_health IS
 
 REVOKE ALL ON TABLE gpu.ltx_instance_health FROM anon, authenticated;
 
+
+-- Singleton controller owns every transition. Persist an intent BEFORE sending
+-- a non-idempotent Salad reallocation POST to prevent retries after timeouts.
+CREATE TABLE IF NOT EXISTS gpu.ltx_instance_reallocations (
+    stage text NOT NULL CHECK (stage IN ('ltx25', 'ltx25_i2v')),
+    instance_id text NOT NULL,
+    state text NOT NULL CHECK (
+        state IN ('draining', 'requested', 'recovered', 'manual_review')
+    ),
+    detected_at timestamptz NOT NULL DEFAULT now(),
+    requested_at timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (stage, instance_id)
+);
+
+COMMENT ON TABLE gpu.ltx_instance_reallocations IS
+    'Durable fail-closed Salad reallocation intents; one per instance, no retries.';
+
+REVOKE ALL ON TABLE gpu.ltx_instance_reallocations FROM anon, authenticated;
+
 COMMIT;
