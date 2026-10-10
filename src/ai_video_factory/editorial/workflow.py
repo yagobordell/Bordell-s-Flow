@@ -192,8 +192,16 @@ def _render_overlay(plan_file: Path, layers: Path) -> None:
         )
     if layers.is_symlink():
         raise EditorialError("Unsafe editorial layers directory")
+    # The pipeline work directory is often relative to the repository root,
+    # but Remotion runs with cwd=remotion/editorial. Resolve both paths on
+    # the Python side so Node reads and writes the intended work artifacts.
+    if plan_file.is_symlink() or not plan_file.is_file():
+        raise EditorialError("Missing or linked editorial render plan")
+    absolute_plan = plan_file.resolve(strict=True)
+    absolute_layers = layers.resolve()
     process = subprocess.run([
-        "node", str(package / "render.mjs"), str(plan_file), str(layers),
+        "node", str(package / "render.mjs"), str(absolute_plan),
+        str(absolute_layers),
     ], cwd=package, capture_output=True, text=True, check=False)
     if process.returncode != 0 or not (layers / "layers.json").is_file():
         raise EditorialError("Remotion layer rendering failed: " + process.stderr[-800:])
