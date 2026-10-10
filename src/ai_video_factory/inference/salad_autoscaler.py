@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from .coordination import acquire_instance_drain_lock
 from .ltx_economics import plan_ltx_capacity
+from .ltx_performance_health import assess_ltx_instance_health
 from .salad import SaladClient
 
 ACTIVE_STATUSES = (
@@ -80,6 +81,7 @@ class PredictiveAutoscalerConfig:
     ltx_cost_aware: bool = False
     ltx_gpu_hourly_usd: float = 0.50
     ltx_projected_pool_budget_usd: float | None = None
+    ltx_health_mode: str = "observe"
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +322,66 @@ class PostgresAutoscalerStore:
                     (stage,),
                 )
 
+    def list_recent_ltx_health_observations(
+        self, *, stage: str, limit: int = 1500,
+    ) -> list[dict[str, object]]:
+        """Use immutable, completed and recent per-attempt telemetry only."""
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT job_id, attempt_count, recorded_at, instance_id,
+                       instance_identity_source, stage, profile, width, height,
+                       num_frames, inference_seconds, pipeline_reused
+                FROM gpu.ltx_job_telemetry
+                WHERE stage = %s AND recorded_at >= now() - interval '7 days'
+                ORDER BY recorded_at DESC
+                LIMIT %s
+                """,
+                (stage, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_ltx_instance_health(self, assessment: dict[str, object],
+                                 *, recommendation: str) -> None:
+        """Idempotent upsert; skips unchanged assessments to limit DB writes."""
+        with self._pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO gpu.ltx_instance_health (
+                    stage, instance_id, health_state, ratio_to_exact_peers,
+                    completed_jobs, matched_jobs, reference_instances,
+                    recommendation
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (stage, instance_id) DO UPDATE SET
+                    health_state = EXCLUDED.health_state,
+                    ratio_to_exact_peers = EXCLUDED.ratio_to_exact_peers,
+                    completed_jobs = EXCLUDED.completed_jobs,
+                    matched_jobs = EXCLUDED.matched_jobs,
+                    reference_instances = EXCLUDED.reference_instances,
+                    recommendation = EXCLUDED.recommendation,
+                    updated_at = now()
+                WHERE (
+                    gpu.ltx_instance_health.health_state,
+                    gpu.ltx_instance_health.ratio_to_exact_peers,
+                    gpu.ltx_instance_health.completed_jobs,
+                    gpu.ltx_instance_health.matched_jobs,
+                    gpu.ltx_instance_health.reference_instances,
+                    gpu.ltx_instance_health.recommendation
+                ) IS DISTINCT FROM (
+                    EXCLUDED.health_state, EXCLUDED.ratio_to_exact_peers,
+                    EXCLUDED.completed_jobs, EXCLUDED.matched_jobs,
+                    EXCLUDED.reference_instances, EXCLUDED.recommendation
+                )
+                """,
+                (
+                    assessment["stage"], assessment["instance_id"],
+                    assessment["state"], assessment["ratio_to_exact_peers"],
+                    assessment["completed_jobs"], assessment["exact_matched_jobs"],
+                    assessment["peer_instances"], recommendation,
+                ),
+            )
+
     def ping(self) -> None:
         with self._pool.connection() as connection:
             connection.execute("SELECT 1").fetchone()
@@ -471,7 +533,17 @@ def load_predictive_autoscaler_config(
             if os.getenv("SALAD_AUTOSCALER_LTX_PROJECTED_POOL_BUDGET_USD", "").strip()
             else None
         ),
+        ltx_health_mode=_ltx_health_mode_env(),
     )
+
+
+def _ltx_health_mode_env() -> str:
+    mode = os.getenv("SALAD_AUTOSCALER_LTX_HEALTH_MODE", "observe").strip().lower()
+    if mode not in {"off", "observe", "recommend"}:
+        raise RuntimeError(
+            "SALAD_AUTOSCALER_LTX_HEALTH_MODE must be off, observe or recommend"
+        )
+    return mode
 
 
 class PredictiveSaladAutoscaler:
@@ -507,6 +579,40 @@ class PredictiveSaladAutoscaler:
         ] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
+    def _observe_ltx_health(self) -> None:
+        """Observe only: no replica, draining or job mutations from assessments."""
+        if self.config.ltx_health_mode == "off":
+            return
+        for stage in self.clients:
+            if stage not in _TIME_BASED_LTX_STAGES:
+                continue
+            try:
+                observations = self.store.list_recent_ltx_health_observations(
+                    stage=stage
+                )
+                assessed = assess_ltx_instance_health(observations)
+                for assessment in assessed:
+                    status = str(assessment["state"])
+                    recommendation = (
+                        "review_safe_drain" if (
+                            self.config.ltx_health_mode == "recommend"
+                            and status == "confirmed_degraded"
+                        ) else "observe"
+                    )
+                    self.store.save_ltx_instance_health(
+                        assessment, recommendation=recommendation
+                    )
+                    if status in {"suspected_slow", "confirmed_degraded"}:
+                        self.logger(
+                            f"Autoscaler health {stage}/{assessment['instance_id']}: "
+                            f"{status}, exact_matched={assessment['exact_matched_jobs']}, "
+                            f"ratio={assessment['ratio_to_exact_peers']}; "
+                            f"action={recommendation} (no provider mutation)."
+                        )
+            except Exception as exc:
+                # A diagnostic outage is not a reason to abort safe capacity control.
+                self.logger(f"Autoscaler health {stage}: telemetry unavailable ({exc}).")
+
     def reconcile(self) -> dict[str, AutoscaleResult]:
         if not self.config.enabled or not self.clients:
             return {}
@@ -529,6 +635,7 @@ class PredictiveSaladAutoscaler:
             )
             for stage in self.clients
         }
+        self._observe_ltx_health()
         demands = build_global_demands(
             rows_by_stage=rows_by_stage,
             runtime_by_stage=runtime_by_stage,
