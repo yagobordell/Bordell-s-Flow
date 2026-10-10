@@ -2071,6 +2071,40 @@ def _activate_pending_avatar_clone(
     _write(output / "run_report.json", report)
 
 
+def _professional_audio_nonce(
+    pending: list[Path], *, resume: bool, previous_audio: object,
+) -> str:
+    """Resume paid Gemini only with its saved task; plan-only failures get a new nonce."""
+    if resume and len(pending) > 1:
+        raise RuntimeError(
+            "Professional --resume-audio found multiple pending Gemini "
+            "tasks; reconcile them before resuming"
+        )
+    if resume and not pending and (
+        isinstance(previous_audio, dict)
+        and previous_audio.get("status") == "completed"
+    ):
+        raise RuntimeError(
+            "A completed professional audio run has no verified reusable "
+            "artifact; reconcile before starting another paid task"
+        )
+    if pending and not resume:
+        raise RuntimeError(
+            "An incomplete paid audio task exists; reconcile before regeneration"
+        )
+    if not resume or not pending:
+        # V1–V4 can fail before any Gemini task was created.
+        return uuid4().hex
+    if not pending[0].parent.name.startswith("gemini-"):
+        raise RuntimeError("Pending audio task is not a professional Gemini run")
+    nonce = json.loads(pending[0].read_text(encoding="utf-8")).get(
+        "generation_nonce", ""
+    )
+    if not isinstance(nonce, str):
+        raise RuntimeError("Invalid saved Gemini generation nonce")
+    return nonce
+
+
 async def _run_audio_only(
     script_file: Path,
     output_root: Path,
@@ -2173,32 +2207,9 @@ async def _run_audio_only(
                         "blocks": [block], "error": None,
                     })
                 pending = unfinished_audio_runs(output)
-                if resume and len(pending) > 1:
-                    raise RuntimeError(
-                        "Professional --resume-audio found multiple pending Gemini "
-                        "tasks; reconcile them before resuming"
-                    )
-                if resume and not pending and (
-                    isinstance(previous_audio, dict)
-                    and previous_audio.get("status") == "completed"
-                ):
-                    raise RuntimeError(
-                        "A completed professional audio run has no verified reusable "
-                        "artifact; reconcile before starting another paid task"
-                    )
-                if pending and not resume:
-                    raise RuntimeError(
-                        "An incomplete paid audio task exists; reconcile before regeneration"
-                    )
-                # V1–V4 can fail before any Gemini task exists. In that case
-                # resume validated voice checkpoints with a fresh task nonce;
-                # when paid work exists, reuse precisely its saved nonce.
-                nonce = (
-                    json.loads(pending[0].read_text(encoding="utf-8")).get("generation_nonce", "")
-                    if resume and pending else uuid4().hex
+                nonce = _professional_audio_nonce(
+                    pending, resume=resume, previous_audio=previous_audio,
                 )
-                if resume and pending and not pending[0].parent.name.startswith("gemini-"):
-                    raise RuntimeError("Pending audio task is not a professional Gemini run")
                 artifact = await generate_professional_audio(
                     core=core, blocks=blocks, output=output,
                     provider=provider, model=settings.openai_model,
