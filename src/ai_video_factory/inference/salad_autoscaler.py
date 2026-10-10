@@ -10,6 +10,11 @@ from datetime import UTC, datetime
 from .coordination import acquire_instance_drain_lock
 from .ltx_economics import plan_ltx_capacity
 from .ltx_performance_health import assess_ltx_instance_health
+from .ltx_runtime_prediction import (
+    degraded_instance_ids,
+    forecast_ltx_job_seconds,
+    typical_forecast_seconds,
+)
 from .salad import SaladClient
 
 ACTIVE_STATUSES = (
@@ -206,7 +211,11 @@ class PostgresAutoscalerStore:
                     ) AS run_id,
                     status,
                     lease_owner AS worker_id,
-                    started_at
+                    started_at,
+                    request #>> '{parameters,generation_profile}' AS generation_profile,
+                    request #>> '{parameters,width}' AS width,
+                    request #>> '{parameters,height}' AS height,
+                    request #>> '{parameters,num_frames}' AS num_frames
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
                   AND status = ANY(%s)
@@ -331,7 +340,8 @@ class PostgresAutoscalerStore:
                 """
                 SELECT job_id, attempt_count, recorded_at, instance_id,
                        instance_identity_source, stage, profile, width, height,
-                       num_frames, inference_seconds, pipeline_reused
+                       num_frames, inference_seconds, pipeline_reused,
+                       task_seconds, pipeline_load_seconds
                 FROM gpu.ltx_job_telemetry
                 WHERE stage = %s AND recorded_at >= now() - interval '7 days'
                 ORDER BY recorded_at DESC
@@ -579,6 +589,41 @@ class PredictiveSaladAutoscaler:
         ] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
+    def _forecast_ltx_demands(
+        self,
+        rows_by_stage: dict[str, list[dict[str, object]]],
+        runtime_by_stage: dict[str, float],
+    ) -> None:
+        """Optional evidence-based forecasts; missing telemetry leaves old fallback."""
+        for stage, rows in rows_by_stage.items():
+            if stage not in _TIME_BASED_LTX_STAGES or not rows:
+                continue
+            try:
+                observations = self.store.list_recent_ltx_health_observations(
+                    stage=stage
+                )
+                excluded = degraded_instance_ids(observations)
+                for row in rows:
+                    row["forecast_runtime_seconds"] = forecast_ltx_job_seconds(
+                        row, observations, stage=stage,
+                        fallback=runtime_by_stage[stage],
+                        percentile=self.config.runtime_percentile,
+                        excluded_instances=excluded,
+                    )
+                runtime_by_stage[stage] = typical_forecast_seconds(
+                    rows, runtime_by_stage[stage]
+                )
+                if excluded:
+                    self.logger(
+                        f"Autoscaler {stage}: excluded {len(excluded)} confirmed "
+                        "slow instance(s) from warm-job ETA history."
+                    )
+            except Exception as exc:
+                self.logger(
+                    f"Autoscaler {stage}: per-job forecasts unavailable, "
+                    f"using conservative stage fallback ({exc})."
+                )
+
     def _observe_ltx_health(self) -> None:
         """Observe only: no replica, draining or job mutations from assessments."""
         if self.config.ltx_health_mode == "off":
@@ -636,6 +681,7 @@ class PredictiveSaladAutoscaler:
             for stage in self.clients
         }
         self._observe_ltx_health()
+        self._forecast_ltx_demands(rows_by_stage, runtime_by_stage)
         demands = build_global_demands(
             rows_by_stage=rows_by_stage,
             runtime_by_stage=runtime_by_stage,
@@ -1321,13 +1367,17 @@ def build_global_demands(
         running_work = sum(
             _remaining_running_seconds(
                 row=row,
-                expected_runtime_seconds=expected_runtime,
+                expected_runtime_seconds=_job_forecast_seconds(row, expected_runtime),
                 now=observed_at,
             )
             for row in running_rows
         )
         forecast_blocked = 0
-        work_seconds = queued_count * expected_runtime + running_work
+        work_seconds = sum(
+            _job_forecast_seconds(row, expected_runtime)
+            for row in rows
+            if str(row.get("status") or "") in {"pending", "retryable_failed"}
+        ) + running_work
         active_job_count = queued_count + len(running_rows)
         jobs_per_replica = (
             None
@@ -1459,6 +1509,14 @@ def apply_downscale_hysteresis(
         )
         adjusted[stage] = min(current, max(target, hysteresis_floor))
     return adjusted
+
+
+def _job_forecast_seconds(row: dict[str, object], fallback: float) -> float:
+    try:
+        value = float(row.get("forecast_runtime_seconds") or fallback)
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+    return value if math.isfinite(value) and value > 0 else fallback
 
 
 def _remaining_running_seconds(
