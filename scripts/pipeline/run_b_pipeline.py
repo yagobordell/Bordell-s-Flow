@@ -323,7 +323,11 @@ def parse_args() -> argparse.Namespace:
             or args.publish_only or args.youtube_only):
             parser.error("--edit-only accepts only a saved completed LTX run")
         return args
-    if args.editorial and (args.no_video or args.skip_images or args.stop_stage):
+    if args.editorial and (
+        args.no_video or args.skip_images or args.stop_stage
+        or args.images_only or args.publish_only or args.youtube_only
+        or args.regenerate_audio or args.resume_audio
+    ):
         parser.error("--editorial requires a completed professional video")
     if args.replace_professional_voice and (
         args.voice_id is None or args.voice_audio is not None or args.default_voice
