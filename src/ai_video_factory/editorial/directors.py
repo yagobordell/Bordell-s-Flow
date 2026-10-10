@@ -35,7 +35,8 @@ def _instructions(filename: str) -> str:
 
 
 def _digest(model: str, instructions: str, payload: object) -> str:
-    return hashlib.sha256(_canonical({"model": model, "instructions": instructions, "payload": payload})).hexdigest()
+    data = {"model": model, "instructions": instructions, "payload": payload}
+    return hashlib.sha256(_canonical(data)).hexdigest()
 
 
 def _usage(response: Any) -> dict[str, Any]:
