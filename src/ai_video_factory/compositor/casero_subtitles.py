@@ -34,7 +34,7 @@ def _read_words(output: Path, audio: dict[str, Any]) -> list[dict[str, Any]]:
             raise CaseroSubtitleError("STT transcript belongs to another audio block")
         for word in transcription.get("words", []):
             try:
-                text = word["word"].strip()
+                text = " ".join(word["word"].split())
                 start = float(offset) + float(word["start"])
                 end = float(offset) + float(word["end"])
             except (KeyError, ValueError, TypeError) as exc:
