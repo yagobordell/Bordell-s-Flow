@@ -15,7 +15,7 @@ def test_stopped_professional_agent_exposes_all_phase_outputs(tmp_path):
     script_folder.mkdir(parents=True)
     (script_folder / "test.txt").write_text("El texto original.", encoding="utf-8")
     stage_names = (
-        "01_groups", "02_beats", "02_visuals", "03_evaluation",
+        "01_groups", "02_planning", "03_evaluation",
         "04_correction", "05_delivery",
     )
     for stage in stage_names:
@@ -39,9 +39,16 @@ def test_stopped_professional_agent_exposes_all_phase_outputs(tmp_path):
         assert json.loads(path.read_text(encoding="utf-8")) == {
             "phase": stage, "status": "passed",
         }
-    assert (script_folder / "outputs" / "B1.1" / "output.json").is_file()
-    assert (script_folder / "outputs" / "B1.2" / "block_1"
-            / "output.json").is_file()
+    assert (script_folder / "outputs" / "_pipeline_compat"
+            / "B1.1" / "output.json").is_file()
+    assert (script_folder / "outputs" / "_pipeline_compat"
+            / "B1.2" / "block_1" / "output.json").is_file()
+    assert not (script_folder / "outputs" / "B1.1").exists()
+    assert sorted(
+        d.name for d in (script_folder / "outputs"
+            / "agent_openai" / "phases").iterdir()
+        if d.is_dir()
+    ) == list(stage_names)
     # A repeated managed sync is safe and retains the source checkpoints.
     sync_managed_outputs(work, script_folder)
     assert b11.is_file()
