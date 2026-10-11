@@ -235,13 +235,21 @@ async def run_professional_director(
             hooks = UsageHooks()
             started = perf_counter()
             try:
-                retry_prompt = input_data if attempt == 0 else (
+                repair = (
                     "La respuesta anterior no cumplió el JSON estricto del "
                     "SDK. Devuelve UNA salida íntegra conforme al esquema "
                     "sin bloques Markdown ni campos extra.\n\n"
-                    + (input_data if isinstance(input_data, str) else
-                       json.dumps(input_data, ensure_ascii=False))
                 )
+                if attempt == 0:
+                    retry_prompt = input_data
+                elif isinstance(input_data, str):
+                    retry_prompt = repair + input_data
+                else:
+                    # Preserve original image attachments in every retry.
+                    retry_prompt = copy.deepcopy(input_data)
+                    retry_prompt[0]["content"].insert(
+                        0, {"type": "input_text", "text": repair},
+                    )
                 result = await Runner.run(
                     actor, retry_prompt, session=session, max_turns=18, hooks=hooks,
                 )
@@ -296,7 +304,17 @@ async def run_professional_director(
             output_type=B11Output, use_tools=True,
         )
         if not isinstance(b11, B11Output) or b11.error is not None:
-            raise ValueError("Professional grouping agent returned a B1.1 error.")
+            check = {"status": "blocked", "issues": [{
+                "rule_id": "B11_MODEL_ERROR",
+                "message": (
+                    b11.error.message if isinstance(b11, B11Output) and b11.error
+                    else "Unexpected grouping output type"
+                ),
+            }]}
+            _save(root / f"groups_attempt_{attempt + 1}.json", {
+                "validation": check,
+            })
+            continue
         check = workspace.submit_groups([
             x.model_dump(mode="json") for x in b11.blocks or []
         ])
