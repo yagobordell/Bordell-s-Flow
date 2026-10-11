@@ -476,7 +476,8 @@ async def prepare_casero_cta(
         if manual_motion:
             await asyncio.to_thread(_adopt_manual_motion, directory, float(tts["half_seconds"]))
         else:
-            assert motion_copy_task is not None
+            if motion_copy_task is None:
+                raise CaseroCTAError("Automatic motion task was not prepared")
             copy = await asyncio.shield(motion_copy_task)
             if not cached_motion_text and on_call_duration is not None:
                 on_call_duration("CTA Motion", None, perf_counter() - motion_started)

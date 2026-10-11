@@ -124,4 +124,5 @@ def test_existing_cta_keeps_automatic_source(
     cache.mkdir()
     (cache / "completed.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Legacy CTA prompted"))
-    assert avatar_cta_motion.ensure_avatar_cta_motion(avatar, interactive=True)["mode"] == "automatic"
+    stored = avatar_cta_motion.ensure_avatar_cta_motion(avatar, interactive=True)
+    assert stored["mode"] == "automatic"

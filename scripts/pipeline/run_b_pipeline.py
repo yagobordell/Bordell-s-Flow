@@ -567,7 +567,9 @@ def select_casero_subtitles(requested: bool | None) -> bool:
         return False
     while True:
         try:
-            answer = input("¿Subtítulos caseros blancos con sombra (sin CTA)? [s/N]: ").strip().lower()
+            answer = input(
+                "¿Subtítulos caseros blancos con sombra (sin CTA)? [s/N]: "
+            ).strip().lower()
         except (EOFError, KeyboardInterrupt) as exc:
             raise SystemExit("Selección de subtítulos cancelada.") from exc
         if answer in {"s", "si", "sí", "y", "yes"}:

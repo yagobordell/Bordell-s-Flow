@@ -39,7 +39,8 @@ def _read_words(output: Path, audio: dict[str, Any]) -> list[dict[str, Any]]:
                 end = float(offset) + float(word["end"])
             except (KeyError, ValueError, TypeError) as exc:
                 raise CaseroSubtitleError("Invalid caption word timing") from exc
-            if not text or not math.isfinite(start) or not math.isfinite(end) or start < 0 or end < start:
+            if (not text or not math.isfinite(start) or not math.isfinite(end)
+                    or start < 0 or end < start):
                 raise CaseroSubtitleError("Invalid STT word interval")
             words.append({"text": text, "start": start, "end": end})
     return words
@@ -69,36 +70,37 @@ def _shift_around_cta(
     return [before, after]
 
 
+def _flush_caption(
+    pending: list[dict[str, Any]], captions: list[dict[str, Any]],
+) -> None:
+    if not pending:
+        return
+    start, end = pending[0]["start"], pending[-1]["end"]
+    captions.append({
+        "start": start, "end": max(end, start + 0.12),
+        "text": " ".join(word["text"] for word in pending),
+    })
+    pending.clear()
+
+
 def _captions(groups: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     captions: list[dict[str, Any]] = []
     # 48 characters at 30px fits comfortably in a 1920px frame.
     max_chars, max_words, max_seconds = 48, 9, 3.3
     for words in groups:
         pending: list[dict[str, Any]] = []
-        def flush() -> None:
-            if not pending:
-                return
-            start, end = pending[0]["start"], pending[-1]["end"]
-            if end <= start:
-                end = start + 0.12
-            captions.append({
-                "start": start, "end": end,
-                "text": " ".join(word["text"] for word in pending),
-            })
-            pending.clear()
-
         for word in words:
-            candidate = (" ".join([*(w["text"] for w in pending), word["text"]]))
+            candidate = " ".join([*(w["text"] for w in pending), word["text"]])
             if pending and (
                 len(candidate) > max_chars or len(pending) >= max_words
                 or word["end"] - pending[0]["start"] > max_seconds
                 or word["start"] - pending[-1]["end"] > 0.48
             ):
-                flush()
+                _flush_caption(pending, captions)
             pending.append(word)
             if word["text"].endswith((".", "!", "?", ";", ":")):
-                flush()
-        flush()
+                _flush_caption(pending, captions)
+        _flush_caption(pending, captions)
     return captions
 
 
