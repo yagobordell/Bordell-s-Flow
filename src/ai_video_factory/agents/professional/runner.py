@@ -103,7 +103,16 @@ def _direction_input(
             "narration. A source slice MUST be <=100 stripped characters AND "
             "<=40 words. If a long sentence cannot fit, cut at a meaningful "
             "clause without dropping any words. Verify exact coverage and "
-            "each limit before returning the whole audiovisual plan.\n"
+            "each limit before returning the whole audiovisual plan. "
+            "Before submitting, verify that base-avatar beats are strictly "
+            "below 45 percent of all beats, and consecutive audio=true "
+            "speaking runs total at most 120 source characters. Use genuine "
+            "visual coverage appropriate to the narration, not filler or "
+            "artificial microbeats. For explicit ebook/QR narration, assign "
+            "authentic ebook CTA ownership in each containing group with "
+            "the correct visual and source references. Media_image beats "
+            "with >=70 source characters need 2-4 stills, except protected "
+            "ebook CTA images (one only).\n"
             + json.dumps({
                 "narrative_core": core, "groups": groups,
                 "ebook_cover_available": ebook is not None,
@@ -393,7 +402,17 @@ async def run_professional_director(
             report = workspace.submit_plan_revision(material["plan"])
             material["validation"] = report
             material["status"] = report["status"]
-            material["issues"].extend(report.get("issues", []))
+            # The source preview and B2 validation can report the same
+            # BEAT_LENGTH. Keep one full issue per rule/beat, not duplicates.
+            signatures = {
+                (issue.get("rule_id"), tuple(issue.get("beat_ids", [])))
+                for issue in report.get("issues", [])
+            }
+            material["issues"] = [
+                issue for issue in material["issues"]
+                if (issue.get("rule_id"), tuple(issue.get("beat_ids", [])))
+                not in signatures
+            ] + list(report.get("issues", []))
         else:
             material["validation"] = {
                 "status": "blocked",
@@ -413,12 +432,14 @@ async def run_professional_director(
                 for beat in group["beats"]
                 if beat.get("cta_group_id") is not None
             }
+            protected_ids = set(protected)
             if protected and not any(
-                issue["rule_id"] in {
-                    "CTA_COVER_UNAVAILABLE",
-                    "CTA_SPOKEN_ASSET_UNPROTECTED",
-                    "CTA_SPOKEN_OFFER_MISSING",
-                } for issue in current["issues"]
+                issue["rule_id"].startswith("CTA_")
+                or (
+                    issue["rule_id"] == "BEAT_LENGTH"
+                    and protected_ids.intersection(issue.get("beat_ids", []))
+                )
+                for issue in current["issues"]
             ):
                 workspace.protected_cta_beats = protected
     initial_report = _compact_report(current["validation"])
@@ -477,10 +498,7 @@ async def run_professional_director(
 
     # 04: bounded global correction proposals. A revised narrative block
     # ALWAYS carries its visuals in that SAME model response.
-    immutable_cta_ids = {
-        assignment.beat_id for group in joint_direction.blocks
-        for assignment in group.cta
-    }
+    immutable_cta_ids = set(workspace.protected_cta_beats)
     readonly_findings = [
         item for item in review.issues if item.beat_id in immutable_cta_ids
     ]
@@ -511,9 +529,11 @@ async def run_professional_director(
                 "the complete original group in order. Use replaced_groups "
                 "for narrative recuts: every revised beat carries BOTH "
                 "its source text AND visual choice. Use visual_patches "
-                "only for unchanged text and metadata. Preserve untouched "
-                "blocks and protected CTA assets. Return empty lists only "
-                "when there is genuinely nothing to correct.\n"
+                "only for unchanged text and metadata. Correct ALL reported "
+                "problems, including spoken-run limits, base-avatar ratio, "
+                "image subshot requirements and missing genuine ebook CTA "
+                "annotations. Preserve untouched blocks and already protected "
+                "CTA assets. Return empty lists only when nothing needs fixing.\n"
                 + json.dumps({
                     "narrative_core": core,
                     "original_groups": materialized_groups,
@@ -597,8 +617,17 @@ async def run_professional_director(
                 "attempt": correction_number, "status": checked["status"],
                 "issues": checked["issues"],
             })
-            previous_count = len(before["issues"]) + len(previous_editorial)
-            new_count = len(checked["issues"])
+            # Do not compare raw issue counts across different validation
+            # stages: fixing BEAT_LENGTH unlocks visual/CTA checks which can
+            # reveal MORE errors even though the proposed cut is better.
+            previous_score = (
+                len(before["boundaries"]["issues"]),
+                len(before["issues"]) + len(previous_editorial),
+            )
+            new_score = (
+                len(checked["boundaries"]["issues"]),
+                len(checked["issues"]),
+            )
             if invalid_correction:
                 outstanding_editorial = previous_editorial
                 if previous_editorial and before["status"] != "blocked":
@@ -618,7 +647,7 @@ async def run_professional_director(
                 joint_direction = corrected_direction
                 current = checked
                 break
-            if new_count >= previous_count:
+            if new_score >= previous_score:
                 # Keep the better previous revision and stop spending tokens.
                 outstanding_editorial = previous_editorial
                 remaining_editorial = [
