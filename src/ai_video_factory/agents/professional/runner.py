@@ -26,10 +26,13 @@ from ai_video_factory.agents.professional.beats import (
 from ai_video_factory.agents.professional.prompt_loader import load_phase_instructions
 from ai_video_factory.agents.professional.tools import ProfessionalPlanWorkspace
 from ai_video_factory.agents.professional.visuals import (
+    VisualAlignmentRepair,
     VisualCorrection,
     WholeVideoVisuals,
     apply_correction,
     assemble_plan,
+    merge_alignment_repair,
+    mismatched_visual_blocks,
 )
 from ai_video_factory.bots.contracts import (
     B11Output,
@@ -402,27 +405,70 @@ async def run_professional_director(
 
     # 02b: complete-video visual planning; source beat IDs and text are
     # immutable and not repeated in the model's structured visual output.
-    visuals = await invoke(
-        "02_visuals", _visual_input(source_beats, core, avatar, ebook),
-        WholeVideoVisuals,
-    )
-    visual_validation_error: str | None = None
-    try:
-        candidate = assemble_plan(
-            narrative_core=core, source_beats=source_beats, visuals=visuals,
-        )
-    except ValueError as exc:
-        visual_validation_error = str(exc)
-        # Reject a broken visual contract BEFORE pretending to have a plan.
-        _save(_phase_file(root, "02_visuals"), {
-            "output": visuals.model_dump(mode="json"),
-            "error": visual_validation_error,
+    catalog = _visual_input(source_beats, core, avatar, ebook)
+    visuals = await invoke("02_visuals", catalog, WholeVideoVisuals)
+    _save(_phase_file(root, "02_visuals", "attempt_1.json"), {
+        "output": visuals.model_dump(mode="json"),
+        "mismatched_blocks": mismatched_visual_blocks(source_beats, visuals),
+    })
+    for index in range(2):
+        mismatched = mismatched_visual_blocks(source_beats, visuals)
+        if not mismatched:
+            break
+        repair_input = copy.deepcopy(catalog)
+        repair_input[0]["content"].insert(0, {
+            "type": "input_text",
+            "text": (
+                "Your prior visual response omitted, duplicated or misordered "
+                "the following B1.2 groups. Return exactly these complete "
+                "VisualGroup decisions, with unchanged exact beat IDs, in "
+                "ONE response covering ALL affected groups. Do not redraw "
+                "anything else or modify any source narration. "
+                + json.dumps({
+                    "affected_block_ids": mismatched,
+                    "prior_visual_groups": [
+                        block.model_dump(mode="json")
+                        for block in visuals.blocks
+                    ],
+                }, ensure_ascii=False)
+            ),
         })
-        raise RuntimeError(
-            "El agente devolvió un inventario visual incompatible con los "
-            "beats ya validados; respuesta guardada en 02_visuals/output.json: "
-            + visual_validation_error
-        ) from None
+        corrected_visuals = await invoke(
+            "02_visuals", repair_input, VisualAlignmentRepair,
+        )
+        try:
+            visuals = merge_alignment_repair(
+                source_beats, visuals, corrected_visuals, mismatched,
+            )
+        except ValueError as exc:
+            _save(_phase_file(root, "02_visuals",
+                              f"repair_{index + 1}.json"), {
+                "status": "blocked", "error": str(exc),
+                "output": corrected_visuals.model_dump(mode="json"),
+            })
+            if index == 1:
+                raise RuntimeError(
+                    "Global visual correction still does not align with "
+                    "the validated B1.2 beats. See 02_visuals/repair_2.json."
+                ) from None
+            continue
+        _save(_phase_file(root, "02_visuals",
+                          f"repair_{index + 1}.json"), {
+            "status": "passed",
+            "output": corrected_visuals.model_dump(mode="json"),
+        })
+    if mismatched_visual_blocks(source_beats, visuals):
+        _save(_phase_file(root, "02_visuals"), {
+            "status": "blocked",
+            "output": visuals.model_dump(mode="json"),
+            "mismatched_blocks": mismatched_visual_blocks(source_beats, visuals),
+        })
+        raise ValueError(
+            "Visual alignment remains invalid; see 02_visuals/output.json."
+        )
+    candidate = assemble_plan(
+        narrative_core=core, source_beats=source_beats, visuals=visuals,
+    )
     workspace.submit_plan_revision(candidate)
     if workspace.report is not None and workspace.report["status"] != "blocked":
         workspace.protected_cta_beats = {
