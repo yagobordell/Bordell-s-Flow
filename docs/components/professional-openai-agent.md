@@ -2,10 +2,11 @@
 
 This is the NEW Professional-only path. Casero uses its existing bots unchanged.
 Professional now executes one OpenAI Agents SDK agent over the **whole script**,
-with five sequential phases under Python validation: narrative groups (B1.1
-boundaries only), beats + image/video/editor planning, global evaluation using
-Python tools, correction, and validated delivery. Group boundaries are NOT
-independent planning requests.
+with five logical phases under Python validation: narrative groups (B1.1),
+global editorial segmentation followed by global image/video/Haiku planning
+(B1.2/B2), global evaluation (B2.1-style review), localized corrections,
+and deterministic green-only delivery. Group boundaries are NOT
+independent model requests.
 
 ## Running
 
@@ -43,13 +44,31 @@ uv run --locked --with "openai-agents>=0.22,<0.24" --extra dev python scripts/pi
 
 ## Phase-one cost and ebook capability gate
 
-B1.1 now emits exactly one strict structured GroupProposal without model-side tool calls.
-The SDK is limited to one model turn for each B1.1 attempt; deterministic Python
-materializes and validates block boundaries. A second attempt is paid only
-if that previous attempt returned invalid JSON or invalid boundaries. Output
-tokens are bounded to 8192 for this phase. Groups passed into the global phase
-two do not repeat the full text of each materialized group: the original
-script is still supplied verbatim.
+B1.1 emits one strict structured GroupProposal without model-side tool calls.
+Each attempt is exactly one SDK model turn; Python materializes and validates
+the exact source spans afterwards. A retry is charged only for an invalid
+structured response or invalid source anchors. **No artificial max_tokens cap**
+is configured on ANY phase.
+
+Phase 2 is deliberately split into two global operations — NOT calls per block:
+(2a) the one logical director applies the complete original professional
+B1.2 beat-definition, semantic atomicity and YouTube viewing-cadence rules to
+the entire script, returning only exact end-phrase anchors and beat types.
+Python materializes all narration literally from the original script and
+requires every beat <=100 stripped characters and <=40 words. If 31 beats are
+too long, all 31 are rejected *before* a single expensive visual prompt call.
+(2b) after all beats are valid, the director chooses visual carriers and
+image/video/editor prompts over the whole video without reprinting beat text.
+
+The whole-video review receives the current plan and ONE compact Python report,
+not an SDK conversation containing every previous huge JSON/tool result.
+Correction results are targeted visual patches rather than an expensive
+re-generation of the entire script, unless the agent explicitly chooses
+new narrative boundaries (which require a complete visual replacement only
+for that affected narrative group). The director, not Python, decides cadence
+and cuts; no target beats-per-minute, minimum shot duration or hidden automatic
+rhythm scheduler is introduced. No SDK Session is used to accumulate repeated
+script/plan/tool payloads across phases.
 
 Before making any paid request, the CLI announces whether a real ebook cover
 is available. With no cover, `cta_group_id` and ebook references are prohibited
@@ -66,16 +85,35 @@ legacy B2 and image-grid preflights pass.
 
 ## Phase logs and saved outputs
 
-- `agent_openai/usage.json` records tokens, cache hits, request count and wall time
-  of every OpenAI phase/retry, and the CLI prints each completed phase immediately.
-- `agent_openai/groups.json`: B1.1 anchors materialized from exact original script.
-- `agent_openai/plan_initial.json`: first whole-video beats+visuals+Haiku candidate.
-- `agent_openai/review.json`: model review and deterministic validator report.
-- `agent_openai/correction_N.json`: validated corrections and resegmentation attempts.
-- `agent_openai/approved_plan.json`: immutable-script hash, final plan and validation.
-- `agent_openai/editor_plan.json`: Haiku notes separate from the legacy Professional B2
-  schema; `visual_plan.json` and `B2/merged_output.json` are also published.
-- `agent_openai/conversation.db`: local SDK session with one conversation per run.
+- `agent_openai/usage.json`: tokens, cached tokens, requests and wall time per
+  SDK call, including structured JSON failures.
+- `B1.1/output.json`: B1.1-compatible output, written as soon as group anchors
+  are validated. Also stored in `agent_openai/phases/01_groups/output.json`.
+- `B1.2/block_N/output.json` and `B1.2/merged_output.json`: ORIGINAL-SOURCE
+  B1.2 beat output per group and merged, written as soon as every beat boundary
+  is validated, before any paid model request for visuals. The global cut
+  decisions and diagnostics are saved in `agent_openai/phases/02_beats/`.
+- `B2/candidate_output.json`: candidate audiovisual plan even if it fails
+  later validations. `B2/block_N/output.json` and `B2/merged_output.json`
+  are written only after the strict B2 and grid preflight passes.
+- `agent_openai/phases/02_visuals/output.json`, `03_evaluation/output.json`,
+  `04_correction/output.json`, `05_delivery/output.json`: complete staged
+  outputs and validation reports. Failed correction attempts are saved by number.
+  A phase-04 no-op is recorded even when no new model call was needed.
+- `B2.1/review_output.json`: archived global editorial B2.1-style review in
+  its NEW contract; it does not masquerade as a legacy B21Output response.
+- `agent_openai/groups.json`, `beats.json`, `plan_initial.json`,
+  `review.json`, `correction_N.json`, `approved_plan.json`: audit checkpoints
+  on the real source and all accepted creative revisions.
+- `agent_openai/editor_plan.json`: separate source-anchored Haiku notes.
+  `visual_plan.json`: full legacy-compatible visual plan for downstream.
+  The runner later adds avatar metadata and CTA placement references.
+
+**Checkpoints survive even when a later phase fails**: a bad visual generation
+cannot delete an already validated B1.1/B1.2 result. Each logical phase
+has an `output.json`, and B1.1/B1.2/B2 retain their familiar legacy
+paths. There is no persistent SDK conversation database: avoiding redundant
+whole-video history prevents unnecessary repeated-context token consumption.
 
 A phase failure leaves checkpoints and stops production, rather than letting an
 unchecked visual plan reach paid imagery or GPU jobs. The rhythm map is based on
