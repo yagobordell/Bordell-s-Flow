@@ -114,7 +114,8 @@ def test_length_limit_is_still_hard_and_source_complete():
     )
     assert result["status"] == "blocked"
     assert "BEAT_LENGTH" in {issue["rule_id"] for issue in result["issues"]}
-    assert result["plan"] is None
+    assert result["plan"] is not None
+    assert result["plan"]["blocks"][0]["beats"][0]["text"] == first + second
 
 
 def test_sidecar_notes_references_and_cta_materialize_without_nulls_on_beats():
@@ -263,3 +264,47 @@ def test_existing_cover_does_not_authorize_invented_cta():
     )
     assert report["status"] == "blocked"
     assert "CTA_UNGROUNDED" in {issue["rule_id"] for issue in report["issues"]}
+
+
+def test_length_failure_also_reveals_avatar_and_authentic_cta_errors():
+    """Python must disclose every checkable fault in one expensive model round."""
+    script = (
+        "This ebook explains how to recognize a bank scam. "
+        "Scan the QR code to get the real guide and protect your family. "
+        "Keep these instructions close for the next unexpected call."
+    )
+    meta = [{
+        "block_id": 1, "type": "close",
+        "emotional_entry": "concern", "emotional_exit": "clarity",
+        "span": {"first_words": script, "last_words": script},
+    }]
+    direction = _direction(_beat("1A", script, kind="avatar"))
+    material = materialize_sparse_direction(_group(script), direction, _core())
+    assert material["plan"] is not None
+    assert material["status"] == "blocked"
+    report = validate_plan(
+        script, meta, material["plan"], ebook_available=True,
+    )
+    codes = {issue["rule_id"] for issue in report["issues"]}
+    assert {"BEAT_LENGTH", "AVATAR_RATIO", "SPEAKING_RUN",
+            "CTA_SPOKEN_ASSET_UNPROTECTED",
+            "CTA_SPOKEN_OFFER_MISSING"}.issubset(codes), codes
+
+
+def test_full_plan_succeeds_only_with_source_and_visual_validation():
+    script = "A phone rings. The recipient looks at it."
+    meta = [{
+        "block_id": 1, "type": "close",
+        "emotional_entry": "concern", "emotional_exit": "clarity",
+        "span": {"first_words": script, "last_words": script},
+    }]
+    direction = _direction(
+        _beat("1A", "A phone rings."),
+        _beat("1B", "The recipient looks at it.", kind="avatar"),
+    )
+    material = materialize_sparse_direction(_group(script), direction, _core())
+    assert material["status"] == "passed"
+    assert material["plan"] is not None
+    report = validate_plan(script, meta, material["plan"])
+    assert report["status"] == "blocked"
+    assert "AVATAR_RATIO" in {issue["rule_id"] for issue in report["issues"]}
