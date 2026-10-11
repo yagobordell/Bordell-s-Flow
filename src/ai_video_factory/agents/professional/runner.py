@@ -110,8 +110,10 @@ def _direction_input(
             "Before submitting, verify that base-avatar beats are strictly "
             "below 45 percent of all beats, and consecutive audio=true "
             "speaking runs total at most 120 source characters. Use genuine "
-            "visual coverage appropriate to the narration, not filler or "
-            "artificial microbeats. For explicit ebook/QR narration, assign "
+            "visual coverage appropriate to the narration. Keep each beat as "
+            "a concise spoken pulse that follows a clear attention step; give "
+            "the intro a rapid succession of short, focused beats. For explicit "
+            "ebook/QR narration, assign "
             "authentic ebook CTA ownership in each containing group with "
             "the correct visual and source references. Media_image beats "
             "with >=70 source characters need 2-4 stills, except protected "
@@ -681,10 +683,13 @@ async def run_professional_director(
     final_report = current["validation"]
     if current["status"] == "blocked" or current["plan"] is None:
         _save(_phase_file(root, "05_delivery"), {
-            "status": "blocked", "validation": _compact_report(final_report),
+            "status": "blocked", "source_sha256": source_sha,
+            "validation": _compact_report(final_report),
             "proposed_plan": joint_direction.model_dump(mode="json"),
         })
         _save(root / "blocked.json", {
+            "status": "blocked", "source_sha256": source_sha,
+            "proposed_plan": joint_direction.model_dump(mode="json"),
             "validation": _compact_report(final_report),
         })
         codes = sorted(set(
@@ -706,7 +711,9 @@ async def run_professional_director(
     final_report = workspace.validate_plan()
     if final_report["status"] == "blocked":
         _save(_phase_file(root, "05_delivery"), {
-            "status": "blocked", "validation": _compact_report(final_report),
+            "status": "blocked", "source_sha256": source_sha,
+            "validation": _compact_report(final_report),
+            "proposed_plan": workspace.candidate,
         })
         raise ValueError("Professional director blocked at final protected CTA gate.")
     projection = workspace.deliver()

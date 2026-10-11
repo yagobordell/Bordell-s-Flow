@@ -94,6 +94,18 @@ Only avatar and avatar_media speak. Generated media_image and media_video are un
 
 Narrator-run cap and final close
 
-A maximal consecutive run of audio=true beats across block boundaries has a HARD limit of 120 characters (sum of each beat's text.strip() length). Use a meaningfully justified audio=false B-roll beat to interrupt an overlong run, without changing any text, ID or boundary. The last beat of any close block MUST be untouched base avatar: avatar, prompt=null, video_prompt=null, reference=false, audio=true.
+A maximal consecutive run of audio=true beats across all group/block
+boundaries has a HARD limit of 120 characters (sum of each beat's
+text.strip() length). At planning, calculate the cumulative stripped
+character total for every maximal run and recheck it across adjacent groups
+before submission. Treat 120 as an inclusive ceiling, not a target or a
+reason to overlook an overage because it is only a few characters. When a
+run would exceed the ceiling, place a meaningful source-faithful
+audio=false visual beat at the earliest editorially sound boundary; preserve
+all exact source text and IDs unless a validated source-boundary correction
+is required. Recalculate the full affected run after every change. The
+Python validator is a final safeguard, not a substitute for this proactive
+audit. The last beat of any close block MUST be untouched base avatar:
+avatar, prompt=null, video_prompt=null, reference=false, audio=true.
 
 The generated visuals must not recreate a speaking presenter in the original narration room. A visual_type describes the carrier, not the identity of characters in a scene.

@@ -2,6 +2,31 @@
 
 Maintain the existing detection, B2 CTA visual director, authentic ebook reference, pinned QR and spoken-"QR" website overlay behaviour. The current legacy source remains binding where compatible with the strict Python contract. CTA groups are whole-beat contiguous ranges; their protected beats cannot be removed, renamed, resegmented or visually changed by subsequent global review/correction. The >=70-character multi-image obligation explicitly does NOT apply to CTA beats. CTA media_image is kept to one image until a separately approved CTA migration.
 
+## Required CTA detection and protection audit
+
+Run a dedicated CTA audit before finalizing the plan and again during
+evaluation/correction. Read the complete source for every explicit ebook,
+QR, download, offer or CTA reference, then reconcile each mention with the
+detected CTA group and its complete protected beat range. Confirm the
+correct CTA classification/group annotation and authentic ebook reference
+metadata are present wherever required by the active schema. Inspect each
+spoken offer and QR beat individually: an explicit CTA mention is not an
+ordinary avatar beat merely because its current visual carrier is `avatar`.
+Confirm that every generated CTA image, including an `avatar_media` support
+image and `media_video` starting frame, is conditioned on the authentic
+ebook reference; verify the permitted CTA carrier, exactly-one-image rule,
+protected beat text/order, QR/website compositor behavior, and no generated
+QR or website duplication. Resolve missing classification or references
+before submitting, using the existing CTA detection and metadata contract;
+never invent metadata fields or weaken frozen CTA protections.
+
+Reconcile this audit against both the original source and the final beat
+list, including repeated CTA mentions in separate groups. A Python validation
+finding is a confirmation that the audit failed, not a reason to leave a
+known issue unresolved when the phase permits correction. CTA range
+immutability still governs: repair group classification/annotations and
+permitted visual fields without resegmenting or altering protected CTA beats.
+
 The compositor owns the QR and website overlay: do not generate or duplicate them via image prompts or Haiku. QR appearance and the 90-second first-CTA tail, and the website interval from a spoken "QR" to the end of that CTA, remain unchanged.
 
 ## Original B2 CTA source (verbatim; reference rules and screens/documents)

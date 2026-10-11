@@ -38,6 +38,26 @@ subshots, but not additional beats. There is no fixed rhythm target or
 acceptable beats-per-minute quota. Respect the proven inherited B1.2
 atomicity, coherence and viewing-cadence standards.
 
+## Mandatory character-run and CTA audit
+
+Independently inspect the reported audio/avatar runs across every adjacent
+group boundary. A maximal uninterrupted audio=true run may total no more
+than 120 characters after stripping each beat's text. Treat any reported
+overage, including a one-character overage, as a required correction; do not
+leave it for delivery or rely on the validator alone. Identify the smallest
+meaningful source-faithful visual interruption that restores the cap, then
+recount the complete run.
+
+Separately scan the complete original script and proposed beats for every
+explicit ebook, QR, offer or CTA mention. Reconcile each with the protected
+CTA group/range and verify its authentic classification, group annotation,
+and required ebook reference metadata. Inspect each spoken CTA beat and
+generated CTA asset individually, including carrier/reference compliance,
+the authentic cover input, and compositor-owned QR/website behavior. Any
+unprotected CTA mention or missing required reference is an actionable
+finding, even when the rest of its group appears valid. Apply
+`rules/professional_cta.md`; preserve frozen CTA text, order and boundaries.
+
 ## Mandatory audit of the real visual storytelling
 
 Review each carrier **against the alternative picture that would best serve
@@ -83,6 +103,13 @@ For each moment, verify these positive editorial outcomes:
    physical grids, which only encompass contiguous static-image beats;
    do not report a mixed-carrier grid as technically generated when the
    current transport cannot construct it.
+9. Read every generated prompt as a shot brief: check that it specifies the
+   relevant subject/continuity details, necessary objects and state, a
+   deliberate camera angle and framing, and a legible action or visual
+   state. For each numbered grid, check that each successive prompt preserves
+   the previous scene's relevant facts and precisely directs its next visual
+   development or camera view. Return beat-specific findings for vague or
+   discontinuous prompts, not a general request to "add detail".
 
 Raise a `CreativeReview` issue for a **specific observed failure** even when
 no Python violation exists. Specify the affected beat or connected sequence,

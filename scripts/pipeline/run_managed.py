@@ -41,7 +41,8 @@ are saved in data/<avatar>/meta/. A conflicting --style is refused.
 Options include --no-image, --no-video, --style, --from B2, --rerun,
 --images-only, --generate-video, --resume-audio, --regenerate-audio,
 --publish-only, --youtube-only, --sync-only, --stop openai-agent,
---ebook-cover NOMBRE, --feedback-gpt '@feedback.md', --approve-gpt-feedback FILE,
+--ebook-cover NOMBRE, --feedback-gpt '@feedback.md', --feedback-chat,
+--approve-gpt-feedback FILE,
 --list-avatars, --list-scripts, --data-root PATH.
 --sync-only exports existing verified media without API or GPU calls.
 For opted-in YouTube publication set YOUTUBE_ENABLED=true and provide per-run youtube.json.
@@ -253,7 +254,8 @@ def _is_resume(flags: list[str]) -> bool:
         "--images-only", "--generate-video", "--videos-only",
         "--regenerate-audio", "--resume-audio", "--publish-only",
         "--youtube-only", "--sync-only",
-        "--feedback-gpt", "--fedback-gpt", "--approve-gpt-feedback",
+        "--feedback-gpt", "--fedback-gpt", "--feedback-chat",
+        "--approve-gpt-feedback",
     )):
         return True
     return "--from" in flags and (
@@ -379,7 +381,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--from", "--images-only", "--generate-video", "--videos-only",
                 "--regenerate-audio", "--resume-audio", "--publish-only",
                 "--youtube-only", "--sync-only",
-        "--feedback-gpt", "--fedback-gpt", "--approve-gpt-feedback",
+                "--feedback-gpt", "--fedback-gpt", "--feedback-chat",
+                "--approve-gpt-feedback",
             )
         ):
             raise SystemExit(
@@ -462,7 +465,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not any(flag in flags for flag in (
         "--images-only", "--generate-video", "--videos-only",
         "--regenerate-audio", "--resume-audio", "--publish-only", "--youtube-only",
-        "--feedback-gpt", "--fedback-gpt", "--approve-gpt-feedback",
+        "--feedback-gpt", "--fedback-gpt", "--feedback-chat",
+        "--approve-gpt-feedback",
     )):
         command.extend(["--avatar", avatar])
     print(f"  Avatar: {avatar} | Script: {source} | Work: {work_root}")

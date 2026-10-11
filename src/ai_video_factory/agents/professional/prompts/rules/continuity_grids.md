@@ -8,6 +8,23 @@ wardrobe, props, object states, camera logic and reveal order. Every later
 related asset must preserve those established facts until the narration
 establishes a change.
 
+Every image prompt must be sufficiently specific to direct the intended
+frame: identify the relevant subject and continuity-critical appearance,
+the necessary props and their state, the scene and one observable action or
+stable state, then define a purposeful camera angle/height, shot distance,
+framing, subject placement and visual emphasis. Add lighting and
+foreground/background relationships when they clarify the shot. Include
+only details that support the narration or continuity.
+
+For a numbered sequence, each prompt must be self-contained and explicitly
+direct its evolution from the preceding asset: preserve relevant identity,
+wardrobe, location, object ownership, placement and state; then specify the
+precise next action stage, changed state, new reveal or intentional camera
+view. Make clear what remains constant and what changes, in chronological
+order. Do not repeat an unchanged generic scene description as the sole
+continuity instruction, jump ahead to a later state, or let a new angle
+silently alter the scene. Respect all screen/document and CTA prompt rules.
+
 A **grid** is the numbered continuity sequence for that scene. It may include
 any generated visual asset that belongs to the same scene continuity:
 
@@ -22,6 +39,26 @@ may remain in the same grid when shared conditioning is helpful.
 
 A plain `avatar` beat generates no new image cell, but it does not end,
 forbid or reset the numbered grid of the surrounding scene.
+
+## Detect the whole action sequence before assigning grids
+
+Before labeling prompts, review each group and its neighbors as an
+editorial sequence. Trace how actions, attention, evidence and comparisons
+advance; establish the scene's participants, setting, object states and
+causal order; then inventory its generated assets chronologically. Assign
+assets to grids according to the continuity that helps the viewer understand
+the scene.
+
+Assess continuity through the persistence of scene identity and causal
+progression across the planned views. Changes in framing, focal emphasis,
+asset carrier or beat boundary can serve as successive views of one scene
+when the participants, setting, objects and event remain connected. Use the
+same grid when shared visual conditioning strengthens that continuity, and
+choose a new grid when the editorial sequence establishes a distinct scene
+or a shared reference would weaken clarity. Include the generated assets
+that contribute to the relevant continuity in their chronological order.
+Apply `rules/screens_documents.md` when directing screen or document
+content.
 
 ## Numbered order
 
@@ -94,6 +131,12 @@ The label belongs to the generated asset, not to the beat. Therefore:
 - an `avatar_media` beat contributes one label for its support still;
 - a `media_image` beat contributes one label per still image prompt; and
 - an `avatar` beat contributes no label.
+
+Apply this ordered sequence from the opening visuals onward. When the first
+generated assets belong to one continuing scene, place them in grid `A` and
+number them consecutively by their scene chronology (`A1`, `A2`, `A3` ...),
+including across beats or carrier changes. Begin grid `B` at the next distinct
+continuity sequence, then continue grid letters in order of first appearance.
 
 A logical grid exists only when **two or more** generated assets belong to the
 same continuity sequence. Do not create one-asset grids. A solitary generated

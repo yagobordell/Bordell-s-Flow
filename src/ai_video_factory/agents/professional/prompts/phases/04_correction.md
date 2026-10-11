@@ -21,8 +21,40 @@ single full-video correction response. No extra narrative-only or
 visual-only planning passes. Return empty arrays only when no change is
 actually warranted.
 
-Narrative boundaries are chosen by YOU based on the original B1.2 rules;
-Python cannot rewrite them for you. Once proposed, Python materializes the
+Treat every reported avatar/audio run over 120 stripped characters and
+every missing protected CTA classification/reference as a required issue,
+not a warning. Recount consecutive audio=true text across group boundaries
+after the correction. Audit all explicit ebook/QR/offer beats against their
+protected CTA group metadata and authentic ebook references; repair every
+permitted classification, annotation or visual-reference omission while
+preserving frozen CTA text, order and boundaries.
+
+Close each validation finding explicitly in the corrected plan; do not
+assume that addressing a neighboring finding also resolves it. For every
+non-CTA `media_image` beat with 70 or more source characters, provide at
+least two purposeful image prompts (within the 1–4 limit), unless the
+carrier or source span is actually revised. Do not leave a long image beat
+with just one prompt. After any correction, recount every maximal
+audio=true run across all group boundaries and keep it at or below 120
+stripped narration characters. Use a meaningful visual interruption or,
+when the source's attention progression warrants it, revised exact
+contiguous beat boundaries; do not rely on a visual change that leaves the
+same audio=true run intact.
+
+Separately inspect the complete interval identified by each editorial
+finding, including its lead-in to a protected CTA. A long uninterrupted
+reuse of the same avatar image is not resolved merely by satisfying the
+120-character audio-run limit elsewhere. Give the editable, non-CTA portion
+of that interval a purposeful, narration-grounded visual change (or revise
+its source beats when the spoken progression calls for new boundaries).
+Stop at the protected CTA boundary: never alter its frozen beat text, IDs,
+order, boundaries or protected visual fields. If the CTA must remain
+unchanged, resolve the preceding repetitive stretch in the last permitted
+non-CTA beats, and verify the whole interval again. Record no finding as
+addressed unless the final sequence actually removes the cited defect.
+
+Narrative boundaries follow the positive beat definition in
+`rules/beat_segmentation.md`; Python materializes the
 new text slices and validates the entire script and the audiovisual plan.
 No hardcoded beat pace, length-based automatic splitting, transition quota
 or visual-percentage denominator manipulation is acceptable. All former
@@ -54,6 +86,16 @@ correct; use `replaced_groups` only where source cuts/IDs or source-level
 annotations truly need revision, and carry the revised cut and visual
 choice together. Preserve actor identity, object state, sequence continuity,
 precise reveals, authorised overlay notes and protected CTA assets.
+
+When correcting a vague image prompt, replace it with a self-contained,
+shot-specific direction grounded in its exact narration: relevant person
+and continuity-critical appearance, necessary objects and physical state,
+location, one photographable action or stable state, deliberate camera
+angle/height and framing, subject placement and visual emphasis. For a
+numbered grid, explicitly preserve the relevant facts from the preceding
+asset and specify the precise next change/reveal or purposeful new view.
+Use only details that strengthen source fidelity or continuity, and retain
+the screens/documents and CTA restrictions.
 
 Correct reference-frame continuity **across both** moving-shot starting
 frames and static detail images, including when the narrator temporarily
@@ -112,11 +154,12 @@ the whole-video visual arc after the targeted revision.
 
 ## Grid continuity repairs
 
-When a correction concerns scene continuity, repair the grid assignment together with the beat carrier decisions. If two generated assets belong to the same continuing scene, they may be merged into one numbered grid even when one is a still, another is a video starting frame, and another is an `avatar_media` support still. Do not preserve an incorrect split merely because the carriers differ or because an `avatar` beat sits between them.
+When a correction concerns scene continuity, evaluate the scene's identity,
+causal progression, participants, setting and object states across the full
+sequence. Align grid membership with the continuity that best supports the
+viewer, considering all generated asset carriers and intervening narration.
+Coordinate any grid adjustment with the affected carrier decisions.
 
-
-When repairing grid metadata, preserve or rebuild the global letter order of
-logical grids across the full video. Ensure that every corrected grid contains
-at least two generated assets and that each asset receives the proper sequence
-label (`A1`, `A2`..., `B1`, `B2`...). Remove any mistaken one-asset grid by
-making that asset independent instead.
+Preserve or rebuild the global letter order of logical grids across the full
+video. Give each multi-asset grid its chronological sequence labels
+(`A1`, `A2`..., `B1`, `B2`...), and keep standalone assets independent.

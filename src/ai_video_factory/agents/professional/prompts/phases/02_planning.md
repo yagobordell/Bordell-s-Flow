@@ -11,8 +11,9 @@ director determines its natural YouTube pacing and its cinematographic
 purpose simultaneously. There is NO separate beat-only model step and
 NO separate visual-only model step.
 
-Apply all loaded original B1.2 atomicity/semantic-boundary/cadence criteria
-and hard <=100 stripped characters, <=40 words limits. Apply all loaded B2,
+Apply the positive beat definition and source-boundary contract in
+`rules/beat_segmentation.md`, together with its hard <=100 stripped
+characters and <=40 words limits. Apply all loaded B2,
 B2.1, real presenter identity, coherent video-motion, CTA/ebook, screen and
 document, image-grid and Haiku rules to those SAME beats before responding.
 The choice of cut must support the photographed action, continuity and
@@ -27,7 +28,39 @@ requiring shared visual conditioning. Return naturally to the speaking
 connection with the audience. The original voice-over continues over B-roll. Identify significant narration-grounded headlines,
 warnings and memorable conclusions that merit precisely anchored editor
 overlays. Audit these decisions across the complete plan before submission.
-No forced shot count or beats-per-minute rate.
+Pacing follows each group's narrative function and the sequence of spoken
+attention steps. Rhythm variety serves clarity and dramatic function across
+the whole script, with every beat a brief unit of narrative advancement.
+
+## Beat size and intro tempo
+
+Treat every beat throughout the complete script as the shortest complete
+spoken pulse that advances the viewer by one discernible attention, meaning,
+or dramatic step. Align one immediate focus, one concise source span, and one
+edit point. Track changes in action, image, evidence, claim, reaction,
+implication, contrast, question, and emphasis; give each change that advances
+the narration a distinct beat, including clause- and phrase-level advances
+within a sentence. Let the beat end as soon as its individual step has landed
+clearly on first hearing.
+
+The intro is the fastest-paced stretch in the video: build it from sharply
+compact beats that turn each successive attention step into a quick, legible
+cut. Carry concise beat sizing throughout the remaining script as well.
+Accumulate details and quick turns through short successive pulses; allow a
+single beat to carry only the span needed for its one thought or action to
+be immediately intelligible. Vary the cut rhythm according to the narration's
+function, giving consequential realizations and instructions enough room to
+register while maintaining forward progression and frequent meaningful
+visual changes across the whole video.
+
+Give the intro a correspondingly energetic picture progression. Keep
+presenter address concise at direct-to-viewer moments, and use source-relevant
+moving or still coverage for the narrated material. Let each visual choice
+reinforce the attention step carried by its beat. Plan each beat as a fresh
+visual unit as well as a concise spoken pulse: move the viewer's focus to a
+new view, detail, evidence element, action stage, visible state, or
+presenter-facing moment at each successive beat. Preserve the same scene and
+its continuity when the visual progression belongs to one connected passage.
 
 ## Integrated direction procedure — direct a film around the voice-over
 
@@ -68,6 +101,17 @@ the whole original script, using these editorial judgments:
    sequence (`A1`, `A2`, `A3` ...). Only create a grid when that continuity
    contains at least two generated assets; otherwise leave the asset
    independent. Maintain this shared visual identity in all prompts.
+   Before assigning labels, perform an explicit continuity sweep across the
+   full group and adjacent beats: trace any linked action/evidence chain,
+   list every generated frame in scene chronology, and verify that changes
+   in shot scale, insert type, carrier or beat do not accidentally split it.
+   For instance, a phone ringing, being answered, the Chase Bank logo on its
+   screen, a close emphasis on the call number, and the same person comparing
+   it with a number on their debit card should form one connected grid when
+   depicted as one continuous event. Include every generated asset in that
+   chain; only a real scene change or misleading shared conditioning justifies
+   separation. Keep screen/document text subject to
+   `rules/screens_documents.md`.
 5. **Integrate rhythm, presenter returns and postproduction.** Choose cuts
    where a new source-supported visual contribution warrants them. Allow
    the audience time to follow movement, read static evidence and reconnect
@@ -76,6 +120,49 @@ the whole original script, using these editorial judgments:
    is needed. Never include checking, verification or visibility reminders.
    Examine the resulting sequence for coherent picture choices and
    intelligible human connection.
+
+## Image-prompt specificity and continuity
+
+Write every generated-image prompt as a usable shot brief, not a topic label.
+Make the intended visual meaning legible from the exact beat and its
+surrounding scene. Specify the real subject and their relevant appearance
+and role; age range, clothing, posture, expression and identifying
+continuity details when established or useful; the necessary props and their
+ownership, position and physical state; the location and relevant
+environment; and one clear, photographable action or stable visual state.
+Include a deliberate camera angle and height, shot size/distance, framing,
+subject placement, focal emphasis and depth relationship, plus lighting and
+composition when they help communicate the beat. Choose details that make
+the image more accurate and interpretable, not decorative inventory.
+Describe only objects needed to show the narrated event or establish
+continuity. Apply the screens/documents rule in
+`rules/screens_documents.md` whenever a screen or document appears.
+
+For each multi-asset grid, treat every prompt as the next shot in an ordered
+visual sequence. Make each prompt self-contained, preserve the established
+people, wardrobe, location, props, positions and physical state, and state
+what specifically carries forward from the immediately preceding numbered
+asset and what advances, changes, is newly revealed, or is newly framed in
+this one. Keep the camera angle and distance purposeful to that new visual
+job. Do not reset the scene or merely repeat a generic description; do not
+advance an action or reveal before the narration does. Label every asset
+with its correct grid prefix as required by `rules/continuity_grids.md`.
+
+Before submission, audit the entire ordered beat sequence for uninterrupted
+audio=true/avatar runs across group boundaries. Sum each beat's stripped
+spoken-text characters for each maximal run; every run must be at most 120
+characters. Arrange a purposeful, source-faithful visual interruption where
+needed, without changing source wording or weakening a protected CTA.
+
+Perform a dedicated CTA pass over the complete script and final proposal.
+Find every explicit ebook, QR, download/offer or other detected CTA mention;
+confirm each belongs to the correct protected CTA group/range and has the
+required authentic CTA classification, group annotation and reference
+metadata under `rules/professional_cta.md`. Check every spoken offer/QR beat
+and every generated CTA asset against the CTA-specific carrier, reference,
+cover and overlay rules. Do not treat an explicit ebook/QR line as an
+ordinary avatar beat by default. Resolve the CTA audit before the general
+whole-plan audit and submission.
 
 Make the best full-video edit instead of meeting a percentage or an image
 count. Action should not become a still montage simply because still assets
@@ -95,45 +182,50 @@ reveal or payoff changes what the viewer needs to see. The following are
 
 | Group `type` | Dominant audiovisual pacing job |
 | --- | --- |
-| `intro` | Establish curiosity and the immediate viewing promise with an engaging, relatively agile succession of motivated views: orient the viewer, make the question or tension tangible, and give each hook/reveal a clear visual impact. |
-| `development` | Maintain comprehensible forward movement through varied, purposeful views: demonstrate the unfolding examples/actions and causal steps, refresh attention when information changes, and let richer explanations or comparisons remain readable. |
-| `pivot` | Make the narrative's change of direction **felt**. Create a perceivable contrast with the prior visual pattern, then orient the viewer in the new question, stakes, location or governing interpretation. A brief hold can mark the change as effectively as a quick succession. |
-| `correction` | Make the change in understanding legible: establish the earlier interpretation, present the evidence or new observation and make the revised meaning distinguishable. Give before/after comparisons and decisive details the exposure they need. |
-| `climax` | Build and concentrate attention toward the consequential proof or payoff: tighten motivated visual progression as tension rises where supported, then hold the decisive moment long enough to register its significance. Intensity can result from a sustained image as well as faster cuts. |
-| `close` | Land the resolution and final takeaway with intentional visual clarity. Let tension settle when the text resolves it, give a memorable conclusion its appropriate emphasis, and keep any final action/CTA focused. Preserve the existing last-close-beat base-avatar contract. |
+| `intro` | Give the video its fastest cadence through brief narrative beats and a clear, energetic visual progression. |
+| `development` | Carry the explanation forward with varied, purposeful views that keep each information shift clear and readable. |
+| `pivot` | Make the change of direction perceptible and orient the viewer in the new question, stakes, or governing interpretation. |
+| `correction` | Make the changed understanding legible by clarifying the revised meaning and giving its decisive information room to register. |
+| `climax` | Concentrate attention on the consequential proof or payoff and let its significance land. |
+| `close` | Land the resolution and final takeaway with intentional visual clarity, appropriate emphasis, and a focused final action or CTA. Preserve the existing last-close-beat base-avatar contract. |
 
 **Decision procedure for each group's ordered beats:**
 
 1. Identify the block's primary narrative job, viewer starting state and
    intended exit state. Relate its intensity to the blocks on either side.
-2. Follow the source's causal progression and identify independent
-   on-screen contributions: orientation, action, closer detail, reveal,
-   reaction, evidence, interpretation or payoff. **One planned beat is
-   one planned editing shot** with its own contiguous original-source
-   interval, not a cinematic beat encompassing the whole action.
+2. Follow the source's progression of attention and give each distinct
+   spoken step a concise beat with its own contiguous original-source
+   interval, beat focus, and planned shot purpose. Track successive changes
+   in the thought at clause and phrase level; a sentence can carry several
+   compact beats as its focus, evidence, action, or implication advances.
 3. Choose the carrier and cut simultaneously. Let moving actions be
    experienced as moving shots and sustained static information be read
    as still views; change perspective when a subsequent view has a distinct
    narrative job, including a natural return to the narrator.
    Keep the people, objects, physical states and chronology coherent
    across any multi-shot sequence.
-4. Assess relative spoken extent, visible activity and how much the viewer
-   must understand. An ongoing action belongs to a continuous `media_video`
-   shot for its spoken interval. For a `media_image` beat with genuinely
+4. Assess the spoken pulse, visible activity and the viewer's information
+   at each beat. An ongoing action can retain coherent `media_video`
+   movement across concise narration beats. For a `media_image` beat with genuinely
    static visual work, its permitted 1–4 stills may form *equally timed
    subshots* that expose distinct details without inventing narration cuts.
-   Honor the existing >=70-character image requirement when that carrier
-   is chosen and the authentic CTA exemption.
-5. Read the proposed group as edited YouTube footage. The opening should
-   earn attention; explanation should remain clear; changes of direction
-   should be perceptible; consequential discoveries should land; the
-   conclusion should feel intentional. Adjust shot lengths and subshot
-   plans qualitatively rather than manufacturing timestamps or uniform
-   cut intervals.
+   Honor the >=70-character image requirement: every non-CTA
+   `media_image` beat with 70 or more source characters must have at least
+   two purposeful image prompts, within the 1–4 prompt limit. This
+   obligation is exempt only for authentic, protected CTA beats.
+5. Read the proposed group as edited YouTube footage. The opening runs at
+   the highest cadence, with successive attention steps landing as clear,
+   energetic cuts. Across the complete script, keep the edit moving through
+   concise beats at meaningful changes in the narration; make explanations
+   readable, turns perceptible, discoveries resonant, and the conclusion
+   intentional. Shape shot and subshot plans around the spoken progression
+   without manufacturing timestamps or uniform cut intervals.
 
-A long dramatic action can consist of several shot-level beats. A single
-cohesive narration beat can contain multiple still-image subshots. One
-`media_video` is a continuous moving shot, not extra invisible cuts.
+Each concise narration pulse has its own planned beat. A continuous action
+can progress across several beats while preserving one coherent scene. A
+beat can contain multiple still-image subshots when its focused narration
+benefits from distinct stable details. One `media_video` is a continuous
+moving shot.
 Consecutive plain-avatar beats reuse the same original picture and do
 not themselves create a visible shot change.
 

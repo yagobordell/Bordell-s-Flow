@@ -29,7 +29,8 @@ _PHASE: dict[str, tuple[str, ...]] = {
         "phases/02_planning.md", "memory/beats_visuals.md",
     ),
     "03_evaluation": (
-        *_VISUAL, "phases/03_evaluation.md", "memory/beats_visuals.md",
+        "rules/beat_segmentation.md", *_VISUAL,
+        "phases/03_evaluation.md", "memory/beats_visuals.md",
     ),
     "04_correction": (
         "rules/beat_segmentation.md", *_VISUAL,
@@ -48,6 +49,17 @@ def phase_paths(phase: str) -> tuple[str, ...]:
         return (*_BASE, *_PHASE[phase])
     except KeyError as exc:
         raise ValueError(f"Unsupported Professional agent phase: {phase}") from exc
+
+
+def operational_prompt_paths() -> tuple[str, ...]:
+    """Return all active instruction Markdown files, excluding memory and snapshots."""
+    paths = [relative for phase in _PHASE for relative in phase_paths(phase)]
+    paths.extend(("rules/post_generation_motion.md",))
+    return tuple(dict.fromkeys(
+        relative for relative in paths
+        if not relative.startswith("memory/")
+        and "/source_snapshots/" not in relative
+    ))
 
 
 def load_phase_instructions(

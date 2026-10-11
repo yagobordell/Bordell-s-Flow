@@ -287,7 +287,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--feedback-gpt", "--fedback-gpt", dest="feedback_gpt", metavar="TEXT_OR_@FILE",
-        help="Profesional: proponer ajustes de memoria a partir de un comentario o @feedback.md.",
+        help=(
+            "Profesional: aplicar feedback a los MD operativos y proponer memoria "
+            "sobre una ejecución guardada, incluso bloqueada."
+        ),
+    )
+    parser.add_argument(
+        "--feedback-chat", action="store_true",
+        help="Profesional: conversar y adaptar los MD de instrucciones operativas con tu feedback.",
     )
     parser.add_argument(
         "--approve-gpt-feedback", type=Path, metavar="PROPOSAL_JSON",
@@ -336,9 +343,14 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
-    if args.feedback_gpt is not None or args.approve_gpt_feedback is not None:
-        if args.feedback_gpt is not None and args.approve_gpt_feedback is not None:
-            parser.error("Choose feedback proposal OR approval, not both.")
+    feedback_modes = sum((
+        args.feedback_gpt is not None,
+        args.feedback_chat,
+        args.approve_gpt_feedback is not None,
+    ))
+    if feedback_modes:
+        if feedback_modes > 1:
+            parser.error("Choose one feedback mode: proposal, chat, or approval.")
         if (
             args.stop_stage is not None or args.images_only or args.videos_only
             or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
@@ -2707,9 +2719,11 @@ async def main() -> None:
         script_file=args.script_file,
     )
     if (getattr(args, "feedback_gpt", None) is not None
+        or getattr(args, "feedback_chat", False)
         or getattr(args, "approve_gpt_feedback", None) is not None):
         from ai_video_factory.agents.professional.feedback import (
             approve_feedback,
+            chat_feedback,
             propose_feedback,
         )
 
@@ -2722,17 +2736,29 @@ async def main() -> None:
         if saved_report.get("run", {}).get("visual_style") != "profesional":
             raise SystemExit("Feedback is available only for Profesional.")
         memory_root = args.avatars_dir / "_professional_gpt_memory"
-        if args.approve_gpt_feedback is not None:
+        if args.feedback_chat or args.feedback_gpt is not None:
+            if not settings.openai_api_key:
+                raise SystemExit("OPENAI_API_KEY is required for GPT feedback.")
+            source_bytes = script_file.read_bytes()
+            try:
+                text = source_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise SystemExit(f"Script must be UTF-8: {script_file}") from exc
+            run_source_sha = hashlib.sha256(source_bytes).hexdigest()
+        if args.feedback_chat:
+            await chat_feedback(
+                output=output, script=text, run_source_sha=run_source_sha,
+                model=settings.openai_model, api_key=settings.openai_api_key,
+            )
+        elif args.approve_gpt_feedback is not None:
             applied = approve_feedback(
                 args.approve_gpt_feedback, output=output, memory_root=memory_root,
             )
             print("  Feedback approved: " + json.dumps(applied, ensure_ascii=False))
         else:
-            if not settings.openai_api_key:
-                raise SystemExit("OPENAI_API_KEY is required for GPT feedback.")
-            text = script_file.read_text(encoding="utf-8")
             path = await propose_feedback(
                 argument=args.feedback_gpt, output=output, script=text,
+                run_source_sha=run_source_sha,
                 model=settings.openai_model, api_key=settings.openai_api_key,
             )
             print(f"  Feedback proposal ready for review: {path}")

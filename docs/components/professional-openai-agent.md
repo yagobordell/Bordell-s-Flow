@@ -143,9 +143,11 @@ relative script positions until narration/STT produces actual word/frame timing.
 There can be 1–4 images within one `media_image` beat; >=70 non-CTA characters
 requires at least two. The compositor divides actual beat frames among subimages.
 
-## Feedback — proposal and approval, never automatic rule rewrites
+## Feedback — adapt instructions or save a preference
 
-After a run, for literal comments:
+After a successful or blocked Professional run, send literal feedback. The
+agent automatically chooses relevant instruction MDs and applies focused
+updates when your feedback expresses a durable preference:
 
 ```powershell
 .\run.ps1 mi_guion MiAvatar --feedback-gpt "Repetiste el mismo plano varias veces"
@@ -157,11 +159,52 @@ Or put detailed feedback in `feedback.md` and pass the filename with `@`:
 .\run.ps1 mi_guion MiAvatar --feedback-gpt "@feedback.md"
 ```
 
-The agent receives the full original script, the approved plan and your
-comment. It saves a **pending** JSON proposal under
-`agent_openai/feedback/proposal_*.json`: an analysis, suggested additions to
-`groups.md` and `beats_visuals.md`, and any suggested instruction/rule
-clarifications for human review. No instructions or memory change yet.
+For a live CLI conversation with the agent, use:
+
+```powershell
+.\run.ps1 test Enzo --style profesional --feedback-chat
+```
+
+Type feedback at `Tú>` and each agent reply appears at `Agente>`. The chat
+starts with the latest successful or blocked run as context. Give your feedback
+directly; the agent can adapt its instructions in that same turn without you
+naming files or entering another command. `/corregir-md` remains available to
+force an update after a discussion. It can edit any active Professional agent,
+phase, or rule instruction MD loaded by the runner. Memory files, documentation,
+and historical source snapshots are excluded. Each edit is recorded as audit
+JSON under `feedback/prompt_updates/`.
+The agent reads the current file with a tool, edits it through the Agents SDK
+`ApplyPatchTool`, and reads it back to verify. If a diff does not apply, the
+tool returns that error to the agent so it can reread and repair the patch in
+the same run. Feedback runs set `max_turns=None` so multi-file read/edit/verify
+cycles are not stopped by the SDK's default ten-turn cap. For example, send
+this as your feedback:
+
+```text
+El tramo CTA protegido supera el límite de voz y el agente lo marcó como un
+error que debía corregir. Actualiza tus instrucciones para que distingas una
+reparación posible de un conflicto con el contrato Python, y explica ese
+conflicto sin proponer un cambio imposible.
+```
+
+The agent chooses the relevant instruction files, applies the changes itself,
+and reports the updated files and audit record. Changes to prompt guidance
+affect future runs; Python validation remains authoritative.
+The CLI sends the saved-run context once, then carries a short summary and
+the new message between turns. It keeps the full transcript locally in memory
+for `/propuesta` during that invocation.
+
+The `--feedback-gpt` mode receives the full original script, your comment, the
+active instruction file paths, and the latest available run context. It reads
+only the instruction files it needs. A successful run supplies its approved
+plan. A blocked run supplies the proposed delivery plan and its validation
+findings; failures earlier in planning supply the latest saved phase artifact
+and run outcome.
+Prompt changes are applied automatically when appropriate. The agent also saves
+a **pending** JSON proposal under `agent_openai/feedback/proposal_*.json` with
+suggested additions to `groups.md` and `beats_visuals.md` for approval. Prompt
+updates and memory suggestions have separate behavior: prompt edits are
+audited and applied; memory entries still require your approval.
 
 Inspect this JSON first, then explicitly approve:
 
@@ -173,10 +216,7 @@ Approval appends only the reviewed memory entries to
 `data/_professional_gpt_memory/groups.md` and `beats_visuals.md`
 (or the corresponding configured `--avatars-dir` directory). Future
 Professional executions load these persistent memories after immutable rules.
-Proposed changes to `phases/*.md` or `rules/*.md` **are not applied** by
-feedback approval; a human must inspect and change version-controlled prompt
-instructions explicitly. This protects critical original B2 screens/documents,
-motion, CTA and voice contracts.
+The prompt update audit records the actual diffs applied to operational MDs.
 
 ## Deployment precautions
 

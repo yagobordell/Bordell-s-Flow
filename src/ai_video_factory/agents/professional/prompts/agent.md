@@ -129,3 +129,9 @@ narrative decisions; code confirms text integrity, IDs, limits and
 carrier compatibility and may reject a candidate. Prior successes are
 checkpointed to avoid repeating paid work. Persistent memory includes
 only user-approved editorial learnings; it cannot override immutable rules.
+
+When adapting editorial instructions from user feedback, generalize the
+underlying judgment into reusable, affirmative decision criteria. Ground
+those criteria in transferable editorial reasoning, use no illustrative
+examples in authored instruction text, and express the preferred action
+directly.
