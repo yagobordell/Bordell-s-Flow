@@ -387,7 +387,7 @@ async def run_professional_director(
 
     # 01: original B1.1 grouping; Python owns exact materialized source.
     group_validation: dict[str, Any] = {}
-    for index in range(max_corrections + 1):
+    for index in range(min(max_corrections, 1) + 1):
         answer = await invoke(
             "01_groups",
             "GUION ORIGINAL COMPLETO, INMUTABLE:\n" + script
@@ -526,8 +526,8 @@ async def run_professional_director(
         "review": review.model_dump(mode="json"),
     })
 
-    # 04: one global correction proposal. A revised narrative block ALWAYS
-    # carries its revised visuals in the same objects and model response.
+    # 04: bounded global correction proposals. A revised narrative block
+    # ALWAYS carries its visuals in that SAME model response.
     immutable_cta_ids = {
         beat.beat_id for group in joint_direction.blocks
         for beat in group.beats if beat.cta_group_id is not None
@@ -549,6 +549,7 @@ async def run_professional_director(
         # Abort on no progress rather than spend on identical failed attempts.
         for correction_number in range(1, max_corrections + 1):
             before = current
+            previous_editorial = outstanding_editorial
             correction = await invoke(
                 "04_correction",
                 "Return ONE coherent correction covering ALL remaining structural "
@@ -644,7 +645,7 @@ async def run_professional_director(
                 "attempt": correction_number, "status": checked["status"],
                 "issues": checked["issues"],
             })
-            previous_count = len(before["issues"])
+            previous_count = len(before["issues"]) + len(previous_editorial)
             new_count = len(checked["issues"])
             if checked["status"] == "passed" or (
                 checked["status"] == "passed_with_warnings"
@@ -654,6 +655,17 @@ async def run_professional_director(
                 break
             if new_count >= previous_count:
                 # Keep the better previous revision and stop spending tokens.
+                outstanding_editorial = previous_editorial
+                remaining_editorial = [
+                    {"rule_id": "EDITORIAL_ISSUE_UNADDRESSED",
+                     "message": item.problem, "beat_id": item.beat_id}
+                    for item in outstanding_editorial
+                ]
+                if remaining_editorial and before["status"] != "blocked":
+                    before["status"] = "blocked"
+                    before["validation"]["status"] = "blocked"
+                    before["issues"].extend(remaining_editorial)
+                    before["validation"]["issues"].extend(remaining_editorial)
                 break
             joint_direction = corrected_direction
             current = checked
