@@ -183,13 +183,21 @@ def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
             e["rule_id"] for e in initial["validation"]["issues"]
         }
     assert (tmp_path / "agent_openai" / "phases" / "01_groups" / "output.json").is_file()
-    assert (tmp_path / "agent_openai" / "phases" / "02_beats" / "output.json").is_file()
-    assert (tmp_path / "agent_openai" / "phases" / "02_visuals" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "02_planning" / "beats" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "02_planning" / "visuals" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "02_planning" / "output.json").is_file()
     assert (tmp_path / "agent_openai" / "phases" / "03_evaluation" / "output.json").is_file()
+    assert sorted(
+        d.name for d in (tmp_path / "agent_openai" / "phases").iterdir()
+        if d.is_dir()
+    ) == [
+        "01_groups", "02_planning", "03_evaluation",
+        "04_correction", "05_delivery",
+    ]
     assert (tmp_path / "agent_openai" / "phases" / "05_delivery" / "output.json").is_file()
     assert (tmp_path / "agent_openai" / "phases" / "04_correction" / "output.json").is_file()
     if missing_visual_beat:
-        assert (tmp_path / "agent_openai" / "phases" / "02_visuals"
+        assert (tmp_path / "agent_openai" / "phases" / "02_planning" / "visuals"
                 / "repair_1.json").is_file()
     assert (tmp_path / "B1.1" / "output.json").is_file()
     assert (tmp_path / "B1.2" / "block_1" / "output.json").is_file()
@@ -254,7 +262,7 @@ def test_b11_and_valid_beats_survive_later_model_failure(tmp_path, monkeypatch):
     assert (tmp_path / "B1.1" / "output.json").is_file()
     assert (tmp_path / "B1.2" / "block_1" / "output.json").is_file()
     assert (tmp_path / "agent_openai" / "phases"
-            / "02_beats" / "output.json").is_file()
+            / "02_planning" / "beats" / "output.json").is_file()
     assert not (tmp_path / "B2" / "merged_output.json").exists()
 
 
