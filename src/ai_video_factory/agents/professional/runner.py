@@ -576,12 +576,14 @@ async def run_professional_director(
                 }, ensure_ascii=False),
                 DirectionCorrection,
             )
+            invalid_correction = False
             try:
                 corrected_direction = apply_direction_correction(
                     joint_direction, correction,
                 )
                 checked = check_direction(corrected_direction)
             except (ValueError, TypeError) as exc:
+                invalid_correction = True
                 checked = {
                     "status": "blocked",
                     "issues": [{
@@ -647,6 +649,9 @@ async def run_professional_director(
             })
             previous_count = len(before["issues"]) + len(previous_editorial)
             new_count = len(checked["issues"])
+            if invalid_correction:
+                outstanding_editorial = previous_editorial
+                break
             if checked["status"] == "passed" or (
                 checked["status"] == "passed_with_warnings"
             ):
