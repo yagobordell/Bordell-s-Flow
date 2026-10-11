@@ -127,8 +127,14 @@ def test_manual_motion_is_pinned_and_never_replaced_implicitly(
     assert source["mode"] == "manual"
     assert source["sha256"] == hashlib.sha256(b"fake mp4 content").hexdigest()
     assert avatar_cta_motion.ensure_avatar_cta_motion(avatar) == source
+    # Before a manual motion checkpoint exists, a too-short candidate can
+    # be replaced without losing the already paid TTS/image checkpoint.
     source_file.write_bytes(b"changed content")
-    with pytest.raises(SystemExit, match="SHA-256"):
+    pending = avatar_cta_motion.motion_source(source_file.parent)
+    assert pending["sha256"] == hashlib.sha256(b"changed content").hexdigest()
+    (source_file.parent / "completed.json").write_text("{}", encoding="utf-8")
+    source_file.write_bytes(b"changed after completing CTA")
+    with pytest.raises(SystemExit, match="después de preparar el CTA"):
         avatar_cta_motion.motion_source(source_file.parent)
 
 
@@ -303,3 +309,32 @@ def test_per_video_subtitle_selector_preserves_default_and_explicit_choice(
     assert select_casero_subtitles(None, default=True) is True
     assert select_casero_subtitles(None, default=False) is False
     assert select_casero_subtitles(False, default=True) is False
+
+
+def test_pending_manual_identity_updates_only_before_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar = _avatar(tmp_path)
+    folder = avatar.parent / "meta" / "cta"
+    folder.mkdir()
+    file = folder / "motion_manual.mp4"
+    file.write_bytes(b"first video too short for actual CTA")
+    _stub_ffprobe(monkeypatch, duration=2.0)
+    record = avatar_cta_motion.ensure_avatar_cta_motion(
+        avatar, "manual", interactive=False,
+    )
+    identity_path = folder / "identity.json"
+    identity_path.write_text(json.dumps({
+        "schema_version": "casero-cta-v1",
+        "avatar_sha256": "a" * 64,
+        "manual_motion_sha256": record["sha256"],
+    }), encoding="utf-8")
+    file.write_bytes(b"new clip with enough seconds")
+    updated = avatar_cta_motion.motion_source(folder)
+    assert updated["sha256"] == hashlib.sha256(file.read_bytes()).hexdigest()
+    assert json.loads(identity_path.read_text())["manual_motion_sha256"] == updated["sha256"]
+    assert json.loads(identity_path.read_text())["avatar_sha256"] == "a" * 64
+    (folder / "motion_manual_state.json").write_text("{}", encoding="utf-8")
+    file.write_bytes(b"changed after checkpoint")
+    with pytest.raises(SystemExit, match="después de preparar el CTA"):
+        avatar_cta_motion.motion_source(folder)
