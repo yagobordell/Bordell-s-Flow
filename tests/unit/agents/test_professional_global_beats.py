@@ -17,6 +17,7 @@ from ai_video_factory.agents.professional.visuals import (
     WholeVideoVisuals,
     apply_correction,
     assemble_plan,
+    canonicalize_visual_order,
 )
 
 
@@ -149,3 +150,32 @@ def test_unrequested_resegmentation_cannot_fabricate_beats():
                 visual_patches=[],
             ),
         )
+
+
+def test_id_only_out_of_order_visuals_are_canonicalized_without_llm_replanning():
+    groups, _bad, good = _groups_and_cuts(2)
+    source = validate_and_materialize_cuts(groups, good)["blocks"]
+    scrambled = WholeVideoVisuals(blocks=[
+        VisualGroup(block_id=2, beats=[
+            _choice("2B", prompt="2B"), _choice("2A", prompt="2A"),
+        ]),
+        VisualGroup(block_id=1, beats=[
+            _choice("1B", prompt="1B"), _choice("1A", prompt="1A"),
+        ]),
+    ])
+    canonical = canonicalize_visual_order(source, scrambled)
+    assert [x.block_id for x in canonical.blocks] == [1, 2]
+    assert [
+        beat.beat_id for group in canonical.blocks for beat in group.beats
+    ] == ["1A", "1B", "2A", "2B"]
+    assembled = assemble_plan(
+        narrative_core={"central_question": "Why?", "final_answer": "Result"},
+        source_beats=source, visuals=canonical,
+    )
+    assert [
+        beat["image_prompts"][0]
+        for group in assembled["blocks"] for beat in group["beats"]
+    ] == ["1A", "1B", "2A", "2B"]
+    assert "".join(
+        beat["text"] for group in assembled["blocks"] for beat in group["beats"]
+    ) == "".join(group["text"] for group in groups)
