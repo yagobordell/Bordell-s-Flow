@@ -1,11 +1,39 @@
-# Phase 2 — One global beats + visuals + editor planning pass
+# Phase 2 — ONE global beat + visual direction response
 
-Work on the ENTIRE authoritative original script in ONE global creative task, using the materialized narrative groups from phase 1 as boundaries and global context, never calling the model separately per group. Segment complete source into beats by contiguous verbatim substrings; one independent and visually/narratively useful moment per beat, not arbitrary short fragments. Beats within a group have consecutive IDs (1A, 1B, ..., 1AA). <=40 words and <=100 stripped characters per beat. Preserve every original source character in sequence.
+Decide the narrative segmentation and visual realization of the COMPLETE
+original script TOGETHER in this SINGLE creative response. Read the entire
+materialized B1.1 groups and narrative core before choosing any boundaries.
 
-For each beat select visual_type, beat_type, audio, reference and generation-ready English prompts consistent with immutable rules. media_image MUST use image_prompts (1–4). From 70 characters inclusive, non-CTA media_image MUST have AT LEAST TWO distinct image prompts. Multi-image beats share ONE narration beat: their images are shown sequentially for equal frame allocations once STT duration is available. Use generation_mode=grid for coherent grouped image generation and independent otherwise. CTA-owned beats remain protected and use the existing single-image semantics ONLY if the application provides an authentic ebook cover. Without that cover, the ebook CTA capability is disabled: ALL beats MUST have cta_group_id=null and cta_reference_sources=null. Do not hallucinate a promotional ebook CTA or ebook reference. Any ordinary spoken CTA remains verbatim source narration, not an ebook visual asset. avatar_media supports only one accompanying still and media_video has one starting image plus a separate one-take video_prompt.
+Each beat is an inseparable editorial decision: its semantic source ending,
+beat_type, observable on-screen action, real actor, visual carrier, prompt
+assets, continuity/grid strategy and source-anchored editor notes. The same
+director determines its natural YouTube pacing and its cinematographic
+purpose simultaneously. There is NO separate beat-only model step and
+NO separate visual-only model step.
 
-Use visual_type=avatar on STRICTLY FEWER THAN 45% of beats. avatar_media is excluded from this ratio but included in audio=true runs; each whole-video speaking run is <=120 characters across group boundaries. Do not inflate the beat count merely to reduce the ratio. The last beat of a close block is the untouched original avatar.
+Apply all loaded original B1.2 atomicity/semantic-boundary/cadence criteria
+and hard <=100 stripped characters, <=40 words limits. Apply all loaded B2,
+B2.1, real presenter identity, coherent video-motion, CTA/ebook, screen and
+document, image-grid and Haiku rules to those SAME beats before responding.
+The choice of cut must support the photographed action, continuity and
+reveal; the choice of image must support its exact source narration.
+No forced shot count or beats-per-minute rate.
 
-Add editor_notes for Haiku separately from image/video prompts. For word-triggered effects, include an exact source phrase AND its 1-based occurrence in that beat. No made-up seconds; STT resolves time later. Never embed title/overlay graphics in generation prompts.
+Return a strict WholeVideoDirection object containing every B1.1 block in
+original order, each with its COMPLETE ordered list of DirectedBeat objects.
+A DirectedBeat includes end_anchor (a short exact phrase ending that beat
+in the source), occurrence (1-based number after the previous beat),
+beat_id in B1.2 sequence, beat_type, visual_type, audio, reference,
+prompt, video_prompt, image_prompts, generation_mode, editor_notes,
+cta_group_id and cta_reference_sources. All schema fields are required;
+nullable ones must be explicitly null when inapplicable.
 
-Return ONE complete schema-conformant plan for the entire script, no Markdown fences. Python automatically submits, validates and stores that output; do not invoke a tool in this phase. The next phase can inspect the full validation report and rhythm map.
+Never regenerate beat.text. Python materializes text literally using the
+source anchors AFTER receiving your COMPLETE beat+visual plan and validates
+the entire audiovisual result. Source cuts and visual choices must form a
+single coherent narrative and stage sequence before the first submission.
+If any detail is wrong, one whole-video correction phase will request
+focused replacements carrying revised cuts AND revised visuals together.
+
+The whole plan is one phase output. No intermediate narrated-beat output
+can be considered a successful result without its own visual choices.
