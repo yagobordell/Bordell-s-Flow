@@ -18,11 +18,11 @@ from typing import Any
 
 from pydantic import Field
 
-from ai_video_factory.agents.professional.direction import (
-    DirectionCorrection,
-    WholeVideoDirection,
-    apply_direction_correction,
-    materialize_direction,
+from ai_video_factory.agents.professional.compact import (
+    SparseCorrection as DirectionCorrection,
+    SparseDirection as WholeVideoDirection,
+    apply_sparse_correction as apply_direction_correction,
+    materialize_sparse_direction as materialize_direction,
 )
 from ai_video_factory.agents.professional.preflight import (
     requires_ebook_cover,
@@ -88,20 +88,22 @@ def _direction_input(
             "prompts and source-anchored editor notes TOGETHER, in one response. "
             "Read ALL B1.1 groups first. Every group text is an exact original "
             "script slice; the full sequence is the immutable narration. "
-            "Return one DirectedBeat per complete visual-narrative impact, "
-            "with its exact final source phrase as end_anchor and a 1-based "
-            "occurrence after the prior beat. Include beat_type, beat_id, "
-            "visual_type, prompts, grids, editor notes and all required fields "
-            "in EACH DirectedBeat. Do not type beat.text: Python derives it "
-            "from the anchors after receiving your ENTIRE audiovisual plan. "
-            "Source-exact beat.text will be shown in the phase JSON by Python. "
-            "Choose boundaries with the visual staging jointly, following "
-            "the original complete B1.2 and B2 editorial rules, no arbitrary "
-            "pacing quotas. Each beat's exact contiguous source slice MUST be "
-            "<=100 stripped characters AND <=40 words. If one full sentence "
-            "exceeds either limit, cut at a natural clause without deleting "
-            "or rewriting any source words. Before responding, verify EVERY "
-            "beat length AND exact anchor against the input script.\n"
+            "Return EVERY beat's actual verbatim narration in beat.text, "
+            "never a source pointer, end_anchor, occurrence, or offsets. "
+            "Use the compact type-specific beat schema: avatar has no image "
+            "or video prompt; media_image supplies only its image prompts and "
+            "generation_mode; media_video supplies frame and motion prompts; "
+            "avatar_media supplies its supporting image prompt. "
+            "Put editor notes, presenter identity references, and authentic "
+            "CTA ownership ONLY in each group's annotation lists, never as "
+            "null/empty fields repeated on beats. "
+            "Copy every source word and punctuation mark exactly, in order. "
+            "Whitespace formatting may differ; Python restores the original "
+            "source bytes during validation. Do not omit, paraphrase or add "
+            "narration. A source slice MUST be <=100 stripped characters AND "
+            "<=40 words. If a long sentence cannot fit, cut at a meaningful "
+            "clause without dropping any words. Verify exact coverage and "
+            "each limit before returning the whole audiovisual plan.\n"
             + json.dumps({
                 "narrative_core": core, "groups": groups,
                 "ebook_cover_available": ebook is not None,
@@ -135,59 +137,6 @@ def _direction_input(
             ),
         })
     return [{"role": "user", "content": content}]
-
-
-def _readable_direction(
-    direction: WholeVideoDirection, boundaries: dict[str, Any],
-) -> dict[str, Any]:
-    """Compact phase view with source-exact narration on every resolved beat.
-
-    Unmatched anchors retain text=None: source content is never invented.
-    Raw agent outputs remain available in the internal diagnostic checkpoints.
-    """
-    resolved = {
-        beat["beat_id"]: beat["text"]
-        for block in boundaries.get("blocks", [])
-        for beat in block["beats"]
-    }
-    blocks: list[dict[str, Any]] = []
-    for group in direction.blocks:
-        beats: list[dict[str, Any]] = []
-        for beat in group.beats:
-            narration = resolved.get(beat.beat_id)
-            item: dict[str, Any] = {
-                "beat_id": beat.beat_id,
-                "text": narration,
-                "beat_type": beat.beat_type,
-                "visual_type": beat.visual_type,
-            }
-            if narration is None:
-                item["end_anchor"] = beat.end_anchor
-                item["occurrence"] = beat.occurrence
-            if beat.prompt is not None:
-                item["prompt"] = beat.prompt
-            if beat.video_prompt is not None:
-                item["video_prompt"] = beat.video_prompt
-            if beat.image_prompts:
-                item["image_prompts"] = beat.image_prompts
-            if beat.generation_mode == "grid":
-                item["generation_mode"] = "grid"
-            if beat.editor_notes:
-                item["editor_notes"] = [
-                    note.model_dump(mode="json", exclude_none=True)
-                    for note in beat.editor_notes
-                ]
-            if beat.cta_group_id is not None:
-                item["cta_group_id"] = beat.cta_group_id
-                if beat.cta_reference_sources:
-                    item["cta_reference_sources"] = beat.cta_reference_sources
-            if beat.reference:
-                item["reference"] = True
-            if beat.audio:
-                item["audio"] = True
-            beats.append(item)
-        blocks.append({"block_id": group.block_id, "beats": beats})
-    return {"blocks": blocks}
 
 
 def _compact_report(report: dict[str, Any]) -> dict[str, Any]:
@@ -476,7 +425,7 @@ async def run_professional_director(
     _save(_phase_file(root, "02_planning"), {
         "schema_version": "professional-phase-output-v1",
         "phase": "02_planning", "status": current["status"],
-        "output": _readable_direction(joint_direction, current["boundaries"]),
+        "output": joint_direction.model_dump(mode="json"),
         "boundary_validation": {
             "status": current["boundaries"]["status"],
             "issues": current["boundaries"]["issues"],
@@ -529,8 +478,8 @@ async def run_professional_director(
     # 04: bounded global correction proposals. A revised narrative block
     # ALWAYS carries its visuals in that SAME model response.
     immutable_cta_ids = {
-        beat.beat_id for group in joint_direction.blocks
-        for beat in group.beats if beat.cta_group_id is not None
+        assignment.beat_id for group in joint_direction.blocks
+        for assignment in group.cta
     }
     readonly_findings = [
         item for item in review.issues if item.beat_id in immutable_cta_ids
@@ -691,9 +640,7 @@ async def run_professional_director(
         "protected_cta_editorial_findings": [
             item.model_dump(mode="json") for item in readonly_findings
         ],
-        "proposed_plan": _readable_direction(
-            joint_direction, current["boundaries"],
-        ),
+        "proposed_plan": joint_direction.model_dump(mode="json"),
         "skipped_model_call_when_no_issues": not correction_attempts,
     })
 
@@ -702,9 +649,7 @@ async def run_professional_director(
     if current["status"] == "blocked" or current["plan"] is None:
         _save(_phase_file(root, "05_delivery"), {
             "status": "blocked", "validation": _compact_report(final_report),
-            "proposed_plan": _readable_direction(
-                joint_direction, current["boundaries"],
-            ),
+            "proposed_plan": joint_direction.model_dump(mode="json"),
         })
         _save(root / "blocked.json", {
             "validation": _compact_report(final_report),
