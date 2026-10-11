@@ -39,3 +39,8 @@ def validate_source_assets(script: str, *, ebook_available: bool) -> None:
             "de ejecutar Profesional. No se ha llamado a OpenAI ni se ha "
             "alterado el CTA original."
         )
+
+
+def is_explicit_ebook_cta_anchor(text: str) -> bool:
+    """Check explicit spoken ebook/QR cues inside an already-validated beat."""
+    return bool(_EBOOK.search(text) or _QR.search(text))
