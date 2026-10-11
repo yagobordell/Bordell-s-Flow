@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from ai_video_factory.bots.contracts import B11Output, B12Output
 from scripts.pipeline import run_b_pipeline as runner
 
 VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
