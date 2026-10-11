@@ -6,14 +6,14 @@ and the combined original audiovisual direction.
 This is the SAME professional director correcting the whole video, NOT
 an independent worker invoked per group.
 
-Return ONE strict DirectionCorrection object covering ALL actual issues:
+Return ONE strict SparseCorrection object covering ALL actual issues:
 - replaced_groups: complete integrated DirectedGroup objects ONLY for groups
-  whose narrative boundaries, beat IDs, anchor source phrases or beat types
-  need revision. Each new beat contains its source cut AND complete new
-  visual carrier, prompts, continuity/grid and editor notes TOGETHER.
-- visual_patches: changed VisualChoice objects ONLY for existing beat IDs
-  whose original text boundaries remain intact. Python preserves those
-  beats' exact source anchors and narration. Never repeat untouched beats.
+  whose text boundaries, beat IDs, or beat types need revision, or whose
+  source annotations must change. Each replacement includes exact source
+  text AND complete visual carrier decisions for that group.
+- visual_patches: sparse carrier-specific visual changes ONLY for existing
+  beat IDs with unchanged narration. Do not reproduce their source text.
+  Python preserves those beats' original verified source narration.
 Both arrays are mandatory even when empty.
 
 When you receive actual errors, correct ALL of them coherently in this
@@ -23,7 +23,7 @@ actually warranted.
 
 Narrative boundaries are chosen by YOU based on the original B1.2 rules;
 Python cannot rewrite them for you. Once proposed, Python materializes the
-new source slices and validates the entire script and the audiovisual plan.
+new text slices and validates the entire script and the audiovisual plan.
 No hardcoded beat pace, length-based automatic splitting, transition quota
 or visual-percentage denominator manipulation is acceptable. All former
 B2 professional constraints, CTA ebook reference protections, Haiku anchors,
