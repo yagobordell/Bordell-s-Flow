@@ -197,7 +197,8 @@ async def run_professional_director(
             break
     if not groups_ok:
         raise ValueError("Professional grouping exhausted validation retries.")
-    assert b11.narrative_core is not None  # already guaranteed by B11Output
+    if b11.narrative_core is None:
+        raise ValueError("B1.1 narrative core was not returned.")
     core = b11.narrative_core.model_dump(mode="json")
     _save(root / "groups.json", {
         "source_sha256": source_hash, "narrative_core": core,
