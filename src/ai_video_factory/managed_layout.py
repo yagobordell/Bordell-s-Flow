@@ -16,7 +16,6 @@ from uuid import uuid4
 from ai_video_factory.managed_media import public_report, sync_managed_media
 from ai_video_factory.publishing import PublicationError, _collect, _digest, _json
 
-
 _LOGGER = logging.getLogger(__name__)
 _RENAME_RETRY_DELAYS = (0.1, 0.25, 0.5, 1.0, 2.0)
 
