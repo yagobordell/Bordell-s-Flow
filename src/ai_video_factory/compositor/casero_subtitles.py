@@ -4,7 +4,6 @@ Runs locally *after* CTA insertion; the CTA has no subtitle events.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import subprocess

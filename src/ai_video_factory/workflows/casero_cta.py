@@ -22,12 +22,12 @@ from ai_video_factory.bots.cta import CTAEbook
 from ai_video_factory.bots.cta_motion_copy import CTAMotionCopy
 from ai_video_factory.compositor.cta_motion import build_motion
 from ai_video_factory.config import settings
-from ai_video_factory.providers.avatar_cta_motion import motion_source, probe_manual_motion
 from ai_video_factory.providers.ai33_speech import (
     AI33SpeechClient,
     audio_url_of,
     task_id_of,
 )
+from ai_video_factory.providers.avatar_cta_motion import motion_source, probe_manual_motion
 from ai_video_factory.providers.avatar_voice import valid_voice_provider
 from ai_video_factory.providers.ebook_covers import EbookCovers
 from ai_video_factory.providers.openai_images import OpenAIImageClient
