@@ -12,8 +12,10 @@ from ai_video_factory.agents.professional.feedback import (
     approve_feedback,
     parse_feedback_arg,
 )
-from ai_video_factory.agents.professional.runner import run_professional_director
-from ai_video_factory.bots.contracts import B11Output
+from ai_video_factory.agents.professional.runner import (
+    GroupProposal,
+    run_professional_director,
+)
 
 
 class FakeAgent:
@@ -68,10 +70,9 @@ def test_real_five_phase_controller_uses_one_agent_session(
         @staticmethod
         async def run(agent, payload, *, session, max_turns=18, hooks=None):
             invocations.append((agent, session, payload))
-            if agent.output_type is B11Output:
-                final = B11Output.model_validate({
-                    "pipeline_stage": "B1.1", "narrative_core": core,
-                    "blocks": blocks, "error": None,
+            if agent.output_type is GroupProposal:
+                final = GroupProposal.model_validate({
+                    "narrative_core": core, "blocks": blocks,
                 })
             elif agent.output_type is not str and isinstance(agent.output_type, type):
                 from ai_video_factory.agents.professional.runner import PlannedVideo
