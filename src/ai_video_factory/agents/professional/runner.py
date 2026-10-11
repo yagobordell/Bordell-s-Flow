@@ -152,7 +152,10 @@ async def run_professional_director(
     pipeline. A failed validation is a hard failure: no plan is published.
     """
     try:
-        from agents import Agent, Runner, SQLiteSession, set_default_openai_key
+        from agents import (
+            Agent, ModelBehaviorError, ModelSettings, RunHooks, Runner,
+            SQLiteSession, set_default_openai_key,
+        )
     except ImportError as exc:
         raise RuntimeError(
             "Missing OpenAI Agents SDK. Install openai-agents or use "
@@ -175,24 +178,108 @@ async def run_professional_director(
     base = Agent(name="Bordell Professional Director", model=model)
     phases: list[dict[str, Any]] = []
 
+    class UsageHooks(RunHooks):
+        """Account for paid model calls even when strict JSON parsing fails."""
+
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def on_llm_end(self, context: Any, agent: Any, response: Any) -> None:
+            usage = response.usage
+            details = getattr(usage, "input_tokens_details", None)
+            item = {
+                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+                "cached_input_tokens": int(getattr(details, "cached_tokens", 0) or 0),
+                "response_id": getattr(response, "response_id", None),
+                "request_id": getattr(response, "request_id", None),
+            }
+            self.calls.append(item)
+            # Durable accounting, even if Runner raises while parsing this response.
+            _save(root / "usage.json", {"phases": phases, "pending_calls": self.calls})
+
     async def execute(
         phase: str, input_data: str | list[dict[str, Any]],
         *, output_type: Any = str, use_tools: bool = False,
     ) -> Any:
-        print(f"\n  [OpenAI] Iniciando fase {phase} ...", flush=True)
+        enabled_tools = (
+            tools[:1] if phase == "01_groups" else
+            tools[2:] if phase in {"03_evaluation", "04_correction", "05_delivery"}
+            else []
+        ) if use_tools else []
+        # No model write tool for the immense complete video plan: the
+        # controller validates the single typed final output after each pass.
         actor = base.clone(
-            instructions=load_phase_instructions(phase, memory_root=memory_root),
+            instructions=load_phase_instructions(phase, memory_root=memory_root)
+            + (
+                "\n\nOUTPUT CONTRACT: The SDK enforces strict structured JSON. "
+                "Return only the required schema object, never Markdown fences, "
+                "comments or explanatory prose outside schema fields."
+                if output_type is not str else ""
+            ),
             output_type=output_type,
-            tools=(
-                tools if phase == "04_correction" else tools[2:]
-            ) if use_tools else [],
+            tools=enabled_tools,
+            model_settings=ModelSettings(
+                max_tokens=16000 if phase == "01_groups" else 50000,
+                parallel_tool_calls=False,
+            ),
         )
-        started = perf_counter()
-        result = await Runner.run(actor, input_data, session=session, max_turns=18)
-        metrics = _stats(phase, result, perf_counter() - started)
-        phases.append(metrics)
-        _save(root / "usage.json", {"phases": phases})
-        return result.final_output
+        # Two bounded JSON repairs do not affect the semantic B1.1 validation
+        # retry budget. No paid image/audio/video requests occur here.
+        for attempt in range(3):
+            print(
+                f"\n  [OpenAI] Fase {phase} | llamada {attempt + 1}/3 ...",
+                flush=True,
+            )
+            hooks = UsageHooks()
+            started = perf_counter()
+            try:
+                retry_prompt = input_data if attempt == 0 else (
+                    "La respuesta anterior no cumplió el JSON estricto del "
+                    "SDK. Devuelve UNA salida íntegra conforme al esquema "
+                    "sin bloques Markdown ni campos extra.\n\n"
+                    + (input_data if isinstance(input_data, str) else
+                       json.dumps(input_data, ensure_ascii=False))
+                )
+                result = await Runner.run(
+                    actor, retry_prompt, session=session, max_turns=18, hooks=hooks,
+                )
+            except ModelBehaviorError as exc:
+                elapsed = perf_counter() - started
+                calls = hooks.calls
+                record = {
+                    "phase": phase, "attempt": attempt + 1,
+                    "status": "invalid_structured_output",
+                    "error_type": type(exc).__name__,
+                    "seconds": round(elapsed, 3), "calls": calls,
+                    "requests": len(calls),
+                    "input_tokens": sum(i["input_tokens"] for i in calls),
+                    "output_tokens": sum(i["output_tokens"] for i in calls),
+                    "total_tokens": sum(i["total_tokens"] for i in calls),
+                }
+                phases.append(record)
+                _save(root / "usage.json", {"phases": phases})
+                _save(root / f"{phase}_invalid_json_{attempt + 1}.json", record)
+                print(
+                    f"  [OpenAI {phase}] JSON inválido (intento {attempt + 1}/3); "
+                    f"tokens facturados observados={record['total_tokens']}",
+                    flush=True,
+                )
+                if attempt == 2:
+                    raise RuntimeError(
+                        f"{phase}: el SDK rechazó 3 respuestas estructuradas. "
+                        f"Diagnóstico: {root / 'usage.json'}. No se inicia ninguna "
+                        "generación posterior."
+                    ) from None
+                continue
+            metrics = _stats(phase, result, perf_counter() - started)
+            metrics["attempt"] = attempt + 1
+            metrics["status"] = "completed"
+            phases.append(metrics)
+            _save(root / "usage.json", {"phases": phases})
+            return result.final_output
+        raise RuntimeError("Unreachable structured-output retry state.")
 
     source_hash = hashlib.sha256(script.encode("utf-8")).hexdigest()
     input_script = "Guion completo (fuente literal inmutable):\n" + script
@@ -206,7 +293,7 @@ async def run_professional_director(
                 "Repara ÚNICAMENTE los anclajes B1.1 rechazados por Python. "
                 + json.dumps(check, ensure_ascii=False) + "\n" + input_script
             ),
-            output_type=B11Output,
+            output_type=B11Output, use_tools=True,
         )
         if not isinstance(b11, B11Output) or b11.error is not None:
             raise ValueError("Professional grouping agent returned a B1.1 error.")
