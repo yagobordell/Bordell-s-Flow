@@ -199,3 +199,107 @@ def test_subtitle_render_uses_only_narration_stt_and_never_cta_audio(
         lambda *_args, **_kwargs: pytest.fail("Re-encoded valid subtitle cache"),
     )
     assert burn_casero_subtitles(output, run, video, audio) == result
+
+
+def test_single_long_stt_token_never_creates_two_lines() -> None:
+    cues = _captions([[_word("W" * 124, 0, 3.0)]])
+    assert len(cues) == 3
+    assert all(len(cue["text"]) <= 48 for cue in cues)
+    assert all("\n" not in cue["text"] for cue in cues)
+
+
+def test_short_caption_cannot_leak_into_cta_after_centisecond_rounding() -> None:
+    from ai_video_factory.compositor import casero_subtitles as subtitles
+
+    groups = _shift_around_cta(
+        [_word("last", 0.992, 0.999), _word("next", 2.001, 2.05)],
+        {"source_boundary_seconds": 1.001,
+         "video_cut_seconds": 1.0, "cta_duration_seconds": 1.0},
+    )
+    # The preparation split alone is not the final burn-stage CTA clamp.
+    assert len(groups) == 2
+    cues = _captions(groups)
+    assert cues[0]["start"] < 1.0
+    assert subtitles._ass_time(1.99) == "0:00:01.99"
+
+
+def test_manual_video_shorter_than_second_half_rejected_before_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.workflows.casero_cta import CaseroCTAError, _adopt_manual_motion
+
+    avatar = _avatar(tmp_path)
+    folder = avatar.parent / "meta" / "cta"
+    folder.mkdir()
+    (folder / "motion_manual.mp4").write_bytes(b"manual fake")
+    _stub_ffprobe(monkeypatch, duration=2.0)
+    avatar_cta_motion.ensure_avatar_cta_motion(avatar, "manual", interactive=False)
+    with pytest.raises(CaseroCTAError, match="necesita al menos"):
+        _adopt_manual_motion(folder, half=2.5)
+    assert not (folder / "motion_manual_state.json").exists()
+    _adopt_manual_motion(folder, half=0.5)
+    assert (folder / "motion_manual_state.json").is_file()
+
+
+def test_automatic_cta_existing_cache_can_still_be_used_without_source_file(
+    tmp_path: Path,
+) -> None:
+    avatar = _avatar(tmp_path)
+    folder = avatar.parent / "meta" / "cta"
+    folder.mkdir()
+    assert avatar_cta_motion.motion_source(folder) == {"mode": "automatic"}
+
+
+def test_failing_local_ffmpeg_subtitle_burn_can_be_retried_without_paid_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import casero_subtitles as captions
+
+    output = tmp_path / "work"
+    output.mkdir()
+    video = output / "original.mp4"
+    video.write_bytes(b"original")
+    stt = output / "transcript.json"
+    audio_hash = "1" * 64
+    stt.write_text(json.dumps({
+        "source_audio_sha256": audio_hash,
+        "words": [{"word": "Hola.", "start": 0.1, "end": 0.7}],
+    }), encoding="utf-8")
+    audio = {
+        "sha256": "2" * 64,
+        "block_start_seconds": [0.0],
+        "blocks": [{"sha256": audio_hash, "stt": {
+            "file": "transcript.json", "sha256": hashlib.sha256(stt.read_bytes()).hexdigest(),
+        }}],
+    }
+    track = {"file": "original.mp4", "sha256": hashlib.sha256(video.read_bytes()).hexdigest()}
+    folder = output / "video" / "runs" / "cache"
+    folder.mkdir(parents=True)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        Path(command[-1]).write_bytes(b"output")
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stderr="emulated libass failure")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(captions.subprocess, "run", fake_run)
+    with pytest.raises(captions.CaseroSubtitleError, match="libass failure"):
+        burn_casero_subtitles(output, folder, track, audio)
+    assert not (folder / "with_subtitles.part.mp4").exists()
+    result = burn_casero_subtitles(output, folder, track, audio)
+    assert result["subtitles"]["caption_count"] == 1
+    assert len(calls) == 2
+
+
+def test_per_video_subtitle_selector_preserves_default_and_explicit_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.pipeline.run_b_pipeline import select_casero_subtitles
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(isatty=lambda: True))
+    assert select_casero_subtitles(None, default=True) is True
+    assert select_casero_subtitles(None, default=False) is False
+    assert select_casero_subtitles(False, default=True) is False
