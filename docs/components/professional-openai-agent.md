@@ -112,8 +112,14 @@ legacy B2 and image-grid preflights pass.
 **Checkpoints survive even when a later phase fails**: a bad visual generation
 cannot delete an already validated B1.1/B1.2 result. Each logical phase
 has an `output.json`, and B1.1/B1.2/B2 retain their familiar legacy
-paths. There is no persistent SDK conversation database: avoiding redundant
-whole-video history prevents unnecessary repeated-context token consumption.
+paths. The managed run synchronizer also copies the FULL `agent_openai/`
+directory, including evaluation and failed/corrected attempts, into the
+user-visible `data/<avatar>/<script>/outputs/agent_openai/` on stopped
+runs. Completed video publications package the same phase artifacts
+under `outputs/agent_openai/`, alongside the old bot stages. Casero's
+old file copying remains unchanged. There is no persistent SDK
+conversation database: avoiding redundant whole-video history prevents
+unnecessary repeated-context token consumption.
 
 A phase failure leaves checkpoints and stops production, rather than letting an
 unchecked visual plan reach paid imagery or GPU jobs. The rhythm map is based on
