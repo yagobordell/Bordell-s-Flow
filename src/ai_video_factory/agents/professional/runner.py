@@ -352,12 +352,13 @@ async def run_professional_director(
     workspace.submit_plan_revision(_wire_plan(plan))
     # The first accepted CTA ownership snapshot is frozen for all corrections:
     # a reviewer may not silently move or repaint an ebook promotion beat.
-    workspace.protected_cta_beats = {
-        beat["beat_id"]: copy.deepcopy(beat)
-        for block in workspace.candidate["blocks"]
-        for beat in block["beats"]
-        if beat.get("cta_group_id") is not None
-    }
+    if workspace.report is not None and workspace.report["status"] != "blocked":
+        workspace.protected_cta_beats = {
+            beat["beat_id"]: copy.deepcopy(beat)
+            for block in workspace.candidate["blocks"]
+            for beat in block["beats"]
+            if beat.get("cta_group_id") is not None
+        }
     if plan.narrative_core.model_dump() != core:
         raise ValueError("Professional planning changed the B1.1 narrative core.")
     if ebook is None and any(
