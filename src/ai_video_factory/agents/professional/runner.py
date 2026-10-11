@@ -23,6 +23,7 @@ from ai_video_factory.agents.professional.beats import (
     combine_cut_corrections,
     validate_and_materialize_cuts,
 )
+from ai_video_factory.agents.professional.preflight import validate_source_assets
 from ai_video_factory.agents.professional.prompt_loader import load_phase_instructions
 from ai_video_factory.agents.professional.tools import ProfessionalPlanWorkspace
 from ai_video_factory.agents.professional.visuals import (
@@ -76,6 +77,11 @@ def _save(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _phase_file(root: Path, stage: str, name: str = "output.json") -> Path:
+    """Five user-facing phases; two internal planning passes share phase 02."""
+    if stage == "02_beats":
+        return root / "phases" / "02_planning" / "beats" / name
+    if stage == "02_visuals":
+        return root / "phases" / "02_planning" / "visuals" / name
     return root / "phases" / stage / name
 
 
@@ -176,6 +182,7 @@ async def run_professional_director(
         set_default_openai_key(api_key)
     if not script.strip() or not avatar:
         raise ValueError("Whole nonempty script and actual avatar PNG are required.")
+    validate_source_assets(script, ebook_available=ebook is not None)
     if output.is_symlink() or output.is_junction():
         raise ValueError("Unsafe Professional output path.")
     root = output / "agent_openai"
@@ -492,6 +499,14 @@ async def run_professional_director(
     _save(output / "B2" / "candidate_output.json", {
         "output": candidate, "validation": workspace.report,
     })
+    _save(_phase_file(root, "02_planning"), {
+        "schema_version": "professional-phase-output-v1",
+        "phase": "02_planning",
+        "beat_validation": cuts_validation,
+        "visual_plan": candidate,
+        "visual_validation": workspace.report,
+        "subphases": ["beats", "visuals"],
+    })
 
     # 03: ONE global creative review, one existing Python deterministic report.
     # No tools, no SDK session history, no repeated enormous tool outputs.
@@ -714,7 +729,7 @@ async def run_professional_director(
         _save(output / "B2" / f"block_{block['block_id']}" / "output.json",
               block_payload)
     _save(output / "visual_plan.json", projection["visual_plan"])
-    print("  [OpenAI] Plan completo validado y outputs por fase guardados.",
+    print("  [OpenAI] Cinco outputs de fases guardados y plan validado.",
           flush=True)
     return {
         "b11": b11, "groups": materialized_groups,
