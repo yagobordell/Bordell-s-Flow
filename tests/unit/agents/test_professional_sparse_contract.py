@@ -58,11 +58,12 @@ def test_wire_has_no_unused_beat_fields_or_anchors():
     beats = direction.model_dump(mode="json")["blocks"][0]["beats"]
     assert set(beats[0]) == {
         "beat_id", "text", "beat_type", "visual_type",
-        "image_prompts", "generation_mode",
+        "editor_notes", "image_prompts", "generation_mode",
     }
     assert set(beats[1]) == {
-        "beat_id", "text", "beat_type", "visual_type",
+        "beat_id", "text", "beat_type", "visual_type", "editor_notes",
     }
+    assert "editor_notes" not in direction.model_dump(mode="json")["blocks"][0]
     assert all(None not in beat.values() for beat in beats)
     assert all("end_anchor" not in beat and "occurrence" not in beat for beat in beats)
     schema = SparseDirection.model_json_schema()
@@ -134,9 +135,7 @@ def test_sidecar_notes_references_and_cta_materialize_without_nulls_on_beats():
     beat = result["plan"]["blocks"][0]["beats"][0]
     assert beat["reference"] is True
     assert beat["cta_reference_sources"] == ["ebook"]
-    assert beat["editor_notes"][0]["trigger"] == {
-        "text": "QR code", "occurrence": 1,
-    }
+    assert beat["editor_notes"] == "Show the QR"
     wire = json.dumps(direction.model_dump(mode="json"))
     assert '"prompt": null' not in wire
 
@@ -212,15 +211,12 @@ def test_duplicate_cta_assignment_and_unknown_note_block_delivery():
     assert result["status"] == "blocked"
     assert "CTA_BEAT" in {issue["rule_id"] for issue in result["issues"]}
 
-    bad_notes = _direction(
-        _beat("1A", source[0]["text"]),
-        notes=[BeatNote(
-            beat_id="1Z", kind="overlay", instruction="Missing ID", trigger=None,
-        )],
-    )
-    result = materialize_sparse_direction(source, bad_notes, _core())
-    assert result["status"] == "blocked"
-    assert "EDITOR_NOTE_BEAT" in {issue["rule_id"] for issue in result["issues"]}
+    # Historical malformed sidecars are rejected while parsing their old
+    # group annotation, before a new plan can be materialized.
+    with pytest.raises(ValueError, match="EDITOR_NOTE_BEAT"):
+        _direction(_beat("1A", source[0]["text"]),
+                   notes=[BeatNote(beat_id="1Z", kind="overlay",
+                                   instruction="Missing ID", trigger=None)])
 
 
 def test_duplicate_original_beat_ids_reject_ambiguous_visual_patch():
@@ -351,4 +347,4 @@ def test_professional_connected_visual_sequence_and_anchored_overlay_validate():
     beats = material["plan"]["blocks"][0]["beats"]
     assert [beat.get("generation_mode") for beat in beats[:6]] == ["grid"] * 6
     assert beats[6]["visual_type"] == "avatar"
-    assert beats[6]["editor_notes"][0]["trigger"]["text"] == "proves nothing."
+    assert beats[6]["editor_notes"] == "State the concise source-supported final warning."

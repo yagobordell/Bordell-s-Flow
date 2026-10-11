@@ -100,3 +100,25 @@ def test_prompt_loader_includes_unabridged_screen_rule_every_editing_phase():
 def test_invalid_phase_fails_closed():
     with pytest.raises(ValueError, match="Unsupported"):
         load_phase_instructions("casero")
+
+
+def test_lettered_grid_and_string_editor_note_survive_strict_projection():
+    script, groups, plan = sample()
+    plan["blocks"][0]["beats"][0]["editor_notes"] = (
+        "Añade un titular breve sobre el plano."
+    )
+    for index, beat in enumerate(plan["blocks"][0]["beats"][:3], start=1):
+        beat["image_prompts"] = [f"A{index}. A unique still scene {index}."]
+        beat.pop("generation_mode")
+    result = project_professional_plan(script, groups, plan)
+    assert result["editor_plan"]["blocks"][0]["beats"][0]["notes"] == (
+        "Añade un titular breve sobre el plano."
+    )
+    assets = described_beats(result["visual_plan"])
+    grid_jobs = [
+        job for job in plan_image_jobs(result["visual_plan"], assets)
+        if job.get("grid") is not None
+    ]
+    assert len(grid_jobs) == 1
+    assert grid_jobs[0]["grid"]["grid_asset_labels"] == ["A1", "A2", "A3"]
+

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ai_video_factory.agents.professional.visuals import (
     VisualChoice,
@@ -73,10 +73,38 @@ class CTAAssignment(StrictModel):
 class SparseGroup(StrictModel):
     block_id: int
     beats: list[SparseBeat] = Field(min_length=1)
-    # Lists are declared once per group, not on every beat.
-    editor_notes: list[BeatNote] = Field(default_factory=list)  # legacy group notes
     presenter_references: list[str]
     cta: list[CTAAssignment]
+
+    @model_validator(mode="before")
+    @classmethod
+    def upgrade_legacy_editor_notes(cls, value: Any) -> Any:
+        """Read historical group notes, but never expose them on the new wire."""
+        if not isinstance(value, dict) or "editor_notes" not in value:
+            return value
+        data = dict(value)
+        legacy_notes = data.pop("editor_notes")
+        if not legacy_notes:
+            return data
+        if not isinstance(legacy_notes, list):
+            raise ValueError("Legacy group editor_notes must be a list.")
+        beats = [
+            beat.model_dump(mode="json") if hasattr(beat, "model_dump") else dict(beat)
+            for beat in data["beats"]
+        ]
+        by_id = {beat["beat_id"]: beat for beat in beats}
+        for item in legacy_notes:
+            note = item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+            if not isinstance(note, dict) or note.get("beat_id") not in by_id:
+                raise ValueError("EDITOR_NOTE_BEAT: old editor note targets unknown beat.")
+            instruction = note.get("instruction")
+            if not isinstance(instruction, str) or not instruction.strip():
+                raise ValueError("Legacy editor note must have an instruction string.")
+            beat = by_id[note["beat_id"]]
+            existing = beat.get("editor_notes", "")
+            beat["editor_notes"] = (existing + " " + instruction).strip()
+        data["beats"] = beats
+        return data
 
 
 class SparseDirection(StrictModel):
@@ -244,25 +272,6 @@ def materialize_sparse_direction(
                 "message": "Unknown or duplicate CTA assignments.",
             })
             continue
-        notes: dict[str, list[dict[str, Any]]] = {}
-        for note in group.editor_notes:
-            if note.beat_id not in id_set:
-                issues.append({
-                    "rule_id": "EDITOR_NOTE_BEAT", "severity": "error",
-                    "block_id": block_id, "beat_ids": [note.beat_id],
-                    "message": "Editor note references an unknown beat.",
-                })
-                continue
-            notes.setdefault(note.beat_id, []).append({
-                "kind": note.kind,
-                "instruction": note.instruction,
-                "trigger": (
-                    note.trigger.model_dump(mode="json")
-                    if note.trigger is not None else None
-                ),
-            })
-        if issues:
-            continue
         source_beats: list[dict[str, Any]] = []
         visual_choices: list[VisualChoice] = []
         position = 0
@@ -299,7 +308,7 @@ def materialize_sparse_direction(
                 "audio": kind in ("avatar", "avatar_media"),
                 "image_prompts": getattr(beat, "image_prompts", None),
                 "generation_mode": getattr(beat, "generation_mode", None),
-                "editor_notes": beat.editor_notes if beat.editor_notes else notes.get(beat.beat_id, ""),
+                "editor_notes": beat.editor_notes,
                 "cta_group_id": owner.cta_group_id if owner else None,
                 "cta_reference_sources": sources,
             }
