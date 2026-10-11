@@ -206,8 +206,19 @@ def test_director_one_joint_plan_and_global_correction(
         (all_phases / "02_planning" / "output.json").read_text(encoding="utf-8")
     )
     assert phase2["output"]["blocks"][0]["beats"][0]["visual_type"] == "media_image"
-    assert "end_anchor" in phase2["output"]["blocks"][0]["beats"][0]
-    assert "image_prompts" in phase2["output"]["blocks"][0]["beats"][0]
+    first = phase2["output"]["blocks"][0]["beats"][0]
+    assert first["text"] == parts[0]
+    assert "end_anchor" not in first
+    assert "occurrence" not in first
+    assert "prompt" not in first
+    assert "video_prompt" not in first
+    assert first["image_prompts"]
+    assert "materialized_plan" not in phase2
+    assert "blocks" not in phase2["boundary_validation"]
+    assert all(
+        beat["text"] is not None
+        for block in phase2["output"]["blocks"] for beat in block["beats"]
+    )
     assert not (all_phases / "02_planning" / "beats").exists()
     assert not (all_phases / "02_planning" / "visuals").exists()
     assert (all_phases / "03_evaluation" / "output.json").is_file()
@@ -288,13 +299,20 @@ def test_rejected_joint_direction_retains_all_visuals_no_premature_b12(
     )
     assert phase2["status"] == "blocked"
     assert phase2["output"]["blocks"][0]["beats"][0]["image_prompts"]
+    assert phase2["output"]["blocks"][0]["beats"][0]["text"] == (
+        parts[0] + parts[1]
+    )
     assert "BEAT_LENGTH" in {
         issue["rule_id"] for issue in phase2["boundary_validation"]["issues"]
     }
     assert (tmp_path / "B1.1" / "output.json").is_file()
     assert not (tmp_path / "B1.2" / "merged_output.json").exists()
-    assert (tmp_path / "agent_openai" / "phases"
-            / "05_delivery" / "output.json").is_file()
+    blocked_delivery = json.loads(
+        (tmp_path / "agent_openai" / "phases"
+         / "05_delivery" / "output.json").read_text(encoding="utf-8")
+    )
+    assert "original_full_audiovisual_plan" not in blocked_delivery
+    assert blocked_delivery["proposed_plan"]["blocks"][0]["beats"][0]["text"]
     assert kinds.count(WholeVideoDirection) == 1
     assert kinds.count(DirectionCorrection) == 1
 
