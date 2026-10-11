@@ -162,13 +162,13 @@ def _validate_visual(
                 block_id=block_id, beat_ids=[beat_id],
             ))
         else:
-            if len(text) >= IMAGE_SPLIT_THRESHOLD and not protected and len(validated) < 2:
+            if len(text.strip()) >= IMAGE_SPLIT_THRESHOLD and not protected and len(validated) < 2:
                 issues.append(_issue(
                     "LONG_IMAGE_SPLIT",
                     f"media_image beats with >= {IMAGE_SPLIT_THRESHOLD} source characters "
                     "require at least two image prompts.",
                     block_id=block_id, beat_ids=[beat_id],
-                    details={"characters": len(text), "image_prompts": len(validated)},
+                    details={"characters": len(text.strip()), "image_prompts": len(validated)},
                 ))
             if protected and len(validated) != 1:
                 issues.append(_issue(
