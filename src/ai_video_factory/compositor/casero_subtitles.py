@@ -93,17 +93,29 @@ def _captions(groups: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     max_chars, max_words, max_seconds = 48, 9, 3.3
     for words in groups:
         pending: list[dict[str, Any]] = []
-        for word in words:
-            candidate = " ".join([*(w["text"] for w in pending), word["text"]])
-            if pending and (
-                len(candidate) > max_chars or len(pending) >= max_words
-                or word["end"] - pending[0]["start"] > max_seconds
-                or word["start"] - pending[-1]["end"] > 0.48
-            ):
-                _flush_caption(pending, captions)
-            pending.append(word)
-            if word["text"].endswith((".", "!", "?", ";", ":")):
-                _flush_caption(pending, captions)
+        for source_word in words:
+            # Whisper can produce unusually long compound words or URLs.
+            # Break them into separate timed cues, never render a second line.
+            text = source_word["text"]
+            pieces = [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+            for index, piece in enumerate(pieces):
+                count = len(pieces)
+                span = source_word["end"] - source_word["start"]
+                word = {
+                    "text": piece,
+                    "start": source_word["start"] + span * index / count,
+                    "end": source_word["start"] + span * (index + 1) / count,
+                }
+                candidate = " ".join([*(w["text"] for w in pending), word["text"]])
+                if pending and (
+                    len(candidate) > max_chars or len(pending) >= max_words
+                    or word["end"] - pending[0]["start"] > max_seconds
+                    or word["start"] - pending[-1]["end"] > 0.48
+                ):
+                    _flush_caption(pending, captions)
+                pending.append(word)
+                if piece.endswith((".", "!", "?", ";", ":")):
+                    _flush_caption(pending, captions)
         _flush_caption(pending, captions)
     return captions
 
@@ -166,27 +178,57 @@ def burn_casero_subtitles(
     ass = run_dir / "subtitles.ass"
     checkpoint = run_dir / "subtitles_state.json"
     insertion = video.get("cta_insertion")
+    transcripts = [
+        {"block_id": block.get("block_id"), "sha256": block.get("stt", {}).get("sha256")}
+        for block in audio.get("blocks", [])
+    ]
+    if checkpoint.is_symlink() or checkpoint.is_junction():
+        raise CaseroSubtitleError("Unsafe subtitle checkpoint")
     if checkpoint.is_file():
         record = json.loads(checkpoint.read_text(encoding="utf-8"))
         if (record.get("source_sha256") != source_sha
                 or record.get("audio_sha256") != audio.get("sha256")
+                or record.get("transcripts") != transcripts
                 or record.get("cta_insertion") != insertion):
             raise CaseroSubtitleError("Saved subtitles were made from different inputs")
         for path, key in [(target, "video_sha256"), (srt, "srt_sha256"), (ass, "ass_sha256")]:
             if path.is_symlink() or not path.is_file() or sha256_file(path) != record.get(key):
                 raise CaseroSubtitleError(f"Saved subtitle artifact changed: {path}")
     else:
-        for path in (target, srt, ass, checkpoint, run_dir / "with_subtitles.part.mp4"):
-            if path.exists() or path.is_symlink():
-                raise CaseroSubtitleError(f"Unreconciled subtitle artifact: {path}")
         words = _read_words(output, audio)
         captions = _captions(_shift_around_cta(words, insertion))
+        if insertion:
+            # ASS rounds timestamps to centiseconds. Always leave at least
+            # one centisecond clear of the CTA at each boundary.
+            cut = float(insertion["video_cut_seconds"])
+            end = cut + float(insertion["cta_duration_seconds"])
+            before_limit = math.floor(cut * 100) / 100
+            after_limit = math.ceil(end * 100) / 100
+            cleaned = []
+            for cue in captions:
+                if cue["start"] < cut:
+                    cue["end"] = min(cue["end"], before_limit)
+                else:
+                    cue["start"] = max(cue["start"], after_limit)
+                if cue["end"] > cue["start"]:
+                    cleaned.append(cue)
+            captions = cleaned
         if not captions:
             raise CaseroSubtitleError("Narration STT has no caption words")
         srt_text, ass_text = _subtitle_files(captions)
+        # Only uncommitted local postproduction files are recoverable. Never
+        # invalidate the checkpoint or paid video work on a resumed run.
+        temp = run_dir / "with_subtitles.part.mp4"
+        tmp = checkpoint.with_name("subtitles_state.json.part")
+        for path in (target, srt, ass, temp, tmp):
+            if path.is_symlink() or path.is_junction():
+                raise CaseroSubtitleError(f"Unsafe subtitle output: {path}")
+            if path.exists():
+                if not path.is_file():
+                    raise CaseroSubtitleError(f"Subtitle output is not a file: {path}")
+                path.unlink()
         srt.write_text(srt_text, encoding="utf-8")
         ass.write_text(ass_text, encoding="utf-8")
-        temp = run_dir / "with_subtitles.part.mp4"
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-i", str(original.resolve()), "-vf", "ass=subtitles.ass",
@@ -194,23 +236,24 @@ def burn_casero_subtitles(
             "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
             str(temp.resolve()),
         ]
-        result = subprocess.run(command, cwd=run_dir, capture_output=True, text=True)
-        if result.returncode or not temp.is_file():
-            raise CaseroSubtitleError(
-                "Cannot burn casero subtitles (FFmpeg with libass required): "
-                + result.stderr[-1000:]
-            )
-        temp.replace(target)
+        try:
+            result = subprocess.run(command, cwd=run_dir, capture_output=True, text=True)
+            if result.returncode or not temp.is_file():
+                raise CaseroSubtitleError(
+                    "Cannot burn subtitles (FFmpeg with libass required): "
+                    + result.stderr[-1000:]
+                )
+            temp.replace(target)
+        finally:
+            temp.unlink(missing_ok=True)
         record = {
             "schema_version": 1, "source_sha256": source_sha,
-            "audio_sha256": audio["sha256"], "cta_insertion": insertion,
+            "audio_sha256": audio["sha256"], "transcripts": transcripts,
+            "cta_insertion": insertion,
             "video_sha256": sha256_file(target),
             "srt_sha256": sha256_file(srt), "ass_sha256": sha256_file(ass),
             "caption_count": len(captions),
         }
-        tmp = checkpoint.with_name("subtitles_state.json.part")
-        if tmp.exists() or tmp.is_symlink():
-            raise CaseroSubtitleError("Unreconciled subtitle checkpoint")
         tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         tmp.replace(checkpoint)
     return {
