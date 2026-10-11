@@ -1031,14 +1031,16 @@ def generate_b2_ltx_video(
                 "Completed video predates CTA insertion; reconcile prior publication"
             )
         return manifest
-    result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
+    # Compose professional CTA overlays during the mandatory final x264 pass.
+    # No second full-video re-encode and no change to paid LTX identities.
     if plan.get("visual_style") == "profesional" and plan.get("ebook_cta_groups"):
-        from ai_video_factory.compositor.professional_cta_qr import (
-            apply_professional_ebook_qr,
+        result = render_b2_ltx_video(
+            output, run_dir, timeline, jobs, manifest, images, audio,
+            cta_plan=plan,
         )
-
-        result = apply_professional_ebook_qr(
-            output, run_dir, result, timeline, plan,
+    else:
+        result = render_b2_ltx_video(
+            output, run_dir, timeline, jobs, manifest, images, audio,
         )
     if casero_cta_dir is not None:
         finish_cta(casero_cta_dir, cta_submitted, executor)
