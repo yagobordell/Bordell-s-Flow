@@ -705,6 +705,12 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     )
 
     assert result["status"] == "completed"
+    assert all(
+        set(item["transfer_timings_seconds"]) == {
+            "wait_for_result", "mp4_download", "mp4_verification",
+        }
+        for item in result["jobs"]
+    )
     assert [kind for kind, _job_id in events[:3]] == ["submit", "submit", "submit"]
     assert [kind for kind, _job_id in events[3:]] == ["execute", "execute", "execute"]
     assert {job_id for kind, job_id in events if kind == "submit"} == {
