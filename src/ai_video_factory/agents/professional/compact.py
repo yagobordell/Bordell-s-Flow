@@ -316,6 +316,8 @@ def apply_sparse_correction(
         beat.beat_id: group.block_id
         for group in original.blocks for beat in group.beats
     }
+    if len(beat_groups) != sum(len(group.beats) for group in original.blocks):
+        raise ValueError("Duplicate original beat IDs.")
     patches = {patch.beat_id: patch for patch in correction.visual_patches}
     if len(patches) != len(correction.visual_patches):
         raise ValueError("Duplicate visual patch.")
