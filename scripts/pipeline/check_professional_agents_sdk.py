@@ -58,7 +58,7 @@ def check() -> None:
         model="gpt-6-luna",
         output_type=B11Output,
         tools=[check_source],
-        model_settings=ModelSettings(max_tokens=16000, parallel_tool_calls=False),
+        model_settings=ModelSettings(parallel_tool_calls=False),
     )
     clone = agent.clone(output_type=WholeVideoDirection)
     assert clone.output_type is WholeVideoDirection
