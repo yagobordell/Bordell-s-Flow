@@ -25,6 +25,12 @@ subshots, but not additional beats. There is no fixed rhythm target or
 acceptable beats-per-minute quota. Respect the proven inherited B1.2
 atomicity, coherence and viewing-cadence standards.
 
+CTA promo words, their placement in the original source, and any protected
+ebook-reference visual beats are frozen. Treat such source order as immutable;
+raise any visual transition concern against an editable adjacent beat or
+record it in the assessment without requesting prohibited CTA changes.
+Only report an issue when an actual permitted visual choice can address it.
+
 Return a CreativeReview: brief whole_video_assessment and issues[] with
 beat_id (or null for a global issue), concrete problem and specific required
 correction. Omit speculative or cosmetic changes; focus on real editorial
