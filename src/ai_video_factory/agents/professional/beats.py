@@ -2,8 +2,9 @@
 
 The model chooses ALL narrative cuts in one whole-script pass, using short
 verbatim source-end anchors instead of error-prone model-calculated offsets.
-Python derives literal beat text from resolved anchors and rejects every
-overlong or orphan technical segment before any paid visual prompting.
+Python derives literal beat text from resolved anchors and checks all source
+limits AFTER receiving the joint beat+visual proposal; the model's original
+visual choices survive even when a source boundary fails validation.
 No runtime code prescribes rhythm, beat counts or shot-change frequency.
 """
 from __future__ import annotations
