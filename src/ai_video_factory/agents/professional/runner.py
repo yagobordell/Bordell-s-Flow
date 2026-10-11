@@ -347,7 +347,7 @@ async def run_professional_director(
             groups_ok = True
             break
         print(
-            f"  [OpenAI 01_groups] Límite(s) rechazado(s) por Python: "
+            "  [OpenAI 01_groups] Límite(s) rechazado(s) por Python: "
             + "; ".join(
                 issue["rule_id"] + ": " + issue["message"]
                 for issue in check["issues"][:4]
