@@ -10,6 +10,7 @@ from PIL import Image
 from ai_video_factory.compositor.professional_cta_qr import (
     ProfessionalCTAOverlayError,
     apply_professional_ebook_qr,
+    build_professional_cta_mux_overlay,
     professional_cta_website_windows,
     professional_cta_windows,
 )
@@ -211,3 +212,53 @@ def test_qr_word_timing_does_not_change_paid_ltx_run_fingerprint(tmp_path):
         {"sha256": "unchanged-audio"}, {}, avatar, i2v_profile=None,
     )
     assert with_url_timing == baseline
+
+
+def test_fused_overlay_uses_existing_cta_timing_and_raster(tmp_path):
+    output = tmp_path
+    run_dir = tmp_path / "video" / "runs" / "test"
+    run_dir.mkdir(parents=True)
+    qr = output / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    inputs, graph, metadata = build_professional_cta_mux_overlay(
+        output, run_dir, _timeline(),
+        {**_plan(), "avatar": {"qr": {"sha256": sha256_file(qr)}}},
+    )
+    assert inputs == [
+        "-loop", "1", "-i", str(qr),
+        "-loop", "1", "-i", str(run_dir / "ebook_cta_website.png"),
+    ]
+    assert "[0:v]setpts=N/(24*TB),fps=24,format=yuv420p[base]" in graph
+    assert "[2:v]scale=280:280:flags=neighbor,format=rgba[qr]" in graph
+    assert "[3:v]format=rgba[website]" in graph
+    assert "between(t\\\\,10.000000\\\\,125.000000)" in graph
+    assert "gte(t\\\\,12.370000)*lt(t\\\\,35.000000)" in graph
+    assert metadata["website_overlay"]["text"] == "zellenne.com"
+    assert metadata["website_overlay"]["windows_seconds"] == [
+        [12.37, 35.0], [179.125, 185.0],
+    ]
+
+
+def test_fused_overlay_without_spoken_qr_uses_only_one_image(tmp_path):
+    qr = tmp_path / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    inputs, graph, metadata = build_professional_cta_mux_overlay(
+        tmp_path, run_dir, _timeline(first_qr=False, second_qr=False),
+        {**_plan(), "avatar": {"qr": {"sha256": sha256_file(qr)}}},
+    )
+    assert inputs == ["-loop", "1", "-i", str(qr)]
+    assert "[3:v]" not in graph
+    assert metadata["website_overlay"]["windows_seconds"] == []
+    assert not (run_dir / "ebook_cta_website.png").exists()
+
+
+def test_fused_overlay_rejects_mismatched_qr_before_encoding(tmp_path):
+    qr = tmp_path / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    with pytest.raises(ProfessionalCTAOverlayError, match="does not match"):
+        build_professional_cta_mux_overlay(
+            tmp_path, tmp_path, _timeline(),
+            {**_plan(), "avatar": {"qr": {"sha256": "0" * 64}}},
+        )
