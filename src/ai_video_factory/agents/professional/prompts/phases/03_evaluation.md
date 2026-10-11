@@ -1,7 +1,22 @@
-# Phase 3 — Whole-video evaluation
+# Phase 3 — whole-video editorial and mechanical review
 
-Use the bounded Python tools on the CURRENT complete plan: validate_current_plan, get_rhythm_map, get_validation_issues. Evaluate missing/changed script characters, too-long beats, ID/reference validity, <45% avatar, <=120 speaking characters, compulsory image prompts (>=70), CTA protection, image counts (1–4), grids and closing anchor.
+Read the COMPLETE original script from the unchanged beat.text values
+and the assembled visual decisions. Review the actual video as one professional
+YouTube story: hook strength, return hooks, narrative progression, cadence,
+clarity/comprehension, dramatic changes, final payoff, natural avatar/visual
+handoffs, causal and human continuity, specificity, purposeful B-roll, scene
+feasibility, grid continuity, screen/document bans and Haiku overlay utility.
 
-Review rhythm-map source-position changes, including cuts *within* image beats as well as between beats. Consecutive base-avatar beats may form one continuous shot. Timing is estimated relative to the original script, NOT seconds until STT.
+Python has ALREADY validated the plan with deterministic rules and passes
+a compact rhythm map + concrete violations. There are NO tools to call:
+the Python controller evaluates the full candidate exactly once before your
+review. Do not ask Python to re-echo a giant plan. Do not confuse shot count
+with narrative beat count: multiple images in media_image create additional
+subshots, but not additional beats. There is no fixed rhythm target or
+acceptable beats-per-minute quota. Respect the proven inherited B1.2
+atomicity, coherence and viewing-cadence standards.
 
-Also audit what code cannot establish: actor ownership, causal chronology, B2/B2.1 screen/document and motion safety rules, repetitions, momentum, hooks/rehooks, useful overlays and semantic fit of extra images. Record reasoned, actionable problems; never mark editorial issues as mechanically proven.
+Return a CreativeReview: brief whole_video_assessment and issues[] with
+beat_id (or null for a global issue), concrete problem and specific required
+correction. Omit speculative or cosmetic changes; focus on real editorial
+deficiencies. This response does NOT repeat the plan or source text.
