@@ -1,7 +1,16 @@
 # Phase 3 — whole-video editorial and mechanical review
 
 Read the COMPLETE original script from the unchanged beat.text values
-and the assembled visual decisions. Review the actual video as one professional
+and the assembled visual decisions. Evaluate the chronological continuity
+of every live sequence as an actual edited YouTube film: each action should
+be owned by its real actor, consecutive stills should preserve the same
+character and object state where required, and each reveal should be
+visible and understandable. Evaluate the selection and composition of
+multi-beat image grids, as well as the presence of source-anchored editorial
+overlays for meaningful headlines, claims, contrasts and reveals. Mark a
+missed visual action, unnecessary switch to presenter, broken shared
+scene/prop continuity, or absent critical overlay as an actionable issue
+rather than accepting topic-related imagery. Review the actual video as one professional
 YouTube story: hook strength, return hooks, narrative progression, cadence,
 clarity/comprehension, dramatic changes, final payoff, natural avatar/visual
 handoffs, causal and human continuity, specificity, purposeful B-roll, scene
