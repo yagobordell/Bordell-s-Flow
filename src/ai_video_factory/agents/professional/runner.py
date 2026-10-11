@@ -7,7 +7,6 @@ generation requests (images, Gemini, GPU) are dispatched from this module.
 from __future__ import annotations
 
 import base64
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -23,7 +22,11 @@ from ai_video_factory.agents.professional.tools import (
     build_agents_sdk_tools,
 )
 from ai_video_factory.bots.contracts import (
-    B11Output, BeatType, NarrativeCore, StrictModel, VisualType,
+    B11Output,
+    BeatType,
+    NarrativeCore,
+    StrictModel,
+    VisualType,
 )
 
 
@@ -176,6 +179,7 @@ async def run_professional_director(
 
     # 1. B1.1 produces anchors only. Python materializes the original bytes.
     groups_ok = False
+    check: dict[str, Any] = {"status": "blocked", "issues": []}
     for attempt in range(max_corrections + 1):
         b11 = await execute(
             "01_groups", input_script if attempt == 0 else (
