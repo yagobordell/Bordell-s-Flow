@@ -8,11 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_video_factory.agents.professional.direction import (
-    DirectionCorrection,
-    DirectedBeat,
-    DirectedGroup,
-    WholeVideoDirection,
+from ai_video_factory.agents.professional.compact import (
+    SparseCorrection as DirectionCorrection,
+    SparseDirection as WholeVideoDirection,
+    SparseGroup, ImageBeat, AvatarBeat, ImagePatch, CTAAssignment,
 )
 from ai_video_factory.agents.professional.feedback import (
     approve_feedback,
@@ -23,7 +22,6 @@ from ai_video_factory.agents.professional.runner import (
     GroupProposal,
     run_professional_director,
 )
-from ai_video_factory.agents.professional.visuals import VisualChoice
 
 
 class FakeAgent:
@@ -63,39 +61,37 @@ def _fixture():
 
 def _direction(parts, *, long_first=False, bad_anchor=False,
                invented_ebook_cta=False, richer=False):
-    if long_first:
-        anchors = [parts[1], parts[2], parts[3]]
-    else:
-        anchors = parts
+    slices = ([parts[0] + parts[1], parts[2], parts[3]]
+              if long_first else parts)
     beats = []
-    for i, part in enumerate(anchors):
-        final = i == len(anchors) - 1
+    for i, part in enumerate(slices):
+        final = i == len(slices) - 1
         beat_id = f"1{chr(65 + i)}"
-        fields = {
-            "beat_id": beat_id,
-            "beat_type": "return" if final else "claim",
-            "end_anchor": part.strip() if not (bad_anchor and i == 0)
-            else "This phrase is absent from the original source.",
-            "occurrence": 1,
-            "visual_type": "avatar" if final else "media_image",
-            "prompt": None, "video_prompt": None,
-            "reference": invented_ebook_cta and i == 0,
-            "audio": final,
-            "image_prompts": None if final else [
-                ("An even more grounded full scene" if richer and i == 1
-                 else f"Authentic distinct full-frame still {i + 1}")
-            ],
-            "generation_mode": None if final else "independent",
-            "editor_notes": [],
-            "cta_group_id": 1 if invented_ebook_cta and i == 0 else None,
-            "cta_reference_sources": (
-                ["ebook"] if invented_ebook_cta and i == 0 else None
-            ),
-        }
-        beats.append(DirectedBeat.model_validate(fields))
-    return WholeVideoDirection(blocks=[
-        DirectedGroup(block_id=1, beats=beats),
-    ])
+        text = ("This phrase is absent from the original source."
+                if bad_anchor and i == 0 else part)
+        if final:
+            beat = AvatarBeat(
+                beat_id=beat_id, text=text,
+                beat_type="return", visual_type="avatar",
+            )
+        else:
+            beat = ImageBeat(
+                beat_id=beat_id, text=text,
+                beat_type="claim", visual_type="media_image",
+                image_prompts=[
+                    ("An even more grounded full scene" if richer and i == 1
+                     else f"Authentic distinct full-frame still {i + 1}")
+                ],
+                generation_mode="independent",
+            )
+        beats.append(beat)
+    return WholeVideoDirection(blocks=[SparseGroup(
+        block_id=1, beats=beats, editor_notes=[],
+        presenter_references=[],
+        cta=([CTAAssignment(
+            beat_id="1A", cta_group_id=1, sources=["ebook"],
+        )] if invented_ebook_cta else []),
+    )])
 
 
 @pytest.mark.parametrize("bad_json", [False, True])
@@ -139,23 +135,15 @@ def test_director_one_joint_plan_and_global_correction(
                     }] if creative_patch else [],
                 })
             elif agent.output_type is DirectionCorrection:
-                replace = bad_cut or missing_anchor
+                replace = bad_cut or missing_anchor or bad_cta
                 patches = []
-                if not replace:
-                    if bad_cta:
-                        replacement = _direction(parts).blocks[0].beats[0]
-                        patches.append(VisualChoice.model_validate({
-                            key: value for key, value
-                            in replacement.model_dump(mode="json").items()
-                            if key in VisualChoice.model_fields
-                        }))
-                    if creative_patch:
-                        replacement = _direction(parts, richer=True).blocks[0].beats[1]
-                        patches.append(VisualChoice.model_validate({
-                            key: value for key, value
-                            in replacement.model_dump(mode="json").items()
-                            if key in VisualChoice.model_fields
-                        }))
+                if not replace and creative_patch:
+                    replacement = _direction(parts, richer=True).blocks[0].beats[1]
+                    patches.append(ImagePatch(
+                        beat_id=replacement.beat_id, visual_type="media_image",
+                        image_prompts=replacement.image_prompts,
+                        generation_mode="independent",
+                    ))
                 answer = DirectionCorrection(
                     replaced_groups=(
                         _direction(parts, richer=creative_patch).blocks if replace else []
@@ -207,7 +195,12 @@ def test_director_one_joint_plan_and_global_correction(
     )
     assert phase2["output"]["blocks"][0]["beats"][0]["visual_type"] == "media_image"
     first = phase2["output"]["blocks"][0]["beats"][0]
-    assert first["text"] == parts[0]
+    assert first["text"] == (
+        parts[0] + parts[1] if bad_cut else (
+            "This phrase is absent from the original source."
+            if missing_anchor else parts[0]
+        )
+    )
     assert "end_anchor" not in first
     assert "occurrence" not in first
     assert "prompt" not in first
@@ -406,16 +399,22 @@ def test_global_correction_retries_only_while_source_errors_improve(
     seen = []
     correction_calls = 0
 
-    def direction_from_indices(indices):
+    def direction_from_ranges(ranges):
         original = _direction(parts).blocks[0].beats
         beats = []
-        for number, index in enumerate(indices):
-            beat = original[index].model_copy(deep=True)
-            beat.beat_id = f"1{chr(65 + number)}"
+        for number, (start, end) in enumerate(ranges):
+            final = number == len(ranges) - 1
+            beat = original[-1 if final else start].model_copy(
+                deep=True, update={
+                    "beat_id": f"1{chr(65 + number)}",
+                    "text": "".join(parts[start:end]),
+                },
+            )
             beats.append(beat)
-        return WholeVideoDirection(blocks=[
-            DirectedGroup(block_id=1, beats=beats),
-        ])
+        return WholeVideoDirection(blocks=[SparseGroup(
+            block_id=1, beats=beats, editor_notes=[],
+            presenter_references=[], cta=[],
+        )])
 
     class FakeRunner:
         @staticmethod
@@ -427,7 +426,7 @@ def test_global_correction_retries_only_while_source_errors_improve(
                     "narrative_core": core, "blocks": groups,
                 })
             elif agent.output_type is WholeVideoDirection:
-                output = direction_from_indices([1, 3])
+                output = direction_from_ranges([(0, 2), (2, 4)])
             elif agent.output_type is CreativeReview:
                 output = CreativeReview(
                     whole_video_assessment="Must fix source lengths",
@@ -435,9 +434,12 @@ def test_global_correction_retries_only_while_source_errors_improve(
                 )
             elif agent.output_type is DirectionCorrection:
                 correction_calls += 1
-                indices = [0, 1, 3] if correction_calls == 1 else [0, 1, 2, 3]
+                ranges = (
+                    [(0, 2), (2, 3), (3, 4)] if correction_calls == 1
+                    else [(0, 1), (1, 2), (2, 3), (3, 4)]
+                )
                 output = DirectionCorrection(
-                    replaced_groups=direction_from_indices(indices).blocks,
+                    replaced_groups=direction_from_ranges(ranges).blocks,
                     visual_patches=[],
                 )
             else:
