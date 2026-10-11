@@ -308,3 +308,48 @@ def test_full_plan_succeeds_only_with_source_and_visual_validation():
     report = validate_plan(script, meta, material["plan"])
     assert report["status"] == "blocked"
     assert "AVATAR_RATIO" in {issue["rule_id"] for issue in report["issues"]}
+
+
+def test_professional_connected_visual_sequence_and_anchored_overlay_validate():
+    """Professional supports a whole coherent grid scene followed by presenter."""
+    parts = [
+        "The phone rings. ",
+        "A woman notices the call. ",
+        "She checks the display. ",
+        "She picks up her card. ",
+        "She examines the printed number. ",
+        "She compares the two. ",
+        "The apparent match proves nothing.",
+    ]
+    script = "".join(parts)
+    meta = [{
+        "block_id": 1, "type": "close",
+        "emotional_entry": "concern", "emotional_exit": "clarity",
+        "span": {"first_words": parts[0].strip(),
+                 "last_words": parts[-1].strip()},
+    }]
+    scene = [
+        ImageBeat(
+            beat_id=f"1{chr(65 + index)}", text=text,
+            beat_type="action", visual_type="media_image",
+            image_prompts=[f"Continuity frame {index + 1}: actor and object state"],
+            generation_mode="grid",
+        )
+        for index, text in enumerate(parts[:-1])
+    ]
+    direction = _direction(
+        *scene, _beat("1G", parts[-1], kind="avatar"),
+        notes=[BeatNote(
+            beat_id="1G", kind="overlay",
+            instruction="State the concise source-supported final warning.",
+            trigger=NoteTrigger(text="proves nothing.", occurrence=1),
+        )],
+    )
+    material = materialize_sparse_direction(_group(script), direction, _core())
+    assert material["status"] == "passed", material["issues"]
+    report = validate_plan(script, meta, material["plan"])
+    assert report["status"] == "passed", report["issues"]
+    beats = material["plan"]["blocks"][0]["beats"]
+    assert [beat.get("generation_mode") for beat in beats[:6]] == ["grid"] * 6
+    assert beats[6]["visual_type"] == "avatar"
+    assert beats[6]["editor_notes"][0]["trigger"]["text"] == "proves nothing."
