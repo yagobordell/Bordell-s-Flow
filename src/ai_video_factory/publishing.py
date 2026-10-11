@@ -151,6 +151,19 @@ def _collect(
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
+    # This directory exists only for Professional OpenAI runs. Archive all
+    # accepted and rejected phase artifacts alongside the legacy B-stage
+    # outputs in completed publications; Casero is unaffected.
+    agent_output = work / "agent_openai"
+    if agent_output.exists():
+        if not agent_output.is_dir() or agent_output.is_symlink() or agent_output.is_junction():
+            raise PublicationError("Unsafe Professional OpenAI checkpoint directory")
+        for item in sorted(agent_output.rglob("*")):
+            if item.is_symlink() or item.is_junction():
+                raise PublicationError("Linked Professional OpenAI checkpoint")
+            if item.is_file():
+                rel = item.relative_to(work).as_posix()
+                add("Bots/" + rel, rel)
     for stage in ("V1", "V2", "V3", "V4"):
         canonical = work / stage
         legacy = work / "voice_direction" / stage
