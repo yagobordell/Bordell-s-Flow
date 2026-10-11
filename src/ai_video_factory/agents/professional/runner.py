@@ -294,6 +294,23 @@ async def run_professional_director(
                         "generación posterior."
                     ) from None
                 continue
+            except Exception as exc:
+                calls = hooks.calls
+                record = {
+                    "phase": phase, "attempt": attempt + 1,
+                    "status": "failed", "error_type": type(exc).__name__,
+                    "seconds": round(perf_counter() - started, 3),
+                    "calls": calls, "requests": len(calls),
+                    "input_tokens": sum(i["input_tokens"] for i in calls),
+                    "output_tokens": sum(i["output_tokens"] for i in calls),
+                    "total_tokens": sum(i["total_tokens"] for i in calls),
+                }
+                phases.append(record)
+                _save(root / "usage.json", {"phases": phases})
+                raise RuntimeError(
+                    f"OpenAI phase {phase} failed ({type(exc).__name__}). "
+                    f"Check {root / 'usage.json'}. No downstream media jobs started."
+                ) from None
             metrics = _stats(phase, result, perf_counter() - started)
             metrics["attempt"] = attempt + 1
             metrics["status"] = "completed"
@@ -329,6 +346,14 @@ async def run_professional_director(
         if check["status"] == "passed":
             groups_ok = True
             break
+        print(
+            f"  [OpenAI 01_groups] Límite(s) rechazado(s) por Python: "
+            + "; ".join(
+                issue["rule_id"] + ": " + issue["message"]
+                for issue in check["issues"][:4]
+            ),
+            flush=True,
+        )
     if not groups_ok:
         raise ValueError("Professional grouping exhausted validation retries.")
     if b11.narrative_core is None:
