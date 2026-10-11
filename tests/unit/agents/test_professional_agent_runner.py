@@ -69,7 +69,7 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
                     "pipeline_stage": "B1.1", "narrative_core": core,
                     "blocks": blocks, "error": None,
                 })
-            elif isinstance(agent.output_type, type):
+            elif agent.output_type is not str and isinstance(agent.output_type, type):
                 from ai_video_factory.agents.professional.runner import PlannedVideo
 
                 assert agent.output_type is PlannedVideo
