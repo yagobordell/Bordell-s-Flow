@@ -44,6 +44,7 @@ from ai_video_factory.bots.professional_cta import (
 from ai_video_factory.bots.professional_voice import (
     ProfessionalAudioRegenerationLimitReached,
     generate_professional_audio,
+    reconcile_completed_gemini_narration,
     regenerate_professional_audio_block,
 )
 from ai_video_factory.bots.workflow import (
@@ -84,7 +85,6 @@ from ai_video_factory.providers.avatar_library import (
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
-from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
@@ -95,7 +95,11 @@ from ai_video_factory.providers.openai_batch_images import (
     generate_b2_images,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
-from ai_video_factory.providers.optium_image_upscaler import create_optium_image_upscaler
+from ai_video_factory.providers.optium_image_upscaler import (
+    ImageUpscalerError,
+    OptiumLabsImageUpscaler,
+    create_optium_image_upscaler,
+)
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
 from ai_video_factory.providers.professional_image_finishing import finish_professional_images
@@ -106,13 +110,17 @@ from ai_video_factory.workflows.b_video import (
     has_pending_b2_video,
 )
 from ai_video_factory.workflows.casero_cta import prepare_casero_cta
+from ai_video_factory.workflows.execution_sessions import (
+    begin_run_session,
+    finish_run_session,
+)
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
-_STAGES = ("B1.1", "B1.2", "B2", "B2.1", "B3")
+_STAGES = ("B1.1", "B1.2", "B2", "B2.1")
 _METRIC_STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2",
-    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3",
+    "CTA Detector", "B2", "B2 CTA", "B2.1", "B2.2",
     "V1", "V2", "V3", "V4",
 )
 
@@ -1062,6 +1070,14 @@ async def _generate_images(
             raise ImageGenerationError(
                 "Professional x2 requires a configured image upscaler"
             )
+        # Preflight R2 before requesting a Salad GPU. A HEAD timeout is a
+        # storage/network problem, not a failed image or paid upscale task.
+        # The live upscaler uses this very same storage client afterwards.
+        if isinstance(upscaler, OptiumLabsImageUpscaler):
+            try:
+                await asyncio.to_thread(upscaler.check_storage_ready)
+            except ImageUpscalerError as exc:
+                raise ImageGenerationError(str(exc)) from exc
 
         def finish_with_upscaler_session() -> list[dict[str, object]]:
             with image_upscaler_usage(
@@ -1135,28 +1151,6 @@ async def _generate_images(
         }
         for item in manifest["items"] if item.get("grid") is not None
     ]
-    has_b3 = any(
-        isinstance(beat.get("continuous"), bool)
-        for block in plan["blocks"] for beat in block["beats"]
-        if beat.get("audio") is True
-    )
-    if professional and has_b3:
-        try:
-            b3_shots = await asyncio.to_thread(
-                generate_b3_shot_images,
-                output,
-                plan,
-                api_key=settings.openai_api_key,
-                options=_image_options(),
-            )
-        except B3ShotImageError as exc:
-            raise ImageGenerationError(str(exc)) from exc
-        plan["b3_shot_assets"] = b3_shots
-        manifest["b3_shot_assets"] = b3_shots
-        manifest["total_generation_jobs"] = int(
-            manifest.get("total_generation_jobs", 0)
-        ) + len(b3_shots)
-        _write(output / "images" / "manifest.json", manifest)
     _write(output / "visual_plan.json", plan)
     return manifest
 
@@ -1637,23 +1631,6 @@ def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
         and saved.get("finishing_status") != "completed"
     ):
         return True
-    b3_root = output / "images" / "b3_shots"
-    if b3_root.is_symlink():
-        raise ImageGenerationError("Refusing linked B3 image state directory")
-    for state_path in b3_root.glob("*.json"):
-        if state_path.is_symlink():
-            raise ImageGenerationError("Refusing linked B3 image state")
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise ImageGenerationError("Saved B3 image state is unreadable") from exc
-        if (
-            not isinstance(state, dict)
-            or state.get("schema_version") != "b3-shot-image-v1"
-        ):
-            raise ImageGenerationError("Saved B3 image state has an unexpected schema")
-        if state.get("status") != "completed":
-            return True
     return False
 
 
@@ -1811,6 +1788,41 @@ async def _run_images_only(
 
 
 
+def _finalize_resumed_video_metrics(
+    report: dict[str, object], output: Path, *,
+    session_id: str, elapsed_seconds: float, status: str,
+) -> None:
+    """Persist elapsed session time and B2.2 without double counting prior reports."""
+    b22_duration = 0.0
+    progress = output / "video" / "b22" / "state" / "progress.json"
+    if progress.is_file() and not progress.is_symlink():
+        snapshot = json.loads(progress.read_text(encoding="utf-8"))
+        if isinstance(snapshot, dict) and snapshot.get("status") == "completed":
+            b22_duration = max(float(snapshot.get("total_elapsed_seconds") or 0), 0.0)
+            report["b22_motion"] = snapshot
+    elapsed = max(elapsed_seconds, 0.0)
+    timings = report.get("timings")
+    if isinstance(timings, dict):
+        prior = timings.get("run_elapsed_seconds")
+        if isinstance(prior, (int, float)):
+            timings["run_elapsed_seconds"] = round(float(prior) + elapsed, 3)
+        stages = timings.get("stages")
+        if isinstance(stages, dict) and b22_duration > 0:
+            stage = stages.get("B2.2")
+            old = stage.get("elapsed_seconds") if isinstance(stage, dict) else None
+            stages["B2.2"] = {
+                "elapsed_seconds": round(
+                    (float(old) if isinstance(old, (int, float)) else 0.0)
+                    + b22_duration, 3,
+                ),
+                "call_count": 0, "sum_call_seconds": 0.0,
+            }
+    finish_run_session(
+        report, session_id, elapsed_seconds=elapsed, status=status,
+        stages={"LTX video session": elapsed, "B2.2": b22_duration},
+    )
+
+
 async def _run_videos_only(
     script_file: Path, output_root: Path,
     *, results_root: Path = Path("data/results"),
@@ -1851,18 +1863,29 @@ async def _run_videos_only(
         flush=True,
     )
     _refresh_audio_costs(report, output)
+    session_started = perf_counter()
+    session_id = begin_run_session(report, mode="videos-only")
+    _write(report_path, report)
     try:
         video = await _video_if_ready(output, report, require=True)
     except Exception:
         report["run"]["video_generation"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
         _refresh_audio_costs(report, output)
+        _finalize_resumed_video_metrics(
+            report, output, session_id=session_id,
+            elapsed_seconds=perf_counter() - session_started, status="failed",
+        )
         _write(report_path, report)
         raise
     report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
+    _finalize_resumed_video_metrics(
+        report, output, session_id=session_id,
+        elapsed_seconds=perf_counter() - session_started, status="completed",
+    )
     _write(report_path, report)
     await asyncio.to_thread(
         _publish_if_ready, output, script_file, results_root, managed_target
@@ -1978,6 +2001,7 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
     ledger.sync_professional_voice_usage(output)
     ledger.sync_fish_director_usage(output)
     ledger.sync_image_usage(output)
+    ledger.sync_b22_usage(output)
     stages = previous.get("stages")
     if not isinstance(stages, dict):
         return
@@ -2060,6 +2084,82 @@ def _activate_pending_avatar_clone(
     _write(output / "run_report.json", report)
 
 
+def _validate_professional_audio_b2(
+    core: dict[str, object], blocks: list[dict[str, object]],
+) -> None:
+    """Validate saved post-CTA B2 without discarding its visual metadata.
+
+    ProfessionalB2Output is the strict on-the-wire bot schema. The persisted
+    merged B2 also contains CTA-only annotations added after bot validation.
+    Validate those annotations against the CTA contract separately, then
+    validate a transient B2 view; leave the original blocks untouched for V3.
+    """
+    for block in blocks:
+        if not isinstance(block, dict) or not isinstance(block.get("beats"), list):
+            raise ValueError("Saved professional B2 block is malformed")
+        plain_beats = []
+        for beat in block["beats"]:
+            if not isinstance(beat, dict):
+                raise ValueError("Saved professional B2 beat is malformed")
+            plain = dict(beat)
+            has_group = "cta_group_id" in plain
+            has_sources = "cta_reference_sources" in plain
+            if has_group != has_sources:
+                raise ValueError("Saved CTA beat metadata is incomplete")
+            if has_group:
+                group_id = plain.pop("cta_group_id")
+                sources = plain.pop("cta_reference_sources")
+                if type(group_id) is not int or group_id < 1:
+                    raise ValueError("Saved CTA group ID must be a positive integer")
+                ProfessionalCTAVisualBeat.model_validate({
+                    key: plain[key] for key in (
+                        "beat_id", "visual_type", "prompt", "video_prompt",
+                        "reference", "audio",
+                    )
+                } | {"reference_sources": sources})
+            plain_beats.append(plain)
+        ProfessionalB2Output.model_validate({
+            "pipeline_stage": "B2",
+            "narrative_core": core,
+            "blocks": [{**block, "beats": plain_beats}],
+            "error": None,
+        })
+
+
+def _professional_audio_nonce(
+    pending: list[Path], *, resume: bool, previous_audio: object,
+) -> str:
+    """Resume paid Gemini only with its saved task; plan-only failures get a new nonce."""
+    if resume and len(pending) > 1:
+        raise RuntimeError(
+            "Professional --resume-audio found multiple pending Gemini "
+            "tasks; reconcile them before resuming"
+        )
+    if resume and not pending and (
+        isinstance(previous_audio, dict)
+        and previous_audio.get("status") == "completed"
+    ):
+        raise RuntimeError(
+            "A completed professional audio run has no verified reusable "
+            "artifact; reconcile before starting another paid task"
+        )
+    if pending and not resume:
+        raise RuntimeError(
+            "An incomplete paid audio task exists; reconcile before regeneration"
+        )
+    if not resume or not pending:
+        # V1–V4 can fail before any Gemini task was created.
+        return uuid4().hex
+    if not pending[0].parent.name.startswith("gemini-"):
+        raise RuntimeError("Pending audio task is not a professional Gemini run")
+    nonce = json.loads(pending[0].read_text(encoding="utf-8")).get(
+        "generation_nonce", ""
+    )
+    if not isinstance(nonce, str):
+        raise RuntimeError("Invalid saved Gemini generation nonce")
+    return nonce
+
+
 async def _run_audio_only(
     script_file: Path,
     output_root: Path,
@@ -2128,6 +2228,33 @@ async def _run_audio_only(
     previous_sha = (
         previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
     )
+    if is_professional and resume and isinstance(previous_audio, dict):
+        if previous_audio.get("status") == "completed":
+            # A complete Gemini task may have a master WAV that no longer
+            # matches its saved digest after STT-triggered group replacements.
+            # Verify/rejoin only the already-paid group WAVs, before any new
+            # provider call or managed-publication sync.
+            published = managed_target / "manifest.json" if managed_target else None
+            if published is not None and published.exists():
+                audio_file = output / previous_audio.get("file", "")
+                if audio_file.is_file() and not audio_file.is_symlink():
+                    with audio_file.open("rb") as stream:
+                        current_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+                    if current_sha != previous_audio.get("sha256"):
+                        raise RuntimeError(
+                            "Cannot reconcile Gemini narration after immutable final "
+                            "publication; preserve the existing video and inspect the run"
+                        )
+            if reconcile_completed_gemini_narration(output, previous_audio):
+                report["run"]["stt_alignment"] = {"status": "pending_recheck"}
+                report["run"]["video_preview"] = {"status": "stale_audio_reconciliation"}
+                report["run"]["video_generation"] = {"status": "stale_audio_reconciliation"}
+                _write(report_path, report)
+                print(
+                    "  Reconciled Gemini narration from SHA-verified group WAVs "
+                    "without paid TTS calls.",
+                    flush=True,
+                )
     if not is_professional:
         _activate_pending_avatar_clone(output, report)
 
@@ -2156,26 +2283,11 @@ async def _run_audio_only(
                 core = merged.get("narrative_core")
                 if not isinstance(blocks, list) or not blocks or not isinstance(core, dict):
                     raise RuntimeError("Professional B2 merged checkpoint is incomplete")
-                for block in blocks:
-                    ProfessionalB2Output.model_validate({
-                        "pipeline_stage": "B2", "narrative_core": core,
-                        "blocks": [block], "error": None,
-                    })
+                _validate_professional_audio_b2(core, blocks)
                 pending = unfinished_audio_runs(output)
-                if resume and len(pending) != 1:
-                    raise RuntimeError(
-                        "Professional --resume-audio requires one pending Gemini task"
-                    )
-                if pending and not resume:
-                    raise RuntimeError(
-                        "An incomplete paid audio task exists; reconcile before regeneration"
-                    )
-                nonce = (
-                    json.loads(pending[0].read_text(encoding="utf-8")).get("generation_nonce", "")
-                    if resume else uuid4().hex
+                nonce = _professional_audio_nonce(
+                    pending, resume=resume, previous_audio=previous_audio,
                 )
-                if resume and not pending[0].parent.name.startswith("gemini-"):
-                    raise RuntimeError("Pending audio task is not a professional Gemini run")
                 artifact = await generate_professional_audio(
                     core=core, blocks=blocks, output=output,
                     provider=provider, model=settings.openai_model,
@@ -2235,9 +2347,14 @@ async def _run_audio_only(
             report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
             report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
             report["run"]["audio_generation"] = artifact
+            # Managed sync re-opens run_report.json from disk. Persist the
+            # regenerated Gemini audio SHA before publication reads it.
+            _refresh_audio_costs(report, output)
+            _write(report_path, report)
             if managed_target is not None:
                 await asyncio.to_thread(sync_managed_outputs, output, managed_target)
-        _write(report_path, report)
+        else:
+            _write(report_path, report)
     try:
         preview = await _preview_if_ready(output, report)
     except Exception:
@@ -2380,7 +2497,7 @@ class BotArtifacts:
         if block_id is None or block_id < 1:
             raise ValueError(f"{stage} requires a positive block/group ID")
         return self._output / stage / (
-            f"group_{block_id}" if stage in {"B3", "B2 CTA"} else f"block_{block_id}"
+            f"group_{block_id}" if stage == "B2 CTA" else f"block_{block_id}"
         )
 
     def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
@@ -2429,31 +2546,6 @@ class BotArtifacts:
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
-    def rejected_b3(
-        self, group_id: int, attempt: int, error: str, payload: dict[str, object]
-    ) -> None:
-        _write(
-            self._folder("B3", group_id) / f"rejected_attempt_{attempt}.json",
-            {"attempt": attempt, "validation_error": error, "response": payload},
-        )
-
-    def require_b3_group_outputs(self, group_count: int) -> None:
-        """Fail closed unless every completed B3 call has durable input/output JSON."""
-        if group_count < 0:
-            raise ValueError("B3 group count cannot be negative")
-        root = self._output / "B3"
-        if root.is_symlink():
-            raise RuntimeError("Refusing linked B3 artifact directory")
-        for group_id in range(1, group_count + 1):
-            folder = self._folder("B3", group_id)
-            if folder.is_symlink():
-                raise RuntimeError(f"Refusing linked B3 group directory: {folder}")
-            for filename in ("input.json", "output.json"):
-                path = folder / filename
-                if path.is_symlink() or not path.is_file():
-                    raise RuntimeError(
-                        f"B3 group {group_id} completed without durable {filename}"
-                    )
 
 
 class TimingLedger:
@@ -2745,7 +2837,7 @@ async def main() -> None:
     stop_index = (
         _STAGES.index(stop_stage)
         if stop_stage is not None
-        else _STAGES.index("B3" if visual_style == "profesional" else "B2")
+        else _STAGES.index("B2.1" if visual_style == "profesional" else "B2")
     )
     planned_blocks: int | None = None
     previous_b11: B11Output | None = None
@@ -2840,7 +2932,7 @@ async def main() -> None:
                      block_count - len(previous_partial_b2)
                      if stage == "B2" else
                      1 if stage == "B2.1" else
-                     0 if stage == "B3" else block_count)
+                     block_count)
                     if rerun_from_index <= stage_index <= stop_index else 0
                 )
                 for stage_index, stage in enumerate(_STAGES)
@@ -3015,10 +3107,6 @@ async def main() -> None:
                     max(1, timings.call_count("B2.1"))
                     if visual_style == "profesional" and stop_index >= 3 else 0
                 ),
-                "B3": (
-                    timings.call_count("B3")
-                    if visual_style == "profesional" and stop_index >= 4 else 0
-                ),
             }
         else:
             expected_calls = dict(resume_expected_calls)
@@ -3045,13 +3133,10 @@ async def main() -> None:
                         1,
                         timings.call_count("B2.1"),
                     )
-                if visual_style == "profesional" and stop_index >= 4:
-                    expected_calls["B3"] = max(
-                        expected_calls.get("B3") or 0, timings.call_count("B3")
-                    )
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
         ledger.sync_image_usage(output)
+        ledger.sync_b22_usage(output)
         costs = ledger.report(
             blocks=report_blocks,
             run_status=status,
@@ -3079,13 +3164,11 @@ async def main() -> None:
         merged_output: dict[str, object] | None,
     ) -> None:
         nonlocal planned_blocks
-        if stage not in {"B2.1", "B3"}:
+        if stage != "B2.1":
             planned_blocks = blocks
-        elif stage == "B3":
-            artifacts.require_b3_group_outputs(blocks)
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
-        report_count = planned_blocks if stage in {"B2.1", "B3"} else blocks
+        report_count = planned_blocks if stage == "B2.1" else blocks
         costs, timing_report = save_report("running", report_count)
         elapsed = timing_report["stages"][stage]["elapsed_seconds"]
         if elapsed is None:
@@ -3235,7 +3318,7 @@ async def main() -> None:
             ),
             start_from=args.from_stage,
             stop_after=stop_stage or (
-                "B3" if visual_style == "profesional" else "B2"
+                "B2.1" if visual_style == "profesional" else "B2"
             ),
             previous_b11=previous_b11,
             previous_b12=previous_b12,
@@ -3253,7 +3336,6 @@ async def main() -> None:
             on_rejected_b12_output=artifacts.rejected_b12,
             on_rejected_b2_output=artifacts.rejected_b2,
             on_rejected_b21_output=artifacts.rejected_b21,
-            on_rejected_b3_output=artifacts.rejected_b3,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
@@ -3392,7 +3474,7 @@ async def main() -> None:
                         ),
                         start_from="B2",
                         stop_after=(
-                            "B3" if visual_style == "profesional" else "B2"
+                            "B2.1" if visual_style == "profesional" else "B2"
                         ),
                         previous_b11=result.b11,
                         previous_b12=result.b12,
@@ -3405,8 +3487,7 @@ async def main() -> None:
                         on_output=output_and_start_audio,
                         on_rejected_b2_output=artifacts.rejected_b2,
                         on_rejected_b21_output=artifacts.rejected_b21,
-                        on_rejected_b3_output=artifacts.rejected_b3,
-                        on_api_response=ledger.record,
+                                    on_api_response=ledger.record,
                         on_call_duration=timings.record_call,
                         on_stage_duration=timings.record_stage,
                         on_stage_complete=stage_complete,

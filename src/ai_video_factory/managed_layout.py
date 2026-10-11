@@ -7,12 +7,74 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
+import time
 from pathlib import Path
 from uuid import uuid4
 
 from ai_video_factory.managed_media import public_report, sync_managed_media
 from ai_video_factory.publishing import PublicationError, _collect, _digest, _json
+
+_LOGGER = logging.getLogger(__name__)
+_RENAME_RETRY_DELAYS = (0.1, 0.25, 0.5, 1.0, 2.0)
+
+
+def _rename_directory_with_retries(source: Path, destination: Path) -> None:
+    """Retry transient Windows directory locks without hiding permanent failures."""
+    for delay in (*_RENAME_RETRY_DELAYS, None):
+        try:
+            source.rename(destination)
+            return
+        except OSError as exc:
+            if not (
+                isinstance(exc, PermissionError)
+                or getattr(exc, "winerror", None) in {5, 32, 33}
+            ) or delay is None:
+                raise
+            time.sleep(delay)
+
+
+def _replace_partial_outputs(staging: Path, current: Path) -> None:
+    """Install a new snapshot without destroying the old one before commit.
+
+    On Windows, Explorer/indexers/virus scanners can briefly prevent directory
+    renames after a previous outputs snapshot is moved. Keep an intact backup
+    until the staged snapshot has been installed and restore it on failure.
+    """
+    _check_dir(current)
+    backup = current.parent / (".outputs-backup-" + uuid4().hex + ".partial")
+    if backup.exists() or backup.is_symlink():
+        raise PublicationError(f"Managed output backup already exists: {backup}")
+    moved_previous = False
+    installed = False
+    try:
+        if current.exists():
+            _rename_directory_with_retries(current, backup)
+            moved_previous = True
+        _rename_directory_with_retries(staging, current)
+        installed = True
+    except Exception:
+        if moved_previous:
+            try:
+                _rename_directory_with_retries(backup, current)
+            except OSError as rollback_exc:
+                raise PublicationError(
+                    "Could not restore the previous managed outputs after a "
+                    f"Windows rename failure. Original outputs remain at {backup}; "
+                    "do not delete that backup. Close processes using the outputs "
+                    "folder and retry --publish-only."
+                ) from rollback_exc
+        raise
+    finally:
+        if installed and moved_previous and backup.is_dir():
+            try:
+                shutil.rmtree(backup)
+            except OSError as cleanup_exc:
+                _LOGGER.warning(
+                    "Published outputs installed, but previous backup %s "
+                    "could not be removed: %s", backup, cleanup_exc,
+                )
 
 
 def _check_dir(path: Path) -> None:
@@ -110,10 +172,7 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
             staging.rmdir()
             return
         current = target / "outputs"
-        _check_dir(current)
-        if current.exists():
-            shutil.rmtree(current)
-        staging.rename(current)
+        _replace_partial_outputs(staging, current)
     except Exception:
         if staging.exists() and not staging.is_symlink():
             shutil.rmtree(staging)

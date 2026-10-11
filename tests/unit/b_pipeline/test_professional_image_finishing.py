@@ -213,33 +213,32 @@ def test_grid_video_finishing_requires_no_second_gpt_call_or_api_key(tmp_path):
         tmp_path, plan, original, upscaler=None, api_key=None,
     ) == finished
 
-@pytest.mark.parametrize(("count", "canvas"), [
-    (5, "3840x1440"),
-    (7, "3840x2160"),
-])
+@pytest.mark.parametrize("count", [5, 7])
 def test_large_grid_video_panels_stay_at_native_720p_without_gpt_edits(
-    tmp_path, count, canvas,
+    tmp_path, count,
 ):
     plan = professional(*[
         beat(f"1{chr(ord('B') + i)}", "media_video", f"{i+1}. Scene {i+1}")
         for i in range(count)
     ])
-    direct = RecordingGPT(fail_native=True)
+    direct = RecordingGPT()
     manifest = gpt.generate_b2_images(
         tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
     )
-    assert len(direct.calls) == 1
-    assert direct.calls[0]["size"] == canvas
-    assert direct.calls[0]["quality"] == "high"
+    assert len(direct.calls) == 2
+    assert all(call["size"] == "3840x2160" for call in direct.calls)
+    assert all(call["quality"] == "high" for call in direct.calls)
+    assert "reference_image_urls" not in direct.calls[0]
+    assert len(direct.calls[1]["reference_image_urls"]) == 1
     panels = crop_grid_assets(tmp_path, manifest)
     assert len(panels) == count
-    assert all((p["width"], p["height"]) == (1280, 720) for p in panels)
+    assert all((p["width"], p["height"]) == (1920, 1080) for p in panels)
     finished = finish_professional_images(
         tmp_path, plan, manifest, upscaler=None, api_key=None,
     )
-    assert len(direct.calls) == 1
+    assert len(direct.calls) == 2
     assert [f["sha256"] for f in finished] == [p["sha256"] for p in panels]
-    assert all((p["width"], p["height"]) == (1280, 720) for p in finished)
+    assert all((p["width"], p["height"]) == (1920, 1080) for p in finished)
     assert manifest["native_grid_video_calls"] == 0
 
 
@@ -285,22 +284,34 @@ def test_casero_image_jobs_do_not_acquire_new_resolution_or_finishing(tmp_path):
 
 def test_professional_grid_sizes_depend_on_video_and_canvas_limit():
     cases = [
-        (["media_image", "media_image"], "2560x1440", (1280, 720)),
-        (["media_image", "media_video"], "3840x2160", (1920, 1080)),
-        (["media_image", "media_image", "media_video"], "3840x2160", (1920, 1080)),
-        (["media_image"] * 4 + ["media_video"], "3840x1440", (1280, 720)),
-        (["media_image"] * 6 + ["media_video"], "3840x2160", (1280, 720)),
+        (["media_image", "media_image"], ["2560x1440"], [(1280, 720)]),
+        (["media_image", "media_video"], ["3840x2160"], [(1920, 1080)]),
+        (
+            ["media_image", "media_image", "media_video"],
+            ["3840x2160"], [(1920, 1080)],
+        ),
+        (
+            ["media_image"] * 4 + ["media_video"],
+            ["2560x1440", "3840x2160"],
+            [(1280, 720), (1920, 1080)],
+        ),
+        (
+            ["media_image"] * 6 + ["media_video"],
+            ["2560x1440", "3840x2160"],
+            [(1280, 720), (1920, 1080)],
+        ),
     ]
-    for kinds, expected_size, expected_panel in cases:
+    for kinds, expected_sizes, expected_panels in cases:
         plan = professional(*[
             beat(f"1{chr(ord('B') + i)}", kind, f"{i+1}. Step {i+1}")
             for i, kind in enumerate(kinds)
         ])
         jobs = plan_image_jobs(plan, gpt.described_beats(plan))
-        assert len(jobs) == 1
-        assert jobs[0]["size"] == expected_size
-        assert (jobs[0]["grid"]["panel_width"],
-                jobs[0]["grid"]["panel_height"]) == expected_panel
+        assert [job["size"] for job in jobs] == expected_sizes
+        assert [
+            (job["grid"]["panel_width"], job["grid"]["panel_height"])
+            for job in jobs
+        ] == expected_panels
 
 
 def test_video_selected_as_grid_filler_increases_2x2_canvas():
@@ -641,6 +652,60 @@ def test_managed_partial_image_checkpoint_uses_recovered_final_sha(tmp_path, mon
     image = tmp_path / "images" / "block_1" / "1B.png"
     assert files["block_1/1B.png"][1] == hashlib.sha256(image.read_bytes()).hexdigest()
     assert files["block_1/1B.png"][1] != original["items"][0]["sha256"]
+
+
+def test_r2_preflight_failure_preserves_originals_without_starting_salad(
+    monkeypatch, tmp_path,
+):
+    import asyncio
+
+    from ai_video_factory.providers.optium_image_upscaler import (
+        ImageUpscalerError,
+        OptiumLabsImageUpscaler,
+    )
+    from scripts.pipeline import run_b_pipeline as runner
+
+    class UnreachableR2Upscaler(OptiumLabsImageUpscaler):
+        def __init__(self):
+            pass
+
+        def check_storage_ready(self) -> None:
+            raise ImageUpscalerError("Cloudflare R2 is unavailable")
+
+    direct = RecordingGPT()
+    plan = professional(beat("1B", "media_image", "Forest"))
+    monkeypatch.setattr(
+        runner,
+        "generate_b2_images",
+        lambda output, visual_plan, **kwargs: gpt.generate_b2_images(
+            output, visual_plan, options=kwargs["options"], api_key=None,
+            direct_client=direct,
+        ),
+    )
+    for setting in (
+        "salad_api_key", "r2_endpoint_url", "r2_bucket",
+        "r2_access_key_id", "r2_secret_access_key", "postgres_dsn",
+    ):
+        monkeypatch.setattr(runner.settings, setting, "test-value")
+    monkeypatch.setattr(
+        runner.settings, "image_upscaler_url", "https://gateway.salad.cloud",
+    )
+    monkeypatch.setattr(
+        runner, "create_optium_image_upscaler",
+        lambda **kwargs: UnreachableR2Upscaler(),
+    )
+
+    def should_not_start_salad(**kwargs):
+        pytest.fail("Salad must not be started if R2 preflight fails")
+
+    monkeypatch.setattr(runner, "image_upscaler_usage", should_not_start_salad)
+    with pytest.raises(gpt.ImageGenerationError, match="Cloudflare R2"):
+        asyncio.run(runner._generate_images(tmp_path, plan))
+    assert len(direct.calls) == 1
+    assert (tmp_path / "images" / "block_1" / "1B.png").is_file()
+    state = json.loads((tmp_path / "images" / "manifest.json").read_text())
+    assert state["finishing_status"] == "pending_upscaler"
+    assert runner._resume_unfinished_images(tmp_path, plan)
 
 
 def test_professional_paid_originals_survive_transient_salad_start_error(

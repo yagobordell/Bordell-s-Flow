@@ -350,6 +350,38 @@ def _check_v2(result: V2, block: dict[str, Any], rhythm: BlockRhythm) -> None:
             raise VoicePlanError(f"V2 baseline_misfit {item.axis} contains unknown beat_ids")
 
 
+def _restore_v3_source_punctuation(result: V3, block: dict[str, Any]) -> None:
+    """Restore only copy errors that leave every source letter/digit intact.
+
+    The B2 narration is authoritative. One-Speak beats without positional
+    vocal intents can safely recover whitespace/punctuation transcription
+    errors. Never guess word changes, multi-fragment cut positions, or vocal
+    intent character offsets; those remain validation failures and retries.
+    """
+    sources = block["beats"]
+    if (result.block_id != block["block_id"]
+        or [entry.beat_id for entry in result.beat_deliveries]
+        != [entry["beat_id"] for entry in sources]):
+        return
+    for source, delivery in zip(sources, result.beat_deliveries, strict=True):
+        speaks = [item for item in delivery.delivery if isinstance(item, Speak)]
+        if len(speaks) != 1 or speaks[0].vocal_intents:
+            continue
+        authored = speaks[0].speak
+        original = source["text"]
+        if authored == original or re.search(r"<[^>]+>", authored):
+            continue
+        # Non-word characters are separators/punctuation; do not change any
+        # letter, digit, accent, or word order.
+        original_chars = re.sub(r"[\W_]+", "", original, flags=re.UNICODE)
+        if (not original_chars or
+            re.sub(r"[\W_]+", "", authored, flags=re.UNICODE) != original_chars):
+            continue
+        if any(stress not in original for stress in speaks[0].stress):
+            continue
+        speaks[0].speak = original
+
+
 def _check_v3(result: V3, block: dict[str, Any]) -> None:
     performance = result.block_performance
     if any(not text.strip() for text in (
@@ -621,13 +653,50 @@ async def _direct(
                 stage == "V3" and output_type is V3
                 and str(exc).startswith("V3 inline-tag leakage")
             )
+            v3_text_mismatch = (
+                stage == "V3" and output_type is V3
+                and str(exc).startswith("V3 altered verbatim narration in beat ")
+            )
+            narration_hint = None
+            if v3_text_mismatch:
+                beat_id = str(exc).rsplit(" ", 1)[-1]
+                source_beat = next(
+                    (beat for beat in payload["current_block"]["beats"]
+                     if beat["beat_id"] == beat_id), None,
+                )
+                emitted_beat = next(
+                    (beat for beat in response_obj.beat_deliveries
+                     if beat.beat_id == beat_id), None,
+                )
+                if source_beat is not None and emitted_beat is not None:
+                    expected = source_beat["text"]
+                    actual = "".join(
+                        part.speak for part in emitted_beat.delivery
+                        if isinstance(part, Speak)
+                    )
+                    offset = next(
+                        (index for index, (a, b) in enumerate(
+                            zip(actual, expected, strict=False)
+                        ) if a != b),
+                        min(len(actual), len(expected)),
+                    )
+                    narration_hint = {
+                        "beat_id": beat_id,
+                        "first_difference_at": offset,
+                        "expected_excerpt": expected[offset:offset + 45],
+                        "received_excerpt": actual[offset:offset + 45],
+                        "expected_length": len(expected),
+                        "received_length": len(actual),
+                    }
             validation_feedback = {
                 "error": str(exc),
                 # Feeding literal rejected tokens back to V3 encourages it
                 # to repeat the same markup. Keep those tokens in V4 only.
                 "rejected_response": (
                     {"omitted": "Previous V3 output contained forbidden technical tags"}
-                    if v3_tag_leak else response_obj.model_dump(
+                    if v3_tag_leak else
+                    {"omitted": "Narration changed: read exact characters from current_block.beats"}
+                    if v3_text_mismatch else response_obj.model_dump(
                         mode="json", by_alias=True,
                     )
                 ),
@@ -638,10 +707,18 @@ async def _direct(
                     "their translation and insertion. Keep semantic "
                     "vocal_intents and functional pauses if justified."
                     if v3_tag_leak else
+                    "The original current_block.beats[].text is immutable. "
+                    "For the flagged beat, copy the exact full string into ordered "
+                    "speak segments without changing any character, whitespace, "
+                    "line break, capitalization or punctuation. Pauses carry "
+                    "zero characters. Never rewrite source narration."
+                    if v3_text_mismatch else
                     "Correct only the stated contract violations; "
                     "all source strings and IDs are immutable."
                 ),
             }
+            if narration_hint is not None:
+                validation_feedback["narration_mismatch"] = narration_hint
             if attempt == 2:
                 raise VoicePlanError(
                     f"{stage} block {block_id}: validation failed after 2 retries: {exc}"
@@ -787,7 +864,10 @@ async def plan_professional_voice(
                        "block_rhythm": rhythms[bid].model_dump(),
                        "beat_intents": [_resolved(rhythms[bid], beat) for beat in v2.beat_intents],
                        "landing_beat_id": v2.landing_beat_id},
-                V3, lambda value: _check_v3(value, block),
+                V3, lambda value: (
+                    _restore_v3_source_punctuation(value, block),
+                    _check_v3(value, block),
+                ),
                 provider, model, root / "V3" / f"block_{bid}",
                 on_response, on_timing, bid,
             )
@@ -911,6 +991,136 @@ def _reuse_verified_block(
                 shutil.copyfile(previous_stt, target)
         return digest
     return None
+
+
+def reconcile_completed_gemini_narration(
+    output: Path, artifact: dict[str, Any],
+) -> bool:
+    """Reconcile a stale report with the trusted, already-paid Gemini audio run.
+
+    STT fidelity regeneration commits the updated root task/latest artifact
+    before the runner writes its report. After an interrupted sync the report
+    may therefore contain the OLD master SHA. Adopt the verified latest state
+    without rejoining; rejoin locally only when the physical master itself no
+    longer matches the trusted latest state. No provider API is ever called.
+    """
+    if artifact.get("provider") != "gemini" or artifact.get("status") != "completed":
+        return False
+    run_id = artifact.get("run_id")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        raise VoicePlanError("Cannot reconcile Gemini narration: invalid run ID")
+    run_dir = output / "audio" / "runs" / run_id
+    master = run_dir / "narration.wav"
+    name = master.relative_to(output).as_posix()
+    if artifact.get("file") != name:
+        raise VoicePlanError("Cannot reconcile Gemini narration: unexpected master path")
+    if master.is_symlink() or not master.is_file():
+        raise VoicePlanError("Cannot reconcile Gemini narration: missing or linked master")
+
+    task_path = run_dir / "task.json"
+    latest_path = output / "audio" / "latest.json"
+    task = _read(task_path)
+    latest = _read(latest_path)
+    if (
+        task.get("status") != "completed"
+        or task.get("run_id") != run_id
+        or task.get("audio") != latest
+        or latest.get("provider") != "gemini"
+        or latest.get("status") != "completed"
+        or latest.get("run_id") != run_id
+        or latest.get("voice_id") != artifact.get("voice_id")
+        or latest.get("file") != name
+    ):
+        raise VoicePlanError(
+            "Cannot reconcile Gemini narration: saved task and latest audio disagree"
+        )
+    claimed_sha = latest.get("sha256")
+    if not isinstance(claimed_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", claimed_sha):
+        raise VoicePlanError("Cannot reconcile Gemini narration: invalid latest SHA")
+    with master.open("rb") as stream:
+        actual_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    if actual_sha == claimed_sha and latest == artifact:
+        return False
+
+    # The last completed task is authoritative only if every paid block is
+    # independently verified. A missing/tampered block always fails closed.
+    records = latest.get("blocks")
+    if (
+        not isinstance(records, list) or not records
+        or latest.get("block_count") != len(records)
+    ):
+        raise VoicePlanError("Cannot reconcile Gemini narration: invalid group list")
+    sources = []
+    seen_ids: set[int] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise VoicePlanError("Cannot reconcile Gemini narration: malformed group")
+        block_id = record.get("block_id")
+        relative = record.get("file")
+        digest = record.get("sha256")
+        if (
+            type(block_id) is not int or block_id < 1 or block_id in seen_ids
+            or not isinstance(relative, str)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise VoicePlanError("Cannot reconcile Gemini narration: invalid group identity")
+        seen_ids.add(block_id)
+        expected = run_dir / "blocks" / f"block_{block_id}" / "audio.wav"
+        if (
+            relative != expected.relative_to(output).as_posix()
+            or expected.is_symlink() or not expected.is_file()
+        ):
+            raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: unsafe WAV")
+        block_task = _read(expected.parent / "task.json")
+        if block_task.get("status") != "completed" or block_task.get("sha256") != digest:
+            raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: task differs")
+        with expected.open("rb") as stream:
+            verified = hashlib.file_digest(stream, "sha256").hexdigest()
+        if verified != digest:
+            raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: WAV differs")
+        sources.append(expected)
+
+    if actual_sha == claimed_sha:
+        # Exactly the video03 failure: latest/task were already updated after
+        # STT regeneration; run_report.json was not persisted before sync.
+        artifact.clear()
+        artifact.update(latest)
+        return True
+
+    # Only genuine physical master damage requires a deterministic local join.
+    candidate = run_dir / "narration.reconcile.wav"
+    if candidate.exists() or candidate.is_symlink():
+        raise VoicePlanError("Cannot reconcile Gemini narration: stale candidate exists")
+    joined = join_audio_blocks(sources, candidate)
+    with candidate.open("rb") as stream:
+        verified_join = hashlib.file_digest(stream, "sha256").hexdigest()
+    if (verified_join != joined["sha256"]
+        or candidate.stat().st_size != joined["bytes"]):
+        raise VoicePlanError("Cannot reconcile Gemini narration: joined WAV hash differs")
+
+    backup = run_dir / f"narration.before_reconciliation.{actual_sha[:16]}.wav"
+    if backup.exists() or backup.is_symlink():
+        raise VoicePlanError("Cannot reconcile Gemini narration: backup already exists")
+    shutil.copyfile(master, backup)
+    with backup.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != actual_sha:
+            raise VoicePlanError("Cannot reconcile Gemini narration: backup verification failed")
+    candidate.replace(master)
+    latest.update({
+        "sha256": verified_join,
+        "bytes": joined["bytes"],
+        "duration_seconds": joined["duration_seconds"],
+        "block_start_seconds": joined["block_start_seconds"],
+        "block_end_seconds": joined["block_end_seconds"],
+        "block_durations_seconds": joined["block_durations_seconds"],
+    })
+    task["audio"] = latest
+    _json(task_path, task)
+    _json(latest_path, latest)
+    artifact.clear()
+    artifact.update(latest)
+    return True
 
 
 async def regenerate_professional_audio_block(

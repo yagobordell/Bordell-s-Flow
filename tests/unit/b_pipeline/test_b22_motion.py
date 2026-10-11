@@ -1,4 +1,4 @@
-"""B2.2 post-B3 motion adaptation contracts and resume behavior."""
+"""Image-grounded I2V-only B2.2 adaptation and resume behavior."""
 
 import json
 from types import SimpleNamespace
@@ -63,12 +63,12 @@ def test_b22_adapts_i2v_and_non_avatar_a2v_with_whole_group_context(tmp_path):
     timeline = {"beats": [
         _beat("1A"),
         _beat("1B", "media_image", prompt=None),
-        _beat("1C", audio=True),
+        _beat("1C", audio=False),
         _beat("1D", "avatar", audio=True, prompt=None),
     ]}
     jobs = [
         _job(first, ("1A",), "i2v", "Move naturally."),
-        _job(third, ("1C",), "a2v", "A Person speaking to the camera. Gesture."),
+        _job(third, ("1C",), "i2v", "Gesture."),
         _job(avatar, ("1D",), "a2v", "A Person speaking to the camera."),
     ]
     fake = FakeProvider()
@@ -95,26 +95,17 @@ def test_b22_adapts_i2v_and_non_avatar_a2v_with_whole_group_context(tmp_path):
 
 
 def test_b22_a2v_uses_first_beat_of_take_and_post_b3_override(tmp_path):
-    image = _image(tmp_path, "b3.png")
+    image = _image(tmp_path, "avatar.png")
     timeline = {"beats": [
-        {**_beat("1A", "avatar_media", audio=True, prompt=None),
-         "b3_shot_video_prompt": "Small gesture.", "continuous": False},
-        {**_beat("1B", "avatar_media", audio=True, prompt=None),
-         "continuous": True},
+        _beat("1A", "avatar_media", audio=True, prompt=None),
+        _beat("1B", "avatar", audio=True, prompt=None),
     ]}
-    job = _job(
-        image, ("1A", "1B"), "a2v",
-        "A Person speaking to the camera. Small gesture.",
-    )
+    job = _job(image, ("1A", "1B"), "a2v", "A Person speaking to the camera.")
     fake = FakeProvider()
     assert adapt_b22_motion(
         tmp_path, timeline, [job], {}, provider=fake, model="test",
-    ) == {"1A": "Adapted 1A motion."}
-    manifest = json.loads(fake.calls[0]["input_text"].split("\n", 1)[1])
-    assert manifest["shots"][0]["beat_ids"] == ["1A", "1B"]
-    assert manifest["shots"][0]["motion_source"] == "b3_shot_video_prompt"
-    assert manifest["shots"][0]["effective_motion_prompt"] == "Small gesture."
-
+    ) == {}
+    assert not fake.calls
 
 def test_b22_resume_cache_and_invalidation_by_prompt_and_image(tmp_path):
     image = _image(tmp_path, "frame.png")

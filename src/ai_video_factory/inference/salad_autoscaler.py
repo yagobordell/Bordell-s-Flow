@@ -9,6 +9,12 @@ from datetime import UTC, datetime
 
 from .coordination import acquire_instance_drain_lock
 from .ltx_economics import plan_ltx_capacity
+from .ltx_performance_health import assess_ltx_instance_health
+from .ltx_runtime_prediction import (
+    degraded_instance_ids,
+    forecast_ltx_job_seconds,
+    typical_forecast_seconds,
+)
 from .salad import SaladClient
 
 ACTIVE_STATUSES = (
@@ -80,6 +86,7 @@ class PredictiveAutoscalerConfig:
     ltx_cost_aware: bool = False
     ltx_gpu_hourly_usd: float = 0.50
     ltx_projected_pool_budget_usd: float | None = None
+    ltx_health_mode: str = "observe"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +105,8 @@ class StageDemand:
     target_drain_seconds: float = 0.0
     effective_drain_seconds: float = 0.0
     estimated_drain_seconds: float = 0.0
+    best_possible_eta_seconds: float | None = None
+    target_attainable_under_quota: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,7 +213,11 @@ class PostgresAutoscalerStore:
                     ) AS run_id,
                     status,
                     lease_owner AS worker_id,
-                    started_at
+                    started_at,
+                    request #>> '{parameters,generation_profile}' AS generation_profile,
+                    request #>> '{parameters,width}' AS width,
+                    request #>> '{parameters,height}' AS height,
+                    request #>> '{parameters,num_frames}' AS num_frames
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
                   AND status = ANY(%s)
@@ -296,29 +309,168 @@ class PostgresAutoscalerStore:
                     )
 
     def clear_draining_instances(
-        self,
-        *,
-        stage: str,
-        keep_instance_ids: tuple[str, ...] = (),
+        self, *, stage: str, keep_instance_ids: tuple[str, ...] = (),
+    ) -> None:
+        # Normal capacity downscale cleanup cannot discard remediation fences.
+        with self._pool.connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM gpu.capacity_drains d
+                WHERE d.service = %s
+                  AND (
+                      cardinality(%s::text[]) = 0
+                      OR (d.expires_at <= now() AND NOT d.hold_until_confirmed)
+                      OR NOT (d.instance_id = ANY(%s))
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM gpu.ltx_instance_reallocations r
+                      WHERE r.stage = d.service AND r.instance_id = d.instance_id
+                        AND r.state IN ('draining', 'requested', 'manual_review')
+                  )
+                """, (stage, list(keep_instance_ids), list(keep_instance_ids)),
+            )
+
+    def list_ltx_reallocation_intents(
+        self, *, stage: str,
+    ) -> dict[str, dict[str, object]]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT instance_id, original_machine_id, state, detected_at, requested_at
+                FROM gpu.ltx_instance_reallocations WHERE stage = %s
+                """, (stage,),
+            ).fetchall()
+        return {str(row["instance_id"]): dict(row) for row in rows}
+
+    def begin_ltx_reallocation_drain(
+        self, *, stage: str, instance_id: str, ttl_seconds: float,
+        original_machine_id: str | None = None,
+    ) -> bool:
+        """Atomically fence future claims and persist exactly one drain intent."""
+        with self._pool.connection() as connection, connection.transaction():
+            acquire_instance_drain_lock(connection, instance_id)
+            cursor = connection.execute(
+                """
+                INSERT INTO gpu.ltx_instance_reallocations(
+                    stage, instance_id, original_machine_id, state
+                ) VALUES (%s, %s, %s, 'draining') ON CONFLICT DO NOTHING
+                """, (stage, instance_id, original_machine_id),
+            )
+            if cursor.rowcount != 1:
+                return False
+            publish_instance_drains(
+                connection, stage=stage, instance_ids=(instance_id,),
+                ttl_seconds=ttl_seconds, hold_until_confirmed=True,
+            )
+        return True
+
+    def request_ltx_reallocation(
+        self, *, stage: str, instance_id: str,
+    ) -> bool:
+        """Persist provider intent before dispatch; no automatic retries."""
+        with self._pool.connection() as connection, connection.transaction():
+            acquire_instance_drain_lock(connection, instance_id)
+            updated = connection.execute(
+                """
+                UPDATE gpu.ltx_instance_reallocations
+                SET state = 'requested', requested_at = now(), updated_at = now()
+                WHERE stage = %s AND instance_id = %s AND state = 'draining'
+                """, (stage, instance_id),
+            )
+            return updated.rowcount == 1
+
+    def complete_ltx_reallocation(
+        self, *, stage: str, instance_id: str,
+    ) -> None:
+        with self._pool.connection() as connection, connection.transaction():
+            acquire_instance_drain_lock(connection, instance_id)
+            connection.execute(
+                """
+                UPDATE gpu.ltx_instance_reallocations
+                SET state = 'recovered', updated_at = now()
+                WHERE stage = %s AND instance_id = %s
+                  AND state IN ('requested', 'draining')
+                """, (stage, instance_id),
+            )
+            connection.execute(
+                """
+                DELETE FROM gpu.capacity_drains
+                WHERE service = %s AND instance_id = %s
+                """, (stage, instance_id),
+            )
+
+    def flag_stalled_ltx_reallocation(
+        self, *, stage: str, instance_id: str,
     ) -> None:
         with self._pool.connection() as connection:
-            if keep_instance_ids:
-                connection.execute(
-                    """
-                    DELETE FROM gpu.capacity_drains
-                    WHERE service = %s
-                      AND (
-                          (expires_at <= now() AND NOT hold_until_confirmed)
-                          OR NOT (instance_id = ANY(%s))
-                      )
-                    """,
-                    (stage, list(keep_instance_ids)),
+            connection.execute(
+                """
+                UPDATE gpu.ltx_instance_reallocations
+                SET state = 'manual_review', updated_at = now()
+                WHERE stage = %s AND instance_id = %s AND state = 'requested'
+                """, (stage, instance_id),
+            )
+
+    def list_recent_ltx_health_observations(
+        self, *, stage: str, limit: int = 1500,
+    ) -> list[dict[str, object]]:
+        """Use immutable, completed and recent per-attempt telemetry only."""
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT job_id, attempt_count, recorded_at, instance_id,
+                       instance_identity_source, stage, profile, width, height,
+                       num_frames, inference_seconds, pipeline_reused,
+                       task_seconds, pipeline_load_seconds
+                FROM gpu.ltx_job_telemetry
+                WHERE stage = %s AND recorded_at >= now() - interval '7 days'
+                ORDER BY recorded_at DESC
+                LIMIT %s
+                """,
+                (stage, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_ltx_instance_health(self, assessment: dict[str, object],
+                                 *, recommendation: str) -> None:
+        """Idempotent upsert; skips unchanged assessments to limit DB writes."""
+        with self._pool.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO gpu.ltx_instance_health (
+                    stage, instance_id, health_state, ratio_to_exact_peers,
+                    completed_jobs, matched_jobs, reference_instances,
+                    recommendation
                 )
-            else:
-                connection.execute(
-                    "DELETE FROM gpu.capacity_drains WHERE service = %s",
-                    (stage,),
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (stage, instance_id) DO UPDATE SET
+                    health_state = EXCLUDED.health_state,
+                    ratio_to_exact_peers = EXCLUDED.ratio_to_exact_peers,
+                    completed_jobs = EXCLUDED.completed_jobs,
+                    matched_jobs = EXCLUDED.matched_jobs,
+                    reference_instances = EXCLUDED.reference_instances,
+                    recommendation = EXCLUDED.recommendation,
+                    updated_at = now()
+                WHERE (
+                    gpu.ltx_instance_health.health_state,
+                    gpu.ltx_instance_health.ratio_to_exact_peers,
+                    gpu.ltx_instance_health.completed_jobs,
+                    gpu.ltx_instance_health.matched_jobs,
+                    gpu.ltx_instance_health.reference_instances,
+                    gpu.ltx_instance_health.recommendation
+                ) IS DISTINCT FROM (
+                    EXCLUDED.health_state, EXCLUDED.ratio_to_exact_peers,
+                    EXCLUDED.completed_jobs, EXCLUDED.matched_jobs,
+                    EXCLUDED.reference_instances, EXCLUDED.recommendation
                 )
+                """,
+                (
+                    assessment["stage"], assessment["instance_id"],
+                    assessment["state"], assessment["ratio_to_exact_peers"],
+                    assessment["completed_jobs"], assessment["exact_matched_jobs"],
+                    assessment["peer_instances"], recommendation,
+                ),
+            )
 
     def ping(self) -> None:
         with self._pool.connection() as connection:
@@ -471,7 +623,17 @@ def load_predictive_autoscaler_config(
             if os.getenv("SALAD_AUTOSCALER_LTX_PROJECTED_POOL_BUDGET_USD", "").strip()
             else None
         ),
+        ltx_health_mode=_ltx_health_mode_env(),
     )
+
+
+def _ltx_health_mode_env() -> str:
+    mode = os.getenv("SALAD_AUTOSCALER_LTX_HEALTH_MODE", "observe").strip().lower()
+    if mode not in {"off", "observe", "recommend", "replace"}:
+        raise RuntimeError(
+            "SALAD_AUTOSCALER_LTX_HEALTH_MODE must be off, observe, recommend or replace"
+        )
+    return mode
 
 
 class PredictiveSaladAutoscaler:
@@ -507,6 +669,238 @@ class PredictiveSaladAutoscaler:
         ] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
+    def _forecast_ltx_demands(
+        self,
+        rows_by_stage: dict[str, list[dict[str, object]]],
+        runtime_by_stage: dict[str, float],
+    ) -> None:
+        """Optional evidence-based forecasts; missing telemetry leaves old fallback."""
+        for stage, rows in rows_by_stage.items():
+            if stage not in _TIME_BASED_LTX_STAGES or not rows:
+                continue
+            try:
+                observations = self.store.list_recent_ltx_health_observations(
+                    stage=stage
+                )
+                excluded = degraded_instance_ids(observations)
+                for row in rows:
+                    row["forecast_runtime_seconds"] = forecast_ltx_job_seconds(
+                        row, observations, stage=stage,
+                        fallback=runtime_by_stage[stage],
+                        percentile=self.config.runtime_percentile,
+                        excluded_instances=excluded,
+                    )
+                runtime_by_stage[stage] = typical_forecast_seconds(
+                    rows, runtime_by_stage[stage]
+                )
+                if excluded:
+                    self.logger(
+                        f"Autoscaler {stage}: excluded {len(excluded)} confirmed "
+                        "slow instance(s) from warm-job ETA history."
+                    )
+            except Exception as exc:
+                self.logger(
+                    f"Autoscaler {stage}: per-job forecasts unavailable, "
+                    f"using conservative stage fallback ({exc})."
+                )
+
+    def _observe_ltx_health(self) -> None:
+        """Observe only: no replica, draining or job mutations from assessments."""
+        if self.config.ltx_health_mode == "off":
+            return
+        for stage in self.clients:
+            if stage not in _TIME_BASED_LTX_STAGES:
+                continue
+            try:
+                observations = self.store.list_recent_ltx_health_observations(
+                    stage=stage
+                )
+                assessed = assess_ltx_instance_health(observations)
+                for assessment in assessed:
+                    status = str(assessment["state"])
+                    recommendation = (
+                        "review_safe_drain" if (
+                            self.config.ltx_health_mode in {"recommend", "replace"}
+                            and status == "confirmed_degraded"
+                        ) else "observe"
+                    )
+                    self.store.save_ltx_instance_health(
+                        assessment, recommendation=recommendation
+                    )
+                    if status in {"suspected_slow", "confirmed_degraded"}:
+                        self.logger(
+                            f"Autoscaler health {stage}/{assessment['instance_id']}: "
+                            f"{status}, exact_matched={assessment['exact_matched_jobs']}, "
+                            f"ratio={assessment['ratio_to_exact_peers']}; "
+                            f"action={recommendation} (no provider mutation)."
+                        )
+            except Exception as exc:
+                # A diagnostic outage is not a reason to abort safe capacity control.
+                self.logger(f"Autoscaler health {stage}: telemetry unavailable ({exc}).")
+
+    def _reconcile_ltx_reallocations(
+        self, *, rows_by_stage: dict[str, list[dict[str, object]]],
+        groups: dict[str, dict[str, object]],
+        transitioning: dict[str, bool],
+    ) -> set[str]:
+        """Opt-in targeted Salad reallocation; never interrupt a leased job.
+
+        Only the existing singleton controller calls this method. Reallocation
+        does not alter replica counts and cannot exceed the global GPU quota.
+        A durable DB intent is written before the provider POST; uncertain
+        responses require operator review, never an automatic retry.
+        """
+        if self.config.ltx_health_mode != "replace":
+            return set()
+        busy: set[str] = set()
+        now = datetime.now(UTC)
+        for stage in self.clients:
+            if stage not in _TIME_BASED_LTX_STAGES:
+                continue
+            try:
+                intents = self.store.list_ltx_reallocation_intents(stage=stage)
+                active = {
+                    iid: entry for iid, entry in intents.items()
+                    if entry["state"] in {"draining", "requested", "manual_review"}
+                }
+                if active:
+                    busy.add(stage)
+                # Do not issue/confirm capacity mutations during a provider transition.
+                if transitioning[stage] or _group_status(groups[stage]) != "running":
+                    continue
+                instances = self.clients[stage].list_container_group_instances()
+                instance_by_id = {
+                    str(instance["id"]): instance for instance in instances
+                    if instance.get("id")
+                }
+                # Unknown live-worker-to-instance mappings fail closed.
+                running = [
+                    row for row in rows_by_stage.get(stage, [])
+                    if str(row.get("status") or "") == "running"
+                ]
+                active_ids: set[str] = set()
+                mappings_complete = True
+                for row in running:
+                    worker_id = str(row.get("worker_id") or "").strip()
+                    matches = [
+                        iid for iid in instance_by_id if worker_id and iid in worker_id
+                    ]
+                    if len(matches) != 1:
+                        mappings_complete = False
+                        break
+                    active_ids.add(matches[0])
+                if not mappings_complete:
+                    if active:
+                        self.logger(
+                            f"Autoscaler {stage}: reallocation still fenced, "
+                            "incomplete active-worker mapping."
+                        )
+                    continue
+                if active:
+                    # Do not combine normal resize with per-instance reallocation.
+                    for iid, entry in active.items():
+                        if entry["state"] == "manual_review":
+                            continue
+                        original_machine = str(
+                            entry.get("original_machine_id") or ""
+                        ).strip()
+                        replacement_machine = str(
+                            instance_by_id.get(iid, {}).get("machine_id") or ""
+                        ).strip()
+                        moved = (
+                            bool(original_machine and replacement_machine)
+                            and original_machine != replacement_machine
+                        )
+                        if iid not in instance_by_id or moved:
+                            self.store.complete_ltx_reallocation(
+                                stage=stage, instance_id=iid
+                            )
+                            self.logger(
+                                f"Autoscaler {stage}/{iid}: original Salad instance "
+                                "absent; reallocation fence released."
+                            )
+                            continue
+                        if entry["state"] == "requested":
+                            requested = _parse_datetime(entry.get("requested_at"))
+                            if requested is not None and (
+                                now - requested
+                            ).total_seconds() >= 7200:
+                                self.store.flag_stalled_ltx_reallocation(
+                                    stage=stage, instance_id=iid
+                                )
+                                self.logger(
+                                    f"Autoscaler {stage}/{iid}: reallocation unresolved "
+                                    "after 7200s; manual review required, no retry."
+                                )
+                            continue
+                        if iid in active_ids:
+                            continue
+                        detected = _parse_datetime(entry.get("detected_at"))
+                        if detected is None or (
+                            now - detected
+                        ).total_seconds() < self.config.drain_grace_seconds:
+                            continue
+                        # Instance is fenced from fresh claims and not leased.
+                        if self.store.request_ltx_reallocation(
+                            stage=stage, instance_id=iid
+                        ):
+                            self.clients[stage].reallocate_container_group_instance(iid)
+                            self.logger(
+                                f"Autoscaler {stage}/{iid}: targeted reallocation "
+                                "requested; awaiting provider confirmation."
+                            )
+                    continue
+                # Never interfere with a pre-existing ordinary downscale drain.
+                if self.store.list_draining_instances(stage=stage):
+                    continue
+                observations = self.store.list_recent_ltx_health_observations(
+                    stage=stage
+                )
+                scored = assess_ltx_instance_health(observations)
+                candidates = [
+                    row for row in scored
+                    if row["state"] == "confirmed_degraded"
+                    and row["instance_id"] in instance_by_id
+                    and row["instance_id"] not in active_ids
+                    and row["instance_id"] not in intents
+                ]
+                # The provider may be bootstrapping or capacity-constrained:
+                # only move stable running instances, never a deploying one.
+                candidates = [
+                    row for row in candidates
+                    if str(instance_by_id[str(row["instance_id"])].get("state"))
+                    .lower() == "running"
+                ]
+                if not candidates:
+                    continue
+                candidate = max(
+                    candidates,
+                    key=lambda row: float(row["ratio_to_exact_peers"] or 0),
+                )
+                iid = str(candidate["instance_id"])
+                if self.store.begin_ltx_reallocation_drain(
+                    stage=stage, instance_id=iid,
+                    ttl_seconds=max(self.config.drain_ttl_seconds, 120.0),
+                    original_machine_id=(
+                        str(instance_by_id[iid]["machine_id"])
+                        if instance_by_id[iid].get("machine_id") else None
+                    ),
+                ):
+                    busy.add(stage)
+                    self.logger(
+                        f"Autoscaler {stage}/{iid}: degradation "
+                        f"ratio={candidate['ratio_to_exact_peers']} verified; "
+                        "draining without killing active jobs. Reallocation "
+                        "requires a later idle confirmation."
+                    )
+            except Exception as exc:
+                # Ambiguous provider or database failures never justify deletion.
+                busy.add(stage)
+                self.logger(
+                    f"Autoscaler {stage}: targeted reallocation deferred ({exc})."
+                )
+        return busy
+
     def reconcile(self) -> dict[str, AutoscaleResult]:
         if not self.config.enabled or not self.clients:
             return {}
@@ -529,6 +923,8 @@ class PredictiveSaladAutoscaler:
             )
             for stage in self.clients
         }
+        self._observe_ltx_health()
+        self._forecast_ltx_demands(rows_by_stage, runtime_by_stage)
         demands = build_global_demands(
             rows_by_stage=rows_by_stage,
             runtime_by_stage=runtime_by_stage,
@@ -706,6 +1102,10 @@ class PredictiveSaladAutoscaler:
             stage: targets[stage] > quota_targets[stage]
             for stage in self.clients
         }
+        reallocation_busy = self._reconcile_ltx_reallocations(
+            rows_by_stage=rows_by_stage, groups=groups,
+            transitioning=group_transitioning,
+        )
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
@@ -713,6 +1113,14 @@ class PredictiveSaladAutoscaler:
         # Preserve Media Pipeline ordering: only confirmed capacity releases can fund new capacity.
         for stage in self.clients:
             target = targets[stage]
+            if stage in reallocation_busy:
+                results[stage] = AutoscaleResult(
+                    stage=stage, current_replicas=current[stage],
+                    target_replicas=target, applied_replicas=current[stage],
+                    changed=False, demand=demands[stage],
+                    reason="instance_reallocation_pending",
+                )
+                continue
             if group_transitioning[stage]:
                 pending_drains = tuple(self.store.list_draining_instances(stage=stage))
                 if pending_drains:
@@ -816,7 +1224,7 @@ class PredictiveSaladAutoscaler:
             0,
         )
         for stage in self.clients:
-            if group_transitioning[stage]:
+            if group_transitioning[stage] or stage in reallocation_busy:
                 continue
             target = targets[stage]
             before = current[stage]
@@ -1130,6 +1538,7 @@ class PredictiveSaladAutoscaler:
             round(demand.expected_runtime_seconds, 1),
             round(demand.remaining_work_seconds, 1),
             round(demand.target_drain_seconds, 1),
+            demand.target_attainable_under_quota,
             demand.jobs_per_replica,
             demand.job_count_target,
             result.reason,
@@ -1164,7 +1573,11 @@ class PredictiveSaladAutoscaler:
             f"{demand.remaining_work_seconds:.1f}s, "
             f"eta_current={current_eta_text}, eta_target={target_eta_text}, "
             f"target_drain={demand.target_drain_seconds / 60.0:.1f}m, "
-            f"effective_drain={demand.effective_drain_seconds / 60.0:.1f}m"
+            f"effective_drain={demand.effective_drain_seconds / 60.0:.1f}m, "
+            "goal_feasibility=" + (
+                "optimistically_reachable"
+                if demand.target_attainable_under_quota else "infeasible_under_quota"
+            )
             + (
                 f", jobs_per_replica={demand.jobs_per_replica}, "
                 f"job_target={demand.job_count_target}"
@@ -1214,13 +1627,17 @@ def build_global_demands(
         running_work = sum(
             _remaining_running_seconds(
                 row=row,
-                expected_runtime_seconds=expected_runtime,
+                expected_runtime_seconds=_job_forecast_seconds(row, expected_runtime),
                 now=observed_at,
             )
             for row in running_rows
         )
         forecast_blocked = 0
-        work_seconds = queued_count * expected_runtime + running_work
+        work_seconds = sum(
+            _job_forecast_seconds(row, expected_runtime)
+            for row in rows
+            if str(row.get("status") or "") in {"pending", "retryable_failed"}
+        ) + running_work
         active_job_count = queued_count + len(running_rows)
         jobs_per_replica = (
             None
@@ -1256,6 +1673,26 @@ def build_global_demands(
                 min(ideal, active_job_count, config.stage_max_replicas[stage]),
             )
         estimated_drain_seconds = work_seconds / ideal if ideal > 0 else 0.0
+        max_workers = min(
+            config.project_max_replicas,
+            config.stage_max_replicas[stage],
+            active_job_count,
+        )
+        longest_job = max(
+            (_job_forecast_seconds(row, expected_runtime) for row in rows),
+            default=0.0,
+        )
+        best_possible_eta = (
+            max(
+                longest_job,
+                work_seconds / (max_workers * config.target_utilization),
+            )
+            if max_workers > 0 else None
+        )
+        quota_feasible = (
+            best_possible_eta <= target_drain_seconds
+            if best_possible_eta is not None else work_seconds <= 0
+        )
         demands[stage] = StageDemand(
             stage=stage,
             rows=tuple(dict(row) for row in rows),
@@ -1271,6 +1708,8 @@ def build_global_demands(
             target_drain_seconds=target_drain_seconds,
             effective_drain_seconds=effective_drain_seconds,
             estimated_drain_seconds=estimated_drain_seconds,
+            best_possible_eta_seconds=best_possible_eta,
+            target_attainable_under_quota=quota_feasible,
         )
     return demands
 
@@ -1352,6 +1791,14 @@ def apply_downscale_hysteresis(
         )
         adjusted[stage] = min(current, max(target, hysteresis_floor))
     return adjusted
+
+
+def _job_forecast_seconds(row: dict[str, object], fallback: float) -> float:
+    try:
+        value = float(row.get("forecast_runtime_seconds") or fallback)
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+    return value if math.isfinite(value) and value > 0 else fallback
 
 
 def _remaining_running_seconds(

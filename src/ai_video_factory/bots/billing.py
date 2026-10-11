@@ -28,7 +28,7 @@ _IMAGE_PRICING = {
 }
 _STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2",
-    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3",
+    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3", "B2.2",
     "V1", "V2", "V3", "V4", "Fish director", _IMAGE_STAGE, "CTA image",
 )
 
@@ -123,6 +123,43 @@ class ApiCostLedger:
                 )
 
         self._records.append(record)
+
+    def sync_b22_usage(self, output: Path) -> None:
+        """Rebuild billed B2.2 attempts from sanitized durable states.
+
+        Previous run report records are replaced, never summed twice. A cache
+        hit produces no additional response and therefore no additional charge.
+        """
+        usage_root = output / "video" / "b22" / "usage"
+        if not usage_root.exists():
+            return
+        if usage_root.is_symlink() or not usage_root.is_dir():
+            raise ValueError("Linked or invalid B2.2 usage directory")
+        old = [row for row in self._records if row.get("stage") != "B2.2"]
+        seen: set[str] = set()
+        updated: list[dict[str, object]] = []
+        for path in sorted(usage_root.glob("*.json")):
+            if path.is_symlink():
+                raise ValueError("Linked B2.2 usage file")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(saved, Mapping) or not isinstance(saved.get("attempts"), list):
+                raise ValueError("Malformed B2.2 usage checkpoint")
+            for index, response in enumerate(saved["attempts"], 1):
+                if not isinstance(response, Mapping):
+                    raise ValueError("Malformed B2.2 API attempt")
+                response_id = response.get("id")
+                stable_key = str(response_id) if response_id else f"{path.name}#{index}"
+                if stable_key in seen:
+                    continue
+                seen.add(stable_key)
+                self._records = []
+                self.record("B2.2", None, response)
+                entry = self._records.pop()
+                entry["source_state_file"] = (
+                    path.relative_to(output).as_posix() + f"#{index}"
+                )
+                updated.append(entry)
+        self._records = old + updated
 
     def sync_professional_voice_usage(self, output: Path) -> None:
         """Reconcile all paid V calls from durable checkpoints without double billing.
@@ -451,6 +488,11 @@ class ApiCostLedger:
             if type(reported_b3) is int and reported_b3 >= 0
             else b3_count
         )
+        b22_count = sum(item["stage"] == "B2.2" for item in ordered)
+        expected["B2.2"] = max(
+            b22_count,
+            expected.get("B2.2") if type(expected.get("B2.2")) is int else 0,
+        )
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
         for v_stage in ("V1", "V2", "V3", "V4"):
             actual = sum(item["stage"] == v_stage for item in ordered)
@@ -491,7 +533,10 @@ class ApiCostLedger:
         return {
             "currency": "USD",
             "kind": "estimated_api_token_cost_not_invoice",
-            "included": "GPT-6 Luna B/V planning, Fish director and GPT Image 2.5 calls",
+            "included": (
+                "GPT-6 Luna B/V planning including B2.2, Fish director "
+                "and GPT Image 2.5 calls"
+            ),
             "excluded": "OpenAI STT and all Gemini/AI33 TTS provider charges",
             "run_status": run_status,
             "pricing_status": "complete" if complete else "partial_or_unavailable",

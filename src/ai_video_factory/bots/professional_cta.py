@@ -31,14 +31,15 @@ class ProfessionalCTAVisualBeat(StrictModel):
         if self.visual_type == "avatar" and self.prompt is None:
             if self.reference_sources:
                 raise ValueError("Reused avatar must not regenerate an image")
+        if self.visual_type == "avatar_media" and self.reference_sources != ["ebook"]:
+            raise ValueError("CTA avatar_media must use only the ebook reference")
         if (
-            self.visual_type == "avatar" and self.prompt is not None
-            and "presenter" not in self.reference_sources
+            self.visual_type in {"media_image", "media_video"}
+            and "ebook" not in self.reference_sources
         ):
-            raise ValueError("Regenerated CTA presenter needs the real avatar reference")
-        if self.audio and self.visual_type == "media_video":
-            if "presenter" not in self.reference_sources:
-                raise ValueError("Speaking CTA media_video must reference the real presenter")
+            raise ValueError("Every generated CTA B-roll requires ebook reference")
+        if self.visual_type == "avatar" and self.prompt is not None:
+            raise ValueError("CTA avatar must reuse the original image")
         # Delegate all ordinary visual/audio/video constraints to B2 Professional.
         ProfessionalVisualBeat.model_validate({
             "beat_id": self.beat_id,

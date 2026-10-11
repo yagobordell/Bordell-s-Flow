@@ -169,84 +169,37 @@ def _has_visual_subshots(plan: dict[str, Any]) -> bool:
         for beat in block.get("beats", [])
     )
 
-def _b3_shot_assets(
-    output: Path, plan: dict[str, Any],
-) -> dict[tuple[int, str], Path]:
-    assets: dict[tuple[int, str], Path] = {}
-    for item in plan.get("b3_shot_assets", []):
-        if not isinstance(item, dict):
-            raise B2VideoError("Invalid B3 shot asset record")
-        block_id, beat_id = item.get("block_id"), item.get("beat_id")
-        if not isinstance(block_id, int) or not isinstance(beat_id, str):
-            raise B2VideoError("Invalid B3 shot asset identity")
-        key = block_id, beat_id
-        if key in assets:
-            raise B2VideoError(f"Duplicate B3 shot image for {beat_id}")
-        assets[key] = _verified_asset(output, item.get("file"), item.get("sha256"))
-    return assets
-
-
 def _group_beats(beats: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
-    """Group A2V by B3 take boundaries when present, else by historical source."""
+    """Group original-avatar A2V runs and silent I2V coverage; no camera replanning."""
     groups: list[tuple[str, int, int]] = []
-    avatar_start: int | None = None
-    avatar_source: tuple[object, ...] | None = None
+    start: int | None = None
     previous_cta: int | None = None
     for index, beat in enumerate(beats):
-        # CTA speaking takes must not cross their group boundaries even
-        # when B3 skips short (1-2 beat) groups.
-        current_cta = beat.get("cta_group_id")
-        if index and current_cta != previous_cta and avatar_start is not None:
-            groups.append(("a2v", avatar_start, index - 1))
-            avatar_start, avatar_source = None, None
-        previous_cta = current_cta
+        cta = beat.get("cta_group_id")
+        if index and cta != previous_cta and start is not None:
+            groups.append(("a2v", start, index - 1))
+            start = None
+        previous_cta = cta
         kind = beat["visual_type"]
-        if kind == "media_image" and beat.get("audio") is True:
-            raise B2VideoError(
-                f"Speaking media_image beat {beat['beat_id']} is invalid; "
-                "use media_video for synchronized speech"
-            )
-        speaks = kind in {"avatar", "avatar_media"} or beat.get("audio") is True
-        if speaks:
-            if "continuous" in beat:
-                continuous = beat.get("continuous")
-                if not isinstance(continuous, bool):
-                    raise B2VideoError(
-                        f"B3 continuous flag is invalid for {beat['beat_id']}"
-                    )
-                if not continuous:
-                    if avatar_start is not None:
-                        groups.append(("a2v", avatar_start, index - 1))
-                    avatar_start = index
-                    avatar_source = ("b3_take", beat["beat_id"])
-                elif avatar_start is None:
-                    raise B2VideoError(
-                        f"B3 beat {beat['beat_id']} continues without a take start"
-                    )
-                continue
-            if kind in {"media_image", "media_video"} or (
-                kind == "avatar" and beat.get("prompt") is not None
-            ):
-                source = (beat["block_id"], beat["beat_id"])
-            elif kind in {"avatar", "avatar_media"}:
-                source = ("original_avatar",)
-            else:
-                raise B2VideoError(f"Unsupported speaking visual type: {kind!r}")
-            if avatar_start is not None and source != avatar_source:
-                groups.append(("a2v", avatar_start, index - 1))
-                avatar_start = None
-            if avatar_start is None:
-                avatar_start, avatar_source = index, source
+        if kind in {"avatar", "avatar_media"}:
+            if beat.get("audio") is False:
+                raise B2VideoError("Only an actively speaking avatar may use avatar carriers")
+            if start is None:
+                start = index
             continue
-        if avatar_start is not None:
-            groups.append(("a2v", avatar_start, index - 1))
-            avatar_start, avatar_source = None, None
+        if beat.get("audio") is True:
+            raise B2VideoError(
+                f"Generated B-roll beat {beat['beat_id']} must have audio=false"
+            )
+        if start is not None:
+            groups.append(("a2v", start, index - 1))
+            start = None
         if kind == "media_video":
             groups.append(("i2v", index, index))
         elif kind != "media_image":
             raise B2VideoError(f"Unsupported B2 visual type: {kind!r}")
-    if avatar_start is not None:
-        groups.append(("a2v", avatar_start, len(beats) - 1))
+    if start is not None:
+        groups.append(("a2v", start, len(beats) - 1))
     return groups
 
 
@@ -294,7 +247,6 @@ def _fingerprint(
     assets: dict[tuple[int, str], Path], avatar: Path,
     *, profile: str | None = None,
     i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
-    b3_assets: dict[tuple[int, str], Path] | None = None,
     all_assets: dict[tuple[int, str], Path] | None = None,
     motion_overrides: dict[str, str] | None = None,
     cta_signature: dict[str, Any] | None = None,
@@ -315,10 +267,6 @@ def _fingerprint(
             for (block_id, asset_id), path in sorted(
                 (all_assets or assets).items()
             )
-        ],
-        "b3_image_sha256": [
-            [block_id, beat_id, sha256_file(path)]
-            for (block_id, beat_id), path in sorted((b3_assets or {}).items())
         ],
         "profile": profile or LTX_A2V_RUN_OPTIMIZED_PROFILE,
         "positive_prompt": AVATAR_PROMPT,
@@ -368,7 +316,6 @@ def build_b2_video_plan(
         if _has_visual_subshots(plan)
         else assets
     )
-    b3_assets = _b3_shot_assets(output, plan)
     for beat in beats:
         key = beat["block_id"], beat["beat_id"]
         if (
@@ -387,7 +334,7 @@ def build_b2_video_plan(
                 )
     digest = _fingerprint(
         timeline, audio, assets, avatar,
-        b3_assets=b3_assets, all_assets=all_assets,
+        all_assets=all_assets,
         motion_overrides=motion_overrides,
         cta_signature={
             "cta_groups": plan.get("ebook_cta_groups", []),
@@ -498,33 +445,11 @@ def build_b2_video_plan(
         else:
             first_beat = selection[0]
             key = first_beat["block_id"], first_beat["beat_id"]
-            if first_beat.get("b3_shot_prompt") is not None:
-                if key not in b3_assets:
-                    raise B2VideoError(
-                        f"Missing B3 start image for {first_beat['beat_id']}"
-                    )
-                image = b3_assets[key]
-            elif first_beat["visual_type"] in {"media_image", "media_video"} or (
-                first_beat["visual_type"] == "avatar"
-                and first_beat.get("prompt") is not None
-            ):
-                image = assets[key]
-            else:
-                image = avatar
+            if first_beat["visual_type"] not in {"avatar", "avatar_media"}:
+                raise B2VideoError("A2V may start only from original avatar")
+            image = avatar
             image_sha = sha256_file(image)
             a2v_prompt = AVATAR_PROMPT
-            if isinstance(first_beat.get("b3_shot_video_prompt"), str):
-                a2v_prompt += " " + first_beat["b3_shot_video_prompt"]
-            elif (
-                first_beat["visual_type"] == "media_video"
-                and isinstance(first_beat.get("video_prompt"), str)
-            ):
-                # Historical B2-only plans still use their speaking motion prompt.
-                a2v_prompt += " " + first_beat["video_prompt"]
-            if motion_overrides and first_beat["beat_id"] in motion_overrides:
-                a2v_prompt = (
-                    AVATAR_PROMPT + " " + motion_overrides[first_beat["beat_id"]]
-                )
             audio_path = run_dir / "audio" / f"{beat_ids[0]}-{beat_ids[-1]}.wav"
             audio_sha = _extract_pcm(master, audio_path, start, end)
             job_id = ltx_a2v_application_job_id(
@@ -881,7 +806,7 @@ def generate_b2_ltx_video(
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     if plan.get("visual_style") == "profesional":
-        # B2.2 sees the real finalized LTX start PNGs *after* B3 grouping.
+        # B2.2 sees the finalized B-roll PNGs after B2.1 review.
         # Produce and validate every override before any paid job submission.
         from ai_video_factory.workflows.b22_motion import adapt_b22_motion
 

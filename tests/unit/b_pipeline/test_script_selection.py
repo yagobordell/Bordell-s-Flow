@@ -91,6 +91,34 @@ def test_stop_cli_rejects_invalid_or_conflicting_modes(
     assert message in capsys.readouterr().err
 
 
+def test_professional_audio_resume_before_gemini_task_is_safe(tmp_path: Path) -> None:
+    nonce = runner._professional_audio_nonce(
+        [], resume=True, previous_audio={"status": "incomplete"},
+    )
+    assert isinstance(nonce, str) and len(nonce) == 32
+
+    # Reuse the immutable saved paid task identity when Gemini is pending.
+    pending = tmp_path / "gemini-existing" / "task.json"
+    pending.parent.mkdir(parents=True)
+    pending.write_text(json.dumps({"generation_nonce": "paid-task"}), encoding="utf-8")
+    assert runner._professional_audio_nonce(
+        [pending], resume=True, previous_audio={"status": "incomplete"},
+    ) == "paid-task"
+
+    with pytest.raises(RuntimeError, match="multiple pending Gemini"):
+        runner._professional_audio_nonce(
+            [pending, pending], resume=True, previous_audio={"status": "incomplete"},
+        )
+    with pytest.raises(RuntimeError, match="incomplete paid audio task"):
+        runner._professional_audio_nonce(
+            [pending], resume=False, previous_audio={"status": "incomplete"},
+        )
+    with pytest.raises(RuntimeError, match="completed professional audio"):
+        runner._professional_audio_nonce(
+            [], resume=True, previous_audio={"status": "completed"},
+        )
+
+
 def test_default_scripts_location_is_input_root() -> None:
     assert runner.DEFAULT_SCRIPTS_DIR == Path("data/input")
 
@@ -271,7 +299,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_rejected_b12_output,
         on_rejected_b2_output,
         on_rejected_b21_output,
-        on_rejected_b3_output,
         visual_style,
         enable_casero_cta,
         avatar_image,
@@ -281,13 +308,12 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         previous_b12,
     ):
         assert start_from == "B1.1"
-        assert stop_after == "B3"
+        assert stop_after == "B2.1"
         assert previous_b11 is None and previous_b12 is None
         assert callable(on_rejected_output)
         assert callable(on_rejected_b12_output)
         assert callable(on_rejected_b2_output)
         assert callable(on_rejected_b21_output)
-        assert callable(on_rejected_b3_output)
         assert visual_style == "profesional"
         assert enable_casero_cta is False
         assert avatar_image.startswith(b"\x89PNG\r\n\x1a\n")
@@ -305,10 +331,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_output("B2", 1, {"pipeline_stage": "B2", "blocks": []})
         on_input("B2.1", None, {"pipeline_stage": "B2", "blocks": []})
         on_output("B2.1", None, {"pipeline_stage": "B2.1", "modified_beats": [], "error": None})
-        on_input("B3", 1, {"group_id": 1, "beats": []})
-        on_output("B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []})
         for stage, block_id in (
-            ("B1.1", None), ("B1.2", 1), ("B2", 1), ("B2.1", None), ("B3", 1)
+            ("B1.1", None), ("B1.2", 1), ("B2", 1), ("B2.1", None)
         ):
             on_api_response(
                 stage,
@@ -332,8 +356,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             merged = (
                 None
                 if stage == "B1.1"
-                else {"pipeline_stage": "B3", "groups": []}
-                if stage == "B3"
                 else {"pipeline_stage": "B2.1", "modified_beats": [], "error": None}
                 if stage == "B2.1"
                 else {"pipeline_stage": stage, "blocks": [{"block_id": 1, "beats": []}]}
@@ -342,7 +364,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             streamed_stages.append(stage)
             completed_this_run = streamed_stages[call_start:]
             assert completed_this_run == [
-                "B1.1", "B1.2", "B2", "B2.1", "B3"
+                "B1.1", "B1.2", "B2", "B2.1"
             ][:len(completed_this_run)]
             assert printed_events[print_start:] == completed_this_run
             report_path = tmp_path / "output" / ("roma" if "Uno." in script else "japon")
@@ -360,7 +382,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
             b2=[],
-            b3=[],
             visual_plan=lambda: {
                 "blocks": [{
                     "beats": [
@@ -435,18 +456,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert (destination / "B2" / "block_1" / "output.json").is_file()
         assert (destination / "B2.1" / "input.json").is_file()
         assert (destination / "B2.1" / "output.json").is_file()
-        assert (destination / "B3" / "group_1" / "input.json").is_file()
-        assert (destination / "B3" / "group_1" / "output.json").is_file()
-        b3_input = json.loads(
-            (destination / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
-        )
-        b3_output = json.loads(
-            (destination / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
-        )
-        assert b3_input == {"group_id": 1, "beats": []}
-        assert b3_output == {
-            "pipeline_stage": "B3", "group_id": 1, "beats": []
-        }
+        assert not (destination / "B3").exists()
         b12_merged = json.loads(
             (destination / "B1.2" / "merged_output.json").read_text(encoding="utf-8")
         )
@@ -456,15 +466,11 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         b21_merged = json.loads(
             (destination / "B2.1" / "merged_output.json").read_text(encoding="utf-8")
         )
-        b3_merged = json.loads(
-            (destination / "B3" / "merged_output.json").read_text(encoding="utf-8")
-        )
         assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
         assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
         assert b21_merged == {
             "pipeline_stage": "B2.1", "modified_beats": [], "error": None
         }
-        assert b3_merged == {"pipeline_stage": "B3", "groups": []}
         consolidated = json.loads(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
@@ -501,7 +507,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             (destination / "B2" / "block_1" / "output.json").read_text(encoding="utf-8")
         )
         assert consolidated["api_costs"]["pricing_status"] == "complete"
-        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00010000"
+        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00008000"
         timing = consolidated["timings"]
         assert timing["status"] == "completed"
         assert timing["run_elapsed_seconds"] >= 0
@@ -516,30 +522,29 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
     terminal = capsys.readouterr().out
     lines = terminal.splitlines()
-    assert len(lines) == 21
-    for offset in (0, 7, 14):
-        assert lines[offset:offset + 5] == [
+    assert len(lines) == 18
+    for offset in (0, 6, 12):
+        assert lines[offset:offset + 4] == [
             "  B1.1 total: 0.250 s $0.00002000",
             "  B1.2 total: 0.250 s $0.00002000",
             "  B2 total: 0.250 s $0.00002000",
             "  B2.1 total: 0.250 s $0.00002000",
-            "  B3 total: 0.250 s $0.00002000",
         ]
         assert re.fullmatch(
             r"  B2 images total: \d+\.\d{3} s \$0\.00000000",
-            lines[offset + 5],
+            lines[offset + 4],
         ) is not None
         assert re.fullmatch(
-            r"  Run total: \d+\.\d{3} s \$0\.00010000",
-            lines[offset + 6],
+            r"  Run total: \d+\.\d{3} s \$0\.00008000",
+            lines[offset + 5],
         ) is not None
-    assert streamed_stages == ["B1.1", "B1.2", "B2", "B2.1", "B3"] * 3
+    assert streamed_stages == ["B1.1", "B1.2", "B2", "B2.1"] * 3
     assert printed_events == [
-        "B1.1", "B1.2", "B2", "B2.1", "B3", "B2 images", "Run"
+        "B1.1", "B1.2", "B2", "B2.1", "B2 images", "Run"
     ] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
-    # Skipping images still preserves the complete professional B3 plan.
+    # Skipping images still preserves the complete professional reviewed plan.
     async def image_stage_must_not_run(_destination, _plan):
         pytest.fail("--no-image must not invoke AI33 or the official OpenAI fallback")
 
@@ -549,7 +554,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     skipped_output = tmp_path / "output" / "roma"
     assert (skipped_output / "B2" / "merged_output.json").is_file()
     assert (skipped_output / "B2.1" / "merged_output.json").is_file()
-    assert (skipped_output / "B3" / "merged_output.json").is_file()
+    assert not (skipped_output / "B3").exists()
     assert (skipped_output / "visual_plan.json").is_file()
     assert not (skipped_output / "images").exists()
     skipped_report = json.loads(
@@ -643,23 +648,3 @@ def test_single_text_model_and_medium_reasoning_configuration() -> None:
     assert "openai_b_reasoning_effort" not in fields
 
 
-def test_b3_artifacts_fail_closed_until_input_and_output_are_durable(
-    tmp_path: Path,
-) -> None:
-    artifacts = runner.BotArtifacts(tmp_path)
-    artifacts.input("B3", 1, {"group_id": 1, "beats": []})
-
-    with pytest.raises(RuntimeError, match="durable output.json"):
-        artifacts.require_b3_group_outputs(1)
-
-    artifacts.output(
-        "B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []}
-    )
-    artifacts.require_b3_group_outputs(1)
-
-    assert json.loads(
-        (tmp_path / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
-    ) == {"group_id": 1, "beats": []}
-    assert json.loads(
-        (tmp_path / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
-    ) == {"pipeline_stage": "B3", "group_id": 1, "beats": []}

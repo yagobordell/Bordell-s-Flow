@@ -188,6 +188,40 @@ def test_runtime_request_hash_redacts_signed_urls_and_uses_canonical_json() -> N
     assert runtime_request_sha256(request) == hashlib.sha256(canonical).hexdigest()
 
 
+def test_upscaler_preflight_detects_r2_connection_failure_without_gpu_calls(
+    tmp_path: Path,
+) -> None:
+    class UnreachableR2(FakeStorage):
+        def stat(self, key: str) -> StoredObject | None:
+            raise TimeoutError("R2 HEAD connection timed out")
+
+    storage = UnreachableR2()
+    client = FakeRuntimeClient(storage)
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        http_client=client,
+    )
+    with pytest.raises(ImageUpscalerError, match="Cloudflare R2 is unavailable"):
+        provider.check_storage_ready()
+    assert client.calls == []
+    assert storage.objects == {}
+
+
+def test_upscaler_preflight_accepts_absent_probe_key(tmp_path: Path) -> None:
+    storage = FakeStorage()
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="secret",
+        storage=storage,
+        temp_dir=tmp_path,
+    )
+    assert provider.check_storage_ready() is None
+    assert storage.objects == {}
+
+
 def test_upscaler_uses_runtime_http_v1_salad_auth_and_cleans_r2(tmp_path: Path) -> None:
     storage = FakeStorage()
     runtime = FakeRuntimeClient(storage)

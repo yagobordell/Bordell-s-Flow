@@ -137,6 +137,8 @@ def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> N
     assert "maximum 100" in rejected[0][2]
     assert "automatic beat-length correction" in provider.calls[1]["instructions"]
     assert "Previous invalid B1.2 response" in provider.calls[1]["instructions"]
+    assert "NO minimum character count" in provider.calls[1]["instructions"]
+    assert "13 characters" not in provider.calls[1]["instructions"]
     assert all(json.loads(call["input_text"])["blocks"][0]["text"] == script
                for call in provider.calls)
     assert len(saved) == 1 and saved[0][0] == "B1.2"
@@ -207,6 +209,26 @@ def test_repaired_text_must_reconstruct_original_including_punctuation() -> None
             )
         )
     assert [item[1] for item in rejected] == [1, 2, 3]
+    assert "first difference at character" in rejected[-1][2]
+    assert "expected" in rejected[-1][2] and "received" in rejected[-1][2]
+
+
+def test_correction_may_preserve_valid_short_beats() -> None:
+    script = FIRST + SHORT + SECOND
+    provider = RepairProvider(_output(script), _output(FIRST, SHORT, SECOND))
+    result = asyncio.run(
+        run_b_pipeline(
+            script,
+            provider=provider,
+            model="test-model",
+            start_from="B1.2",
+            stop_after="B1.2",
+            previous_b11=_b11(script),
+        )
+    )
+    assert len(provider.calls) == 2
+    assert [beat.text for beat in result.b12[0].beats] == [FIRST, SHORT, SECOND]
+    assert "NO minimum character count" in provider.calls[1]["instructions"]
 
 
 def test_unrelated_b12_validation_failure_is_repaired() -> None:

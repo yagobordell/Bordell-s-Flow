@@ -322,6 +322,7 @@ def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
     payload = b21_inputs[0]
     assert [block["block_id"] for block in payload["blocks"]] == [1, 2]
     assert payload["b21_review"] == {
+        "protected_cta_beat_ids": [],
         "split_candidates": [
             {"block_id": 1, "beat_id": "1A"},
             {"block_id": 2, "beat_id": "2A"},

@@ -113,6 +113,45 @@ def test_v3_artistic_contract_and_v4_source_bound_tags():
         pv._check_v3(result, block)
 
 
+def test_v3_repairs_only_verbatim_punctuation_without_positional_intents():
+    source = _block()
+    direction = _v3()
+    spoken = direction.beat_deliveries[0].delivery[0]
+    spoken.speak = "Hola mundo."
+    spoken.vocal_intents = []
+    pv._restore_v3_source_punctuation(direction, source)
+    assert spoken.speak == source["beats"][0]["text"]
+    pv._check_v3(direction, source)
+
+    # Never guess changed words, even if the replacement is plausible.
+    direction = _v3()
+    direction.beat_deliveries[0].delivery[0].speak = "Hola, planeta. "
+    direction.beat_deliveries[0].delivery[0].vocal_intents = []
+    pv._restore_v3_source_punctuation(direction, source)
+    with pytest.raises(pv.VoicePlanError, match="verbatim"):
+        pv._check_v3(direction, source)
+
+    # Offset-bearing intent positions cannot be silently remapped.
+    direction = _v3()
+    direction.beat_deliveries[0].delivery[0].speak = "Hola mundo."
+    pv._restore_v3_source_punctuation(direction, source)
+    assert direction.beat_deliveries[0].delivery[0].speak == "Hola mundo."
+    with pytest.raises(pv.VoicePlanError, match="verbatim"):
+        pv._check_v3(direction, source)
+
+    # Multiple spoken fragments have ambiguous punctuation ownership.
+    direction = _v3()
+    direction.beat_deliveries[0].delivery = [
+        pv.Speak(speak="Hola", delivery_quality="Gentle",
+                 ending_behavior="carry", stress=[], vocal_intents=[]),
+        pv.Speak(speak=" mundo.", delivery_quality="Gentle",
+                 ending_behavior="land", stress=[], vocal_intents=[]),
+    ]
+    pv._restore_v3_source_punctuation(direction, source)
+    with pytest.raises(pv.VoicePlanError, match="verbatim"):
+        pv._check_v3(direction, source)
+
+
 def test_v3_rejects_split_word_and_excess_humanization():
     direction = _v3()
     direction.beat_deliveries[0].delivery[0].vocal_intents = [
@@ -263,6 +302,38 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
         blocks=[_block()], output=tmp_path, provider=provider, model="test",
     ))
     assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
+
+
+def test_v3_narration_retry_identifies_exact_source_drift(tmp_path):
+    class Drifting(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.feedback = []
+
+        async def generate_structured_with_response(self, *, output_type, **kwargs):
+            if output_type is pv.V3 and self.calls.count("V3"):
+                self.feedback.append(json.loads(kwargs["input_text"])["validation_feedback"])
+            result, raw = await super().generate_structured_with_response(
+                output_type=output_type, **kwargs,
+            )
+            if output_type is pv.V3 and self.calls.count("V3") == 1:
+                result.beat_deliveries[0].delivery[0].speak = "Hola, planeta. "
+            return result, raw
+
+    provider = Drifting()
+    asyncio.run(pv.plan_professional_voice(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=provider, model="test",
+    ))
+    assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
+    assert len(provider.feedback) == 1
+    hint = provider.feedback[0]["narration_mismatch"]
+    assert hint["beat_id"] == "1A"
+    assert hint["expected_excerpt"] != hint["received_excerpt"]
+    assert hint["first_difference_at"] >= 0
+    assert "exact full string" in provider.feedback[0]["task"]
+    assert "omitted" in provider.feedback[0]["rejected_response"]
+    assert (tmp_path / "V3/block_1/output.json").is_file()
 
 
 def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
@@ -723,6 +794,125 @@ def test_tagged_modern_v3_checkpoint_is_repaired_only_for_its_block(tmp_path):
     ] == "Measured, conversational"
     rejected = tmp_path / "V3" / "block_1" / "rejected_v3_inline_tags.json"
     assert "<sigh>" in rejected.read_text(encoding="utf-8")
+
+
+def _completed_gemini_with_mismatched_master(tmp_path):
+    run_dir = tmp_path / "audio" / "runs" / "gemini-recover"
+    folder = run_dir / "blocks" / "block_7"
+    folder.mkdir(parents=True)
+    group_data = _wav(24000)
+    group_sha = hashlib.sha256(group_data).hexdigest()
+    (folder / "audio.wav").write_bytes(group_data)
+    (folder / "task.json").write_text(json.dumps({
+        "status": "completed", "sha256": group_sha,
+    }), encoding="utf-8")
+    master = run_dir / "narration.wav"
+    master.write_bytes(_wav(32000))
+    # The saved digest differs from the physical master, as in interrupted
+    # group-regeneration/publication recovery.
+    saved_sha = hashlib.sha256(_wav(48000)).hexdigest()
+    artifact = {
+        "status": "completed", "provider": "gemini",
+        "run_id": "gemini-recover", "voice_id": "Algenib",
+        "file": master.relative_to(tmp_path).as_posix(),
+        "sha256": saved_sha, "bytes": len(_wav(48000)),
+        "block_count": 1, "stt_complete": True,
+        "blocks": [{
+            "block_id": 7,
+            "file": (folder / "audio.wav").relative_to(tmp_path).as_posix(),
+            "sha256": group_sha,
+        }],
+    }
+    (run_dir / "task.json").write_text(json.dumps({
+        "run_id": "gemini-recover", "status": "completed",
+        "audio": artifact,
+    }), encoding="utf-8")
+    (tmp_path / "audio" / "latest.json").write_text(
+        json.dumps(artifact), encoding="utf-8",
+    )
+    return artifact, master, folder
+
+
+def test_reconcile_gemini_adopts_newer_trusted_manifest_without_rejoin(
+    tmp_path, monkeypatch,
+):
+    # Regression for video03: STT replaced Gemini groups 7 and 13, and
+    # persisted task/latest before the managed report could be rewritten.
+    artifact, master, _folder = _completed_gemini_with_mismatched_master(tmp_path)
+    latest = {**artifact, "sha256": hashlib.sha256(master.read_bytes()).hexdigest(),
+              "bytes": master.stat().st_size}
+    (master.parent / "task.json").write_text(json.dumps({
+        "run_id": "gemini-recover", "status": "completed", "audio": latest,
+    }), encoding="utf-8")
+    (tmp_path / "audio" / "latest.json").write_text(
+        json.dumps(latest), encoding="utf-8",
+    )
+
+    def no_join(*_args):
+        pytest.fail("A valid latest master must not be rejoined or billed")
+
+    monkeypatch.setattr(pv, "join_audio_blocks", no_join)
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is True
+    assert artifact == latest
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is False
+    assert master.read_bytes() == _wav(32000)
+    assert not list(master.parent.glob("narration.before_reconciliation.*.wav"))
+
+
+def test_reconcile_gemini_master_uses_verified_paid_wavs_only(tmp_path, monkeypatch):
+    artifact, master, folder = _completed_gemini_with_mismatched_master(tmp_path)
+    original = master.read_bytes()
+    joined_audio = _wav(44100)
+    joins = []
+
+    def join(sources, destination):
+        joins.append(list(sources))
+        assert sources == [folder / "audio.wav"]
+        destination.write_bytes(joined_audio)
+        return {
+            "sha256": hashlib.sha256(joined_audio).hexdigest(),
+            "bytes": len(joined_audio), "duration_seconds": 0.2,
+            "block_start_seconds": [0.0], "block_end_seconds": [0.2],
+            "block_durations_seconds": [0.2],
+        }
+
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is True
+    assert master.read_bytes() == joined_audio
+    backup = list(master.parent.glob("narration.before_reconciliation.*.wav"))
+    assert len(backup) == 1 and backup[0].read_bytes() == original
+    assert artifact["sha256"] == hashlib.sha256(joined_audio).hexdigest()
+    task = json.loads((master.parent / "task.json").read_text())
+    latest = json.loads((tmp_path / "audio" / "latest.json").read_text())
+    assert task["audio"] == latest == artifact
+    assert pv.reconcile_completed_gemini_narration(tmp_path, artifact) is False
+    assert len(joins) == 1  # No redundant join, and absolutely no provider call.
+
+
+@pytest.mark.parametrize("corruption", ["group_wav", "group_task", "latest"])
+def test_reconcile_gemini_refuses_untrusted_paid_state(
+    tmp_path, monkeypatch, corruption,
+):
+    artifact, master, folder = _completed_gemini_with_mismatched_master(tmp_path)
+    original = master.read_bytes()
+    if corruption == "group_wav":
+        (folder / "audio.wav").write_bytes(b"tampered paid audio")
+    elif corruption == "group_task":
+        (folder / "task.json").write_text(json.dumps({
+            "status": "completed", "sha256": "0" * 64,
+        }), encoding="utf-8")
+    else:
+        (tmp_path / "audio" / "latest.json").write_text(
+            json.dumps({"status": "incomplete"}), encoding="utf-8",
+        )
+    def should_not_join(*_args):
+        pytest.fail("Untrusted paid audio must not trigger a local join")
+
+    monkeypatch.setattr(pv, "join_audio_blocks", should_not_join)
+    with pytest.raises(pv.VoicePlanError, match="Cannot reconcile"):
+        pv.reconcile_completed_gemini_narration(tmp_path, artifact)
+    assert master.read_bytes() == original
+    assert not list(master.parent.glob("narration.before_reconciliation.*.wav"))
 
 
 def test_gemini_fidelity_regeneration_replaces_only_failed_group(
