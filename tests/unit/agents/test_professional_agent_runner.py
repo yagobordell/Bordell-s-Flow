@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import sys
 from types import SimpleNamespace
@@ -59,17 +60,24 @@ def fixture_source():
 
 
 @pytest.mark.parametrize("fail_first_json", [False, True])
+@pytest.mark.parametrize("invented_ebook_cta", [False, True])
 def test_real_five_phase_controller_uses_one_agent_session(
-    tmp_path, monkeypatch, fail_first_json,
+    tmp_path, monkeypatch, fail_first_json, invented_ebook_cta,
 ):
     script, blocks, core, beats = fixture_source()
     invocations = []
+    planning_count = 0
     FakeModelBehaviorError = type("ModelBehaviorError", (Exception,), {})
 
     class FakeRunner:
         @staticmethod
         async def run(agent, payload, *, session, max_turns=18, hooks=None):
+            nonlocal planning_count
             invocations.append((agent, session, payload))
+            if agent.output_type is GroupProposal:
+                assert max_turns == 1
+            if agent.output_type is PlannedVideo:
+                planning_count += 1
             if agent.output_type is GroupProposal:
                 final = GroupProposal.model_validate({
                     "narrative_core": core, "blocks": blocks,
@@ -78,9 +86,14 @@ def test_real_five_phase_controller_uses_one_agent_session(
                 from ai_video_factory.agents.professional.runner import PlannedVideo
 
                 assert agent.output_type is PlannedVideo
+                proposed_beats = copy.deepcopy(beats)
+                if invented_ebook_cta and planning_count == 1:
+                    proposed_beats[0]["cta_group_id"] = 1
+                    proposed_beats[0]["cta_reference_sources"] = ["ebook"]
+                    proposed_beats[0]["reference"] = True
                 final = PlannedVideo.model_validate({
                     "visual_style": "profesional", "narrative_core": core,
-                    "blocks": [{"block_id": 1, "beats": beats}],
+                    "blocks": [{"block_id": 1, "beats": proposed_beats}],
                 })
             else:
                 final = "OK"
@@ -128,6 +141,21 @@ def test_real_five_phase_controller_uses_one_agent_session(
         assert result["usage"][0]["total_tokens"] == 150
         assert (tmp_path / "agent_openai" / "01_groups_invalid_json_1.json").is_file()
     assert result["validation"]["status"] == "passed"
+    if invented_ebook_cta:
+        initial = json.loads(
+            (tmp_path / "agent_openai" / "plan_initial.json").read_text()
+        )
+        assert any(
+            issue["rule_id"] == "CTA_COVER_UNAVAILABLE"
+            for issue in initial["validation"]["issues"]
+        )
+        assert not any(
+            beat.get("cta_group_id")
+            for block in result["projection"]["visual_plan"]["blocks"]
+            for beat in block["beats"]
+        )
+    phase2_request = invocations[2 if fail_first_json else 1][2]
+    assert "cover is NOT provided" in phase2_request[0]["content"][0]["text"]
     saved = json.loads((tmp_path / "agent_openai" / "approved_plan.json").read_text())
     assert saved["source_sha256"] == result["validation"]["source_sha256"]
     assert result["projection"]["visual_plan"]["visual_style"] == "profesional"
