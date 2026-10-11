@@ -169,7 +169,9 @@ async def run_professional_director(
         actor = base.clone(
             instructions=load_phase_instructions(phase, memory_root=memory_root),
             output_type=output_type,
-            tools=[*tools] if use_tools else [],
+            tools=(
+                tools if phase == "04_correction" else tools[2:]
+            ) if use_tools else [],
         )
         started = perf_counter()
         result = await Runner.run(actor, input_data, session=session, max_turns=18)
@@ -259,7 +261,9 @@ async def run_professional_director(
     # 4. Cohesive revisions; each is followed by Python validation.
     for attempt in range(max_corrections):
         report = workspace.validate_plan()
-        if report["status"] != "blocked":
+        # The first correction pass is ALWAYS needed: Python cannot evaluate
+        # causal fidelity, repetition or motion reliability.
+        if attempt > 0 and report["status"] != "blocked":
             break
         corrected = await execute(
             "04_correction",
@@ -269,7 +273,8 @@ async def run_professional_director(
             + json.dumps(check["groups"], ensure_ascii=False)
             + "\nPlan completo:\n"
             + json.dumps(workspace.candidate, ensure_ascii=False)
-            + "\nInforme Python:\n" + json.dumps(report, ensure_ascii=False),
+            + "\nInforme Python:\n" + json.dumps(report, ensure_ascii=False)
+            + "\nRevisión creativa del agente:\n" + str(assessment),
             output_type=PlannedVideo, use_tools=True,
         )
         workspace.submit_plan_revision(
