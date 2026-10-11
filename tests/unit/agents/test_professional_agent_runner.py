@@ -472,6 +472,7 @@ def test_global_correction_retries_only_while_source_errors_improve(
     ))
     result = asyncio.run(run_professional_director(
         script, output=tmp_path, avatar=b"PNG", ebook=None, model="offline",
+        max_corrections=2,
     ))
     assert result["validation"]["status"] == "passed"
     assert correction_calls == 2
