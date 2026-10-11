@@ -3407,8 +3407,15 @@ async def main() -> None:
                 artifacts.output("B1.2", block["block_id"], b12_item.model_dump(mode="json"))
                 artifacts.output("B2", block["block_id"], b2_item.model_dump(mode="json"))
             _write(output / "B1.2" / "merged_output.json", {
+                "schema_version": "b-pipeline-merged-v1",
+                "pipeline_stage": "B1.2",
                 "narrative_core": b11.narrative_core.model_dump(mode="json"),
-                "blocks": director_blocks,
+                "blocks": [{
+                    "block_id": item.block_id,
+                    "beats": [
+                        beat.model_dump(mode="json") for beat in item.beats or []
+                    ],
+                } for item in b12],
             })
             _write(output / "B2" / "merged_output.json",
                    directed["projection"]["b2_merged"])
