@@ -5,8 +5,6 @@ import json
 
 import pytest
 
-from ai_video_factory.agents.professional.validation import validate_plan
-
 from ai_video_factory.agents.professional.compact import (
     AvatarBeat,
     BeatNote,
@@ -20,6 +18,7 @@ from ai_video_factory.agents.professional.compact import (
     apply_sparse_correction,
     materialize_sparse_direction,
 )
+from ai_video_factory.agents.professional.validation import validate_plan
 
 
 def _core():
