@@ -2960,10 +2960,13 @@ async def main() -> None:
                 else args.avatars_dir.parent
             )
             if visual_style == "profesional":
-                covers = resolve_professional_ebook_covers(
-                    avatar_file, script=script, data_dir=data_root,
-                    names=getattr(args, "ebook_cover", None),
-                )
+                try:
+                    covers = resolve_professional_ebook_covers(
+                        avatar_file, script=script, data_dir=data_root,
+                        names=getattr(args, "ebook_cover", None),
+                    )
+                except ValueError as exc:
+                    raise SystemExit(f"Portada de ebook Profesional: {exc}") from None
             else:
                 # The original Casero cover selection is unchanged.
                 covers = ensure_ebook_covers(
@@ -3047,10 +3050,13 @@ async def main() -> None:
                 args.avatars_dir if managed_target is not None
                 else args.avatars_dir.parent
             )
-            covers = resolve_professional_ebook_covers(
-                avatar_file, script=script, data_dir=data_root,
-                names=getattr(args, "ebook_cover", None),
-            )
+            try:
+                covers = resolve_professional_ebook_covers(
+                    avatar_file, script=script, data_dir=data_root,
+                    names=getattr(args, "ebook_cover", None),
+                )
+            except ValueError as exc:
+                raise SystemExit(f"Portada de ebook Profesional: {exc}") from None
 
     from ai_video_factory.workflows.r2_run_scope import (
         saved_video_scope,
