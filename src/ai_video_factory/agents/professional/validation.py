@@ -371,6 +371,9 @@ def validate_plan(
 
     protected_cta_beats = protected_cta_beats or {}
     authentic_cta_required = requires_ebook_cover(script)
+    source_has_ebook_cta_cue = any(
+        is_explicit_ebook_cta_anchor(group["text"]) for group in materialized
+    )
     cta_covered_anchors: list[str] = []
     for group, block in zip(materialized, blocks, strict=True):
         block_id = group["block_id"]
@@ -432,6 +435,13 @@ def validate_plan(
                 ))
             reconstructed += text
             protected = beat.get("cta_group_id") is not None
+            if protected and not source_has_ebook_cta_cue:
+                issues.append(_issue(
+                    "CTA_UNGROUNDED",
+                    "The original script contains no ebook/QR cue. "
+                    "Do not create an ebook CTA from unrelated narration.",
+                    block_id=block_id, beat_ids=[beat_id],
+                ))
             if authentic_cta_required and is_explicit_ebook_cta_anchor(text):
                 if not protected:
                     issues.append(_issue(
