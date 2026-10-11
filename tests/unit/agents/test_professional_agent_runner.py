@@ -113,13 +113,16 @@ def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
                 })
             elif agent.output_type is VisualCorrection:
                 chosen = copy.deepcopy(choices)
-                change = chosen[0] if invented_ebook_cta else chosen[1]
-                if not invented_ebook_cta:
-                    change["image_prompts"] = ["A richer grounded viewpoint"]
+                changed = []
+                if invented_ebook_cta:
+                    changed.append(chosen[0])
+                if editorial_patch:
+                    chosen[1]["image_prompts"] = ["A richer grounded viewpoint"]
+                    changed.append(chosen[1])
                 answer = VisualCorrection.model_validate({
                     "resegmented_blocks": [],
                     "replanned_blocks": [],
-                    "visual_patches": [change],
+                    "visual_patches": changed,
                 })
             else:
                 raise AssertionError("Unexpected real-model phase.")
