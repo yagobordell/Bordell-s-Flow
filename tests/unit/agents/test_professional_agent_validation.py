@@ -188,3 +188,33 @@ def test_workspace_revalidates_before_delivery():
     workspace.candidate["blocks"][0]["beats"][0]["text"] = "Texto alterado. "
     with pytest.raises(ValueError, match="not green"):
         workspace.deliver()
+
+
+def test_ebook_cta_requires_cover_without_spending_another_planning_call():
+    script, groups, plan = sample()
+    beat = plan["blocks"][0]["beats"][0]
+    beat["cta_group_id"] = 1
+    beat["cta_reference_sources"] = ["ebook"]
+    beat["reference"] = True
+    report = validate_plan(script, groups, plan, ebook_available=False)
+    assert report["status"] == "blocked"
+    assert "CTA_COVER_UNAVAILABLE" in codes(report)
+    del beat["cta_group_id"]
+    del beat["cta_reference_sources"]
+    beat["reference"] = False
+    assert validate_plan(script, groups, plan, ebook_available=False)["status"] == "passed"
+
+
+def test_narrative_core_changes_are_repairable_validation_errors():
+    script, groups, plan = sample()
+    original = dict(plan["narrative_core"])
+    plan["narrative_core"]["central_question"] = "Inventada"
+    report = validate_plan(
+        script, groups, plan, expected_narrative_core=original
+    )
+    assert report["status"] == "blocked"
+    assert "NARRATIVE_CORE_CHANGED" in codes(report)
+    plan["narrative_core"] = original
+    assert validate_plan(
+        script, groups, plan, expected_narrative_core=original
+    )["status"] == "passed"
