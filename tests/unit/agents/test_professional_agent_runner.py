@@ -1,4 +1,4 @@
-"""Offline end-to-end SDK orchestration tests: no paid requests."""
+"""Offline exact-source end-to-end tests for the global Professional SDK director."""
 from __future__ import annotations
 
 import asyncio
@@ -9,14 +9,19 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai_video_factory.agents.professional.beats import WholeScriptCuts
 from ai_video_factory.agents.professional.feedback import (
     approve_feedback,
     parse_feedback_arg,
 )
 from ai_video_factory.agents.professional.runner import (
+    CreativeReview,
     GroupProposal,
-    PlannedVideo,
     run_professional_director,
+)
+from ai_video_factory.agents.professional.visuals import (
+    VisualCorrection,
+    WholeVideoVisuals,
 )
 
 
@@ -28,12 +33,11 @@ class FakeAgent:
         return FakeAgent(**{**vars(self), **kwargs})
 
 
-class FakeSession:
-    def __init__(self, session_id, db_path):
-        self.db_path = db_path
+class FakeModelBehaviorError(Exception):
+    pass
 
 
-def fixture_source():
+def _fixture():
     parts = ["Una idea concreta. ", "Otra idea clara. ", "Una tercera prueba. ", "Y cerramos."]
     script = "".join(parts)
     blocks = [{
@@ -42,122 +46,191 @@ def fixture_source():
         "span": {"first_words": "Una idea concreta.", "last_words": "Y cerramos."},
     }]
     core = {"central_question": "¿Qué?", "final_answer": "Una conclusión."}
-    beats = [
-        {
-            "beat_id": f"1{chr(65 + i)}", "text": part, "beat_type": "claim",
-            "visual_type": "media_image", "prompt": None, "video_prompt": None,
-            "audio": False, "reference": False,
-            "image_prompts": [f"Distinct image {i + 1}"],
-            "generation_mode": "independent", "editor_notes": [],
-            "cta_group_id": None, "cta_reference_sources": None,
-        }
-        for i, part in enumerate(parts)
-    ]
-    beats[-1].update({
+    cuts = [{"end_anchor": text.strip(), "occurrence": 1, "beat_type": "claim"}
+            for text in parts]
+    cuts[-1]["beat_type"] = "return"
+    choices = [{
+        "beat_id": f"1{chr(65 + i)}",
+        "visual_type": "media_image",
+        "prompt": None, "video_prompt": None,
+        "audio": False, "reference": False,
+        "image_prompts": [f"Distinct image {i + 1}"],
+        "generation_mode": "independent",
+        "editor_notes": [],
+        "cta_group_id": None, "cta_reference_sources": None,
+    } for i in range(len(parts))]
+    choices[-1].update({
         "visual_type": "avatar", "image_prompts": None,
         "generation_mode": None, "audio": True,
     })
-    return script, blocks, core, beats
+    return script, blocks, core, cuts, choices
 
 
 @pytest.mark.parametrize("fail_first_json", [False, True])
 @pytest.mark.parametrize("invented_ebook_cta", [False, True])
-def test_real_five_phase_controller_uses_one_agent_session(
-    tmp_path, monkeypatch, fail_first_json, invented_ebook_cta,
+@pytest.mark.parametrize("editorial_patch", [False, True])
+def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
+    tmp_path, monkeypatch, fail_first_json, invented_ebook_cta, editorial_patch,
 ):
-    script, blocks, core, beats = fixture_source()
+    script, groups, core, cuts, choices = _fixture()
     invocations = []
-    planning_count = 0
-    FakeModelBehaviorError = type("ModelBehaviorError", (Exception,), {})
+    requests = 0
 
     class FakeRunner:
         @staticmethod
-        async def run(agent, payload, *, session, max_turns=18, hooks=None):
-            nonlocal planning_count
-            invocations.append((agent, session, payload))
+        async def run(agent, payload, *, max_turns=1, hooks=None):
+            nonlocal requests
+            requests += 1
+            invocations.append((agent, payload, max_turns))
+            assert max_turns == 1
+            assert agent.tools == []
+            assert not hasattr(agent, "model_settings")
             if agent.output_type is GroupProposal:
-                assert max_turns == 1
-            if agent.output_type is PlannedVideo:
-                planning_count += 1
-            if agent.output_type is GroupProposal:
-                final = GroupProposal.model_validate({
-                    "narrative_core": core, "blocks": blocks,
+                answer = GroupProposal.model_validate({
+                    "narrative_core": core, "blocks": groups,
                 })
-            elif agent.output_type is not str and isinstance(agent.output_type, type):
-                assert agent.output_type is PlannedVideo
-                proposed_beats = copy.deepcopy(beats)
-                if invented_ebook_cta and planning_count == 1:
-                    proposed_beats[0]["cta_group_id"] = 1
-                    proposed_beats[0]["cta_reference_sources"] = ["ebook"]
-                    proposed_beats[0]["reference"] = True
-                final = PlannedVideo.model_validate({
-                    "visual_style": "profesional", "narrative_core": core,
-                    "blocks": [{"block_id": 1, "beats": proposed_beats}],
+            elif agent.output_type is WholeScriptCuts:
+                answer = WholeScriptCuts.model_validate({
+                    "blocks": [{"block_id": 1, "cuts": cuts}],
+                })
+            elif agent.output_type is WholeVideoVisuals:
+                selected = copy.deepcopy(choices)
+                if invented_ebook_cta:
+                    selected[0]["cta_group_id"] = 1
+                    selected[0]["cta_reference_sources"] = ["ebook"]
+                    selected[0]["reference"] = True
+                answer = WholeVideoVisuals.model_validate({
+                    "blocks": [{"block_id": 1, "beats": selected}],
+                })
+            elif agent.output_type is CreativeReview:
+                issues = [{
+                    "beat_id": "1B", "problem": "A generic still",
+                    "correction": "Use a more concrete scene.",
+                }] if editorial_patch else []
+                answer = CreativeReview.model_validate({
+                    "whole_video_assessment": "Cohesive progression",
+                    "issues": issues,
+                })
+            elif agent.output_type is VisualCorrection:
+                chosen = copy.deepcopy(choices)
+                change = chosen[0] if invented_ebook_cta else chosen[1]
+                if not invented_ebook_cta:
+                    change["image_prompts"] = ["A richer grounded viewpoint"]
+                answer = VisualCorrection.model_validate({
+                    "resegmented_blocks": [],
+                    "replanned_blocks": [],
+                    "visual_patches": [change],
                 })
             else:
-                final = "OK"
+                raise AssertionError("Unexpected real-model phase.")
             usage = SimpleNamespace(
-                requests=1, input_tokens=100, output_tokens=50,
-                total_tokens=150, input_tokens_details=SimpleNamespace(cached_tokens=5),
+                requests=1, input_tokens=120, output_tokens=33,
+                total_tokens=153, input_tokens_details=SimpleNamespace(cached_tokens=4),
             )
-            if hooks is not None:
+            if hooks:
                 await hooks.on_llm_end(
                     SimpleNamespace(usage=usage), agent,
-                    SimpleNamespace(usage=usage, response_id="test-response",
-                                    request_id="test-request"),
+                    SimpleNamespace(usage=usage, response_id="offline"),
                 )
-            if fail_first_json and len(invocations) == 1:
-                raise FakeModelBehaviorError("Invalid JSON when parsing model output")
-            return SimpleNamespace(final_output=final, context_wrapper=SimpleNamespace(usage=usage))
+            if fail_first_json and requests == 1:
+                raise FakeModelBehaviorError("Invalid JSON")
+            return SimpleNamespace(
+                final_output=answer, context_wrapper=SimpleNamespace(usage=usage),
+            )
 
-    fake_agents = SimpleNamespace(
-        Agent=FakeAgent, Runner=FakeRunner, SQLiteSession=FakeSession,
-        function_tool=lambda function: function,
-        set_default_openai_key=lambda key: None,
+    monkeypatch.setitem(sys.modules, "agents", SimpleNamespace(
+        Agent=FakeAgent, Runner=FakeRunner,
         ModelBehaviorError=FakeModelBehaviorError,
-        ModelSettings=lambda **kwargs: SimpleNamespace(**kwargs),
         RunHooks=type("RunHooks", (), {}),
-    )
-    monkeypatch.setitem(sys.modules, "agents", fake_agents)
-    result = asyncio.run(run_professional_director(
-        script, output=tmp_path, avatar=b"PNG", ebook=None, model="test-model",
+        set_default_openai_key=lambda key: None,
     ))
-    expected_calls = 6 if fail_first_json else 5
-    assert len(invocations) == expected_calls
-    assert len({id(item[1]) for item in invocations}) == 1
-    assert all("Professional Director" in item[0].name for item in invocations)
-    assert all(item[0].model == "test-model" for item in invocations)
-    assert invocations[0][0].tools == []
-    assert invocations[0][0].model_settings.max_tokens == 8192
-    assert invocations[2 if fail_first_json else 1][0].tools == []
-    assert all(
-        tool.__name__ != "submit_plan_revision"
-        for tool in invocations[4 if fail_first_json else 3][0].tools
-    )
-    assert len(result["usage"]) == expected_calls
-    if fail_first_json:
-        assert result["usage"][0]["status"] == "invalid_structured_output"
-        assert result["usage"][0]["total_tokens"] == 150
-        assert (tmp_path / "agent_openai" / "01_groups_invalid_json_1.json").is_file()
-    assert result["validation"]["status"] == "passed"
+    outcome = asyncio.run(run_professional_director(
+        script, output=tmp_path, avatar=b"PNG", ebook=None, model="offline",
+    ))
+    assert outcome["validation"]["status"] == "passed"
+    expected = 4 + int(fail_first_json) + int(invented_ebook_cta or editorial_patch)
+    assert len(invocations) == expected
+    assert not any(call[0].output_type is str for call in invocations)
+    assert invocations[0][0].output_type is GroupProposal
+    assert invocations[1 + int(fail_first_json)][0].output_type is WholeScriptCuts
+    assert invocations[2 + int(fail_first_json)][0].output_type is WholeVideoVisuals
+    assert all(call[2] == 1 for call in invocations)
+    assert all(call[0].model == "offline" for call in invocations)
     if invented_ebook_cta:
-        initial = json.loads(
-            (tmp_path / "agent_openai" / "plan_initial.json").read_text()
-        )
-        assert any(
-            issue["rule_id"] == "CTA_COVER_UNAVAILABLE"
-            for issue in initial["validation"]["issues"]
-        )
-        assert not any(
-            beat.get("cta_group_id")
-            for block in result["projection"]["visual_plan"]["blocks"]
-            for beat in block["beats"]
-        )
-    phase2_request = invocations[2 if fail_first_json else 1][2]
-    assert "cover is NOT provided" in phase2_request[0]["content"][0]["text"]
-    saved = json.loads((tmp_path / "agent_openai" / "approved_plan.json").read_text())
-    assert saved["source_sha256"] == result["validation"]["source_sha256"]
-    assert result["projection"]["visual_plan"]["visual_style"] == "profesional"
+        initial = json.loads((tmp_path / "agent_openai" / "plan_initial.json").read_text())
+        assert "CTA_COVER_UNAVAILABLE" in {
+            e["rule_id"] for e in initial["validation"]["issues"]
+        }
+    assert (tmp_path / "agent_openai" / "phases" / "01_groups" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "02_beats" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "02_visuals" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "03_evaluation" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "05_delivery" / "output.json").is_file()
+    assert (tmp_path / "B1.1" / "output.json").is_file()
+    assert (tmp_path / "B1.2" / "block_1" / "output.json").is_file()
+    assert (tmp_path / "B1.2" / "merged_output.json").is_file()
+    assert (tmp_path / "B2" / "block_1" / "output.json").is_file()
+    assert (tmp_path / "B2" / "merged_output.json").is_file()
+    assert (tmp_path / "B2.1" / "review_output.json").is_file()
+    assert (tmp_path / "visual_plan.json").is_file()
+    assert not (tmp_path / "audio").exists()
+    assert not (tmp_path / "images").exists()
+    approved = json.loads((tmp_path / "agent_openai" / "approved_plan.json").read_text())
+    all_beats = [b for g in approved["plan"]["blocks"] for b in g["beats"]]
+    assert "".join(b["text"] for b in all_beats) == script
+    assert all(len(b["text"].strip()) <= 100 for b in all_beats)
+    assert len(outcome["usage"]) == expected
+    if fail_first_json:
+        assert outcome["usage"][0]["status"] == "invalid_json"
+        assert (tmp_path / "agent_openai" / "phases" / "01_groups"
+                / "failed_json_1.json").is_file()
+    if editorial_patch or invented_ebook_cta:
+        assert (tmp_path / "agent_openai" / "phases" / "04_correction"
+                / "attempt_1.json").is_file()
+
+
+def test_b11_and_valid_beats_survive_later_model_failure(tmp_path, monkeypatch):
+    script, groups, core, cuts, _choices = _fixture()
+
+    class FailingRunner:
+        @staticmethod
+        async def run(agent, payload, *, max_turns=1, hooks=None):
+            if agent.output_type is GroupProposal:
+                response = GroupProposal.model_validate({
+                    "narrative_core": core, "blocks": groups,
+                })
+            elif agent.output_type is WholeScriptCuts:
+                response = WholeScriptCuts.model_validate({
+                    "blocks": [{"block_id": 1, "cuts": cuts}],
+                })
+            else:
+                raise RuntimeError("model offline")
+            usage = SimpleNamespace(
+                requests=1, input_tokens=10, output_tokens=10,
+                total_tokens=20, input_tokens_details=SimpleNamespace(cached_tokens=0),
+            )
+            if hooks:
+                await hooks.on_llm_end(
+                    None, agent, SimpleNamespace(usage=usage, response_id="fake"),
+                )
+            return SimpleNamespace(final_output=response,
+                                   context_wrapper=SimpleNamespace(usage=usage))
+
+    monkeypatch.setitem(sys.modules, "agents", SimpleNamespace(
+        Agent=FakeAgent, Runner=FailingRunner,
+        ModelBehaviorError=FakeModelBehaviorError,
+        RunHooks=type("RunHooks", (), {}),
+        set_default_openai_key=lambda key: None,
+    ))
+    with pytest.raises(RuntimeError, match="02_visuals"):
+        asyncio.run(run_professional_director(
+            script, output=tmp_path, avatar=b"PNG", ebook=None, model="offline",
+        ))
+    assert (tmp_path / "B1.1" / "output.json").is_file()
+    assert (tmp_path / "B1.2" / "block_1" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases"
+            / "02_beats" / "output.json").is_file()
+    assert not (tmp_path / "B2" / "merged_output.json").exists()
 
 
 def test_feedback_accepts_text_or_markdown(tmp_path):
