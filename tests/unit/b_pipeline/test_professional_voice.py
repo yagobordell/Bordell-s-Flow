@@ -503,16 +503,45 @@ def test_runner_professional_waits_for_b2_and_never_starts_fish(tmp_path, monkey
     })
     steps = []
 
-    async def fake_b(_source, **kwargs):
-        kwargs["on_output"]("B1.1", None, b11.model_dump(mode="json"))
+    async def fake_director(source, **kwargs):
+        assert source == script.read_text(encoding="utf-8")
         steps.append("B2_done")
-        return SimpleNamespace(
-            b11=b11, b12=[SimpleNamespace(block_id=1)],
-            b2=[SimpleNamespace(blocks=[
-                SimpleNamespace(model_dump=lambda **_: _block())
-            ])],
-            visual_plan=lambda: {"visual_style": "profesional", "blocks": []},
-        )
+        beats = [
+            {
+                "beat_id": "1A", "text": "Hola, mundo. ", "beat_type": "orientation",
+                "visual_type": "media_image", "prompt": "An illustration of a greeting",
+                "video_prompt": None, "audio": False, "reference": False,
+            },
+            {
+                "beat_id": "1B", "text": "Esa ", "beat_type": "claim",
+                "visual_type": "media_image", "prompt": "A carefully chosen visual",
+                "video_prompt": None, "audio": False, "reference": False,
+            },
+            {
+                "beat_id": "1C", "text": "es la realidad.", "beat_type": "verdict",
+                "visual_type": "avatar", "prompt": None,
+                "video_prompt": None, "audio": True, "reference": False,
+            },
+        ]
+        block = {
+            **b11.blocks[0].model_dump(mode="json"), "beats": beats,
+        }
+        return {
+            "b11": b11,
+            "projection": {
+                "b2_merged": {"blocks": [block]},
+                "visual_plan": {
+                    "visual_style": "profesional", "narrative_core":
+                    b11.narrative_core.model_dump(mode="json"),
+                    "blocks": [block], "ebook_cta_groups": [],
+                },
+                "editor_plan": {"schema_version": "professional-editor-notes-v1",
+                                "blocks": []},
+            },
+            "usage": [{"phase": "01_groups", "input_tokens": 10,
+                       "output_tokens": 10, "total_tokens": 20}],
+            "validation": {"summary": {"avatar_percentage": 33.333}},
+        }
 
     async def fake_professional(**kwargs):
         steps.append("gemini_after_B2")
@@ -540,7 +569,9 @@ def test_runner_professional_waits_for_b2_and_never_starts_fish(tmp_path, monkey
     monkeypatch.setattr(runner.settings, "gemini_api_key", "test-gemini-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", None)
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_: object())
-    monkeypatch.setattr(runner, "run_b_pipeline", fake_b)
+    from ai_video_factory.agents.professional import runner as director_module
+
+    monkeypatch.setattr(director_module, "run_professional_director", fake_director)
     monkeypatch.setattr(runner, "generate_professional_audio", fake_professional)
     monkeypatch.setattr(runner, "_generate_audio", forbidden)
     monkeypatch.setattr(runner, "_generate_images", forbidden)
