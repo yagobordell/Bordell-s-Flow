@@ -17,6 +17,16 @@ B2.1, real presenter identity, coherent video-motion, CTA/ebook, screen and
 document, image-grid and Haiku rules to those SAME beats before responding.
 The choice of cut must support the photographed action, continuity and
 reveal; the choice of image must support its exact source narration.
+For each beat, resolve who performs or experiences the narrated event and
+which observable change the audience should see. For connected scene beats,
+choose a coherent sequence of camera views and preserve actor, prop and
+physical-state continuity. Use a shared media_image grid for successive
+photographable instants where visual conditioning is needed, and a video
+carrier for genuinely continuous motion. Reserve the speaking avatar for
+valuable direct-to-audience delivery; retain the original voice-over when
+the picture is B-roll. Identify significant narration-grounded headlines,
+warnings and memorable conclusions that merit precisely anchored editor
+overlays. Audit these decisions across the complete plan before submission.
 No forced shot count or beats-per-minute rate.
 
 Return a strict SparseDirection containing every original B1.1 group and
