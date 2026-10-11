@@ -168,7 +168,7 @@ def _b12_checkpoints(output: Path, blocks: list[dict[str, Any]],
 
 async def run_professional_director(
     script: str, *, output: Path, avatar: bytes, ebook: bytes | None,
-    model: str, memory_root: Path | None = None, max_corrections: int = 3,
+    model: str, memory_root: Path | None = None, max_corrections: int = 1,
     api_key: str | None = None,
 ) -> dict[str, Any]:
     """Full-script Professional pipeline, gate all downstream work on Python."""
@@ -538,7 +538,23 @@ async def run_professional_director(
 
     # 04: visual PATCHES, not a full replanning of every beat. A true
     # narrative recut must explicitly replace its group's cuts and visuals.
-    changed_review = review.issues
+    immutable_cta_ids = {
+        beat["beat_id"]
+        for group in (workspace.candidate or {}).get("blocks", [])
+        for beat in group["beats"]
+        if beat.get("cta_group_id") is not None
+    }
+    # An editorial note about a protected ebook segment cannot authorise
+    # removing or rewriting that segment. Preserve it as an auditable review
+    # finding, but do not spend further calls on an impossible correction.
+    read_only_review = [
+        finding for finding in review.issues
+        if finding.beat_id in immutable_cta_ids
+    ]
+    changed_review = [
+        finding for finding in review.issues
+        if finding.beat_id not in immutable_cta_ids
+    ]
     correction_attempts: list[dict[str, Any]] = []
     correction_feedback: list[dict[str, Any]] = []
     for index in range(max_corrections):
@@ -688,6 +704,9 @@ async def run_professional_director(
         "correction_attempts": correction_attempts,
         "resulting_validation": _compact_report(workspace.validate_plan()),
         "skipped_model_calls_when_no_issues": not correction_attempts,
+        "protected_cta_editorial_findings": [
+            f.model_dump(mode="json") for f in read_only_review
+        ],
     })
 
     # 05: Python-only release. A green result is never asserted by the LLM.
