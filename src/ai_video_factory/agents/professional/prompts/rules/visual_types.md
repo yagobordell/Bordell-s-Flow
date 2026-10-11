@@ -1,5 +1,74 @@
 # Professional carrier / speaking authority
 
+## Editorial carrier judgment — voice-over, story and human connection
+
+The presenter speaks the entire original script as the video's voice-over.
+The editor creates the accompanying visual story, using the presenter image
+to renew personal connection with the audience at meaningful intervals and
+using depicted material whenever the viewer benefits from seeing the story.
+First decide whether the shot's main contribution is unfolding time,
+static information, direct human communication, or complementary
+simultaneous communication. Then select the carrier:
+
+- **`media_video` — action in time.** Show source-grounded bodily action,
+  interaction, movement, changing expression, response, manipulation,
+  physical process or evolving consequence as a feasible moving shot. The
+  viewer should see what happens as it happens. Motion is a primary mode of
+  narrative B-roll, not a last resort after still images.
+- **`media_image` — meaningful stable view.** Give readable space and focus
+  to a still detail, object, evidence, fixed comparison, established state,
+  spatial relationship or composed concept. An image may isolate a crucial
+  observation within a surrounding moving sequence. Its multiple still
+  subshots provide distinct static views; they do not stand in for the
+  movement that defines an action.
+- **`avatar` — visible narrator connection.** Reintroduce the original
+  speaking presenter naturally as the human guide when the voice is
+  addressing the viewer, interpreting, teaching, evaluating, warning,
+  reassuring, posing a direct question, drawing conclusions or giving a
+  personal invitation. The presenter's screen presence is an active part
+  of the video's communication, not merely a technical speaking option.
+  When an explanation is better understood by watching its subject, the
+  narrator's voice continues over full-screen coverage.
+- **`avatar_media` — meaningful shared attention.** Show the original
+  speaking presenter with a supporting still when the simultaneous human
+  address and visible information genuinely strengthen each other, without
+  crowding material that needs full-screen inspection.
+
+Context determines what a shot must communicate: speech alone does not make
+an event the speaker's action, and a narrative `beat_type` does not prescribe
+its carrier. Direct connected views as a coherent sequence and let the
+narrator return naturally between filmed developments. Judge distribution
+and duration by editorial effectiveness across the whole video, without
+numerical targets or compulsory alternation.
+
+## Reference-frame continuity is independent of the carrier
+
+Treat connected generated assets from the same scene as one numbered grid
+whenever shared conditioning will improve continuity. The grid may include:
+
+- `media_image` stills,
+- `media_video` starting frames, and
+- `avatar_media` supporting stills.
+
+These assets may be separated by other beats and may mix carriers freely. The
+grid follows scene continuity and reveal order, not beat adjacency and not a
+single-carrier rule. A temporary `avatar` beat adds no generated cell, but it
+does not end or invalidate the same grid before and after that beat.
+
+Do not downgrade action to a still to make it "grid eligible". Keep actions as
+`media_video`, static information as `media_image`, simultaneous presenter-plus-
+visual moments as `avatar_media`, and direct-to-audience delivery as `avatar`.
+The grid organizes the continuity of generated assets across those decisions.
+
+
+Grid membership is expressed as logical asset labels such as `A1`, `A2`, `A3`.
+The letter identifies the continuity grid; the index identifies the asset's
+position inside that grid. Only continuities with at least two generated assets
+become grids. A single generated asset stays outside any grid.
+
+The following contracts describe how to encode an already-chosen carrier.
+They preserve existing source, audio, reference, image, grid and CTA limits.
+
 For OpenAI SparseDirection responses, the rules below describe the final
 Python-produced B2 carrier, NOT a request to emit nullable legacy fields.
 The model emits only carrier-specific beat fields and exact beat.text.

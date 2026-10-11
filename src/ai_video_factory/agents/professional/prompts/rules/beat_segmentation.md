@@ -10,17 +10,99 @@ current_block, worker, serialized text and per-block execution describe
 the inherited EDITORIAL TESTS only, not the present input/output format.
 Python verifies the model's source text and restores exact original source
 whitespace after receiving the WHOLE joint plan.
-The original semantic tests, hard limits and audience cadence
-take full precedence over generic guidance elsewhere.
+The inherited semantic tests, source-integrity rules and hard length limits
+remain binding. The specific professional shot-level pacing instructions
+below explain how to apply those tests to YouTube editing, not to cinematic
+script beats lasting for the entirety of a dramatic action.
 
-## Proven beat definition, action atomicity, cadence, five boundary tests — original B1.2 verbatim
+## Professional YouTube shot-level interpretation (applies to the complete script)
+
+**Beat = one planned editing shot, not a full dramatic action.** Each beat
+is one contiguous source-narration interval with a chosen visual carrier
+and a particular intelligible screen purpose. A dramatic event may be
+staged as a sequence of many beats: establishing the real participant,
+showing what they do, isolating a consequential object or detail,
+observing a reaction, and displaying the resulting state. Choose each
+boundary where a new **independently useful on-screen view or narrative
+delta** warrants a cut, while applying the inherited autonomous-impact,
+standalone-completeness, atomicity and source-length criteria. A change
+of sentence or grammar is not by itself such a reason; the source may
+support a different view within one continuing scene without changing
+scene, person, prop or action ownership.
+
+A causally connected event can require several independently meaningful
+shots while keeping the same people, objects and scene state coherent.
+Plan each shot for the narrative function of its corresponding original
+source interval. An unfolding action belongs to `media_video` as visible
+motion; a stable detail or readable piece of evidence belongs to
+`media_image`. If the source forms one semantically cohesive interval,
+preserve its beat and carrier. Additional `media_image` subshots support
+multiple useful *static* observations, not a replacement for temporal
+movement.
+
+**Rhythm is chosen at three scales:**
+
+- **Whole video:** sustain forward motion through hook, development,
+  renewed curiosity, consequential reveal and payoff. Alternate
+  stimulation with enough time for the viewer to understand important
+  images; pacing varies in response to what changes, not to a fixed
+  cuts-per-minute formula.
+- **B1.1 narrative group:** use `type` and `emotional_entry`/`emotional_exit`
+  as an editorial envelope for energy and direction. The six calibrated
+  functions and their pacing behavior are specified in
+  `phases/02_planning.md`. The group type sets intent, not a mandatory
+  number or duration of shots.
+- **Individual shot:** define one legible on-screen contribution; choose
+  the next cut when the viewer has received that contribution and the
+  following image has a different useful job. A readable comparison or
+  decisive result can deserve a sustained view; a quick tangible reveal
+  can be shown more briefly. Prefer clearly motivated variations over
+  both tedious static presentation and incoherent rapid microcuts.
+
+**Duration without fabricated timestamps:** the initial planning stage
+has source text and block context but no actual TTS/STT shot times.
+Infer only relative speaking extent, visual information density,
+moment-to-moment urgency and the action's visual needs. Characters or
+words are approximate narration volume, not a seconds clock. Preserve
+all existing `<=100` stripped-character and `<=40`-word hard limits and
+the original source-tiling and CTA contracts. Respect the independent
+action boundaries and cohesion tests; those tests protect useful shots,
+not long cinematic action units.
+
+**Multiple stills inside one beat:** a `media_image` beat can provide
+1–4 distinct static observations, as allowed by
+`rules/visual_types.md` and `rules/continuity_grids.md`; its source text
+and beat ID remain single. Temporal actions call for `media_video` footage,
+not an artificial movement reconstructed from still prompts. The actual
+narrated interval is split equitably between the images after STT alignment. Additional stills
+increase the number of on-screen shots without manufacturing short
+narration fragments or altering the underlying narrative beat count.
+Distinguish the **beat count** from the **visual change count**: adjacent
+base-avatar beats can be the same continuous picture, whereas one
+multi-image beat creates internal visual changes. Camera movement within
+a continuous `media_video` clip adds activity without a cut.
+
+**Source-guided shot decision:** for every proposed beat identify the
+exact source passage, the observable viewer-facing screen purpose, its
+relation to the preceding/following views, and why its cut point serves
+the current group's pacing. Resolve the subject's true identity, causal
+progression, continuity and physical state at the same time as the cut.
+Preserve cohesive rhetorical clusters that serve one shot; give
+independently stageable actions/reveals their own views when the source
+supports them. The visual plan and segmentation are one editorial
+decision, made in the same global model response.
+
+## Inherited B1.2: beat definition, action atomicity, cadence and boundary tests
 
 What a beat is
 A beat is the smallest contiguous source unit that produces one governing, semantically complete and independently representable narrative/visual impact at a natural viewing cadence. A valid beat must satisfy atomicity, standalone completeness and rhythmic cohesion. Atomicity is defined by the source event/message, not by sentence length, topic, scene, camera continuity, punctuation or word count.
 A normal beat carries one governing atomic impact: one operative action/instruction, one natural process, one state, one observable change, one reaction, one result, one claim/message, one question, one comparison/analogy, or one explanatory step. It may contain several short parallel clauses, repeated negatives, list items or sentence fragments when they jointly express that one governing rhetorical impact rather than successive staged events. It must also contain enough of the source wording to make that unit intelligible without borrowing a missing predicate, object, purpose or completion from an adjacent beat.
 Action atomicity
 An action beat normally contains exactly one independent operative action/instruction as its visual/narrative event. If the source gives a sequence of independently complete actions that are actually performed or instructed as successive stages, each action receives its own beat even when they share actor, object, purpose, sentence, scene, location, camera setup or beat_type. Do not treat rhetorical mentions of actions, repeated negatives or a negative/negative/affirmative parallel construction as successive operative actions merely because each clause contains a verb. A posture, immediate attention cue or subordinate continuation remains with the primary instruction when splitting it would create a fragment that is not a complete impact by itself. The only source-form exception is a compressed telegraphic cluster whose individual implied steps cannot be emitted as standalone beats without inventing omitted words; keep only the minimum such cluster together.
-Procedural shorthand can encode actions without repeating verbs, but do not manufacture standalone beats from isolated shorthand tokens. Split shorthand where the source itself supplies independently intelligible operative phrases when those operative phrases are present in the source. When the remaining source is a compressed tail such as cream, socks, bed., treat it as one telegraphic checklist/summary impact rather than as three separately executed actions; do not emit cream,, socks, and bed. as orphan beats. Likewise, a nominal inventory such as the file, the cream, the sun is one list/message unless the source explicitly assigns separate actions to its items.
+Procedural shorthand can encode actions without repeating verbs, but do not manufacture standalone beats from isolated shorthand tokens. Split shorthand where the source itself supplies independently intelligible operative phrases when those operative phrases are present in the source. When the remaining source is a compressed telegraphic tail, treat it
+as one checklist/summary impact instead of inventing independent
+actions for isolated terms. Likewise, a nominal inventory is one list/message unless
+the source itself assigns independent actions to its items.
 Several words or verbs may remain together when they form one complete operative moment rather than several independently complete steps. Manner, posture, perception, a short attention cue, or a non-deliberate physical consequence may stay with the primary event when it does not create another standalone impact. When a source action contains posture and its immediate attention cue as one operative event, keep them together; split only an independently complete subsequent action. Mutually exclusive alternatives joined by or may remain one beat when they are alternative ways to perform the same single instruction, not steps to perform in sequence.
 Non-action atomicity
 A non-action beat contains one governing independently representable message, state, reaction, change, result, question, comparison or explanatory step. Descriptive modifiers and short parallel propositions may stay with that unit when they collectively form one rhetorical assertion, contrast, enumeration or progression. Two genuinely autonomous moments must not be merged merely because they support the same topic.
@@ -110,7 +192,7 @@ Exactly one type describing the beat's narrative pulse. These 19 labels are exha
 - return — brings back earlier material with altered meaning.
 - transition — bridges into a new movement or future direction while carrying its own pulse.
 Never invent, substitute or emit another label. In particular, do not emit procedure, close, intro, development, climax, explanation, warning or any ad hoc type.
-Procedural instructions use action when action is their operative pulse. Do not emit isolated elliptical tokens such as cream, socks or bed as separate beats in a larger block; preserve them verbatim inside the smallest complete shorthand beat. Nominal inventories are not action merely because their items could be used procedurally. intro and close are block-level labels, not beat types.
+Procedural instructions use action when action is their operative pulse. Do not emit isolated elliptical tokens as separate beats in a larger block; preserve them verbatim inside the smallest complete shorthand beat. Nominal inventories are not action merely because their items could be used procedurally. intro and close are block-level labels, not beat types.
 For a normal beat, choose the type from the governing pulse of the beat itself, never from neighboring beats, block type or topic. When a compact rhetorical cluster is intentionally kept together, classify the cluster by its overall governing function; do not split it merely to give each short clause a separate beat_type.
 For a fragment created only by the 40-word rule that lacks an autonomous pulse, inherit the beat_type of the unsplit parent moment.
 If a source stretch contains more than one true independently staged atomic unit, split it even when adjacent units share the same beat_type; two consecutive action beats are valid and must not be merged merely because their type matches. Grammatically complete parallel micro-clauses inside one cohesive rhetorical cluster are not automatically multiple atomic units. Do not manufacture a new pulse merely because a technical length split divides one underlying moment.

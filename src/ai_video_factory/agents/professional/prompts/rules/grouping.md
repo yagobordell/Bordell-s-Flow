@@ -196,6 +196,73 @@ A script consisting of one block receives the type that best describes that bloc
 
 A local pivot, correction, reveal, reversal or climax inside a block remains part of that block when it serves the block's larger macro-function.
 
+### Editorial procedure for assigning the dominant block type
+
+Run this classification pass **after** the narrative spans are fixed. Compare
+every block with the complete script, its `narrative_core`, the preceding
+blocks and the subsequent movement. `type` describes the **job completed by
+the entire block**, not the presence of a keyword, isolated beat, emotion,
+camera treatment or local rhetorical flourish.
+
+1. State internally, in one concrete sentence, what understanding, stakes,
+   direction or resolution the viewer has gained when this block finishes.
+2. Identify the **dominant whole-block change**: opening the governing
+   question, advancing an already established direction, taking the
+   argument somewhere different, revising an earlier understanding,
+   delivering the consequential culmination, or landing the ending.
+3. Compare that change with the other blocks before selecting the label.
+   The first and last positions permit `intro` and `close`, respectively,
+   but their actual narrative jobs determine whether those labels fit.
+4. Check the neighboring labels as a coherent arc across the full script.
+   Reclassify a block when the supposed change is merely an internal beat
+   serving another dominant macro-function. Keep the actual block spans
+   unchanged during this type pass.
+
+### Distinguishing neighboring categories by their narrative effect
+
+- **`intro` versus `development`:** `intro` establishes the opening
+  contract with the audience: the initial question, situation, promise,
+  tension or frame required for the following progression. A first block
+  that already delivers a standalone established-line contribution may
+  instead be `development`. Opening position alone is not classification.
+- **`development` versus `pivot`:** `development` adds evidence, cases,
+  mechanisms or steps **along the governing line already in motion**.
+  `pivot` changes the line the audience must now follow: the governing
+  interpretation, question, direction or stakes become materially
+  different. A striking fact inside an otherwise continuous explanation
+  can still be `development`.
+- **`pivot` versus `correction`:** `pivot` primarily changes **where the
+  account is going**. `correction` primarily changes **what the audience
+  should now believe about a previously established account**. A correction
+  may redirect what follows, but classify by the block's central completed
+  contribution, not by its secondary consequences.
+- **`development`/`pivot`/`correction` versus `climax`:** `climax` is the
+  consequential proof, reveal, confrontation or payoff toward which the
+  whole narrative has been building. Relative consequence for the central
+  question matters more than loud language, dramatic vocabulary or a
+  local surprise. A decisive quiet demonstration may be the culmination;
+  a spectacular intermediate example may remain development.
+- **`climax` versus `close`:** `climax` delivers the decisive culmination;
+  `close` principally resolves, synthesizes, contextualizes or leaves the
+  intended final takeaway **after or instead of that culmination**. A last
+  block containing the actual decisive payoff may be `climax`; a final
+  synthesis is `close` when synthesis is its principal job.
+
+**Global classification audit:** Read the six-type sequence in source
+order. For every block, articulate evidence from its actual text for why
+its chosen type explains the whole contribution better than the nearest
+alternative. Check that `emotional_entry` and `emotional_exit` are
+consequences of the narration rather than labels used to manufacture the
+type. Assign no fixed quota, mandatory distribution, or artificial
+ordering of the six types. All labels must stay within the existing
+`BlockType` vocabulary and the established eligibility of `intro`/`close`.
+
+The resulting `type` is an editorial **rhythm input** to the later
+audiovisual-planning phase. Classify the narrative function accurately
+here; camera changes, individual beats, shot durations and visual carriers
+are decided later, using that type as context rather than as a preset cut
+rate. Do not add fields to the B1.1 result.
+
 ### emotional_entry / emotional_exit
 
 These fields describe the viewer state at the exact opening and exact ending of the already-determined block.
