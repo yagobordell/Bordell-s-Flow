@@ -1,8 +1,6 @@
 """Proof of actual ebook preflight, cross-beat grid and principled prompts."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from ai_video_factory.agents.professional.compat import project_professional_plan
@@ -137,4 +135,3 @@ def test_positive_direction_rules_and_carriers_are_visible_to_model():
     assert "Correct segmentation:" not in beat_prompt
     assert "Source:" not in beat_prompt
     assert "For example," not in beat_prompt
-    assert not Path("missing").exists()
