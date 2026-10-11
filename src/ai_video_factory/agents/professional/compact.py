@@ -51,11 +51,16 @@ class VideoBeat(BeatBase):
 SparseBeat = AvatarBeat | AvatarMediaBeat | ImageBeat | VideoBeat
 
 
+class NoteTrigger(StrictModel):
+    text: str
+    occurrence: int = Field(ge=1)
+
+
 class BeatNote(StrictModel):
     beat_id: str
     kind: str
     instruction: str
-    trigger: dict[str, str | int] | None
+    trigger: NoteTrigger | None
 
 
 class CTAAssignment(StrictModel):
@@ -77,13 +82,32 @@ class SparseDirection(StrictModel):
     blocks: list[SparseGroup] = Field(min_length=1)
 
 
-class SparseVisualPatch(StrictModel):
+class AvatarPatch(StrictModel):
     beat_id: str
-    visual: Literal["avatar", "avatar_media", "media_image", "media_video"]
-    prompt: str | None
-    video_prompt: str | None
-    image_prompts: list[str] | None
-    generation_mode: Literal["grid", "independent"] | None
+    visual_type: Literal["avatar"]
+
+
+class AvatarMediaPatch(StrictModel):
+    beat_id: str
+    visual_type: Literal["avatar_media"]
+    prompt: str = Field(min_length=1)
+
+
+class ImagePatch(StrictModel):
+    beat_id: str
+    visual_type: Literal["media_image"]
+    image_prompts: list[str] = Field(min_length=1, max_length=4)
+    generation_mode: Literal["grid", "independent"]
+
+
+class VideoPatch(StrictModel):
+    beat_id: str
+    visual_type: Literal["media_video"]
+    prompt: str = Field(min_length=1)
+    video_prompt: str = Field(min_length=1)
+
+
+SparseVisualPatch = AvatarPatch | AvatarMediaPatch | ImagePatch | VideoPatch
 
 
 class SparseCorrection(StrictModel):
@@ -205,22 +229,13 @@ def materialize_sparse_direction(
                     "message": "Editor note references an unknown beat.",
                 })
                 continue
-            trigger = note.trigger
-            if trigger is not None and (
-                set(trigger) != {"text", "occurrence"}
-                or not isinstance(trigger["text"], str)
-                or type(trigger["occurrence"]) is not int
-            ):
-                issues.append({
-                    "rule_id": "EDITOR_TRIGGER", "severity": "error",
-                    "block_id": block_id, "beat_ids": [note.beat_id],
-                    "message": "Trigger must have text and integer occurrence.",
-                })
-                continue
             notes.setdefault(note.beat_id, []).append({
                 "kind": note.kind,
                 "instruction": note.instruction,
-                "trigger": trigger,
+                "trigger": (
+                    note.trigger.model_dump(mode="json")
+                    if note.trigger is not None else None
+                ),
             })
         if issues:
             continue
@@ -312,19 +327,19 @@ def apply_sparse_correction(
                 "beat_id": beat.beat_id,
                 "text": beat.text,
                 "beat_type": beat.beat_type,
-                "visual_type": patch.visual,
+                "visual_type": patch.visual_type,
             }
-            if patch.visual in {"avatar_media", "media_video"}:
+            if patch.visual_type in {"avatar_media", "media_video"}:
                 values["prompt"] = patch.prompt
-            if patch.visual == "media_video":
+            if patch.visual_type == "media_video":
                 values["video_prompt"] = patch.video_prompt
-            if patch.visual == "media_image":
+            if patch.visual_type == "media_image":
                 values["image_prompts"] = patch.image_prompts
                 values["generation_mode"] = patch.generation_mode
             beat_type = {
                 "avatar": AvatarBeat, "avatar_media": AvatarMediaBeat,
                 "media_image": ImageBeat, "media_video": VideoBeat,
-            }[patch.visual]
+            }[patch.visual_type]
             beats.append(beat_type.model_validate(values))
         result.append(group.model_copy(update={"beats": beats}))
     return SparseDirection(blocks=result)
