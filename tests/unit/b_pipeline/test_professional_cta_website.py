@@ -351,3 +351,65 @@ def test_fused_professional_cta_encodes_once_with_exact_audio_and_frames(tmp_pat
 
     assert white_text_pixels("0.75") > white_text_pixels("0.25") + 150
     assert white_text_pixels("0.75") > white_text_pixels("1.25") + 150
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="FFmpeg and FFprobe required for actual compositor integration",
+)
+def test_professional_compositor_fuses_cta_with_final_encode(tmp_path):
+    import wave
+
+    from ai_video_factory.compositor.b_video import render_b2_ltx_video
+
+    avatar = tmp_path / "avatar.png"
+    media = tmp_path / "image.png"
+    qr = tmp_path / "qr.png"
+    audio_path = tmp_path / "master.wav"
+    Image.new("RGB", (1280, 720), (80, 80, 80)).save(avatar)
+    Image.new("RGB", (1280, 720), (100, 100, 100)).save(media)
+    Image.new("RGB", (100, 100), (255, 255, 255)).save(qr)
+    with wave.open(str(audio_path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(48000)
+        stream.writeframes(b"\\x00\\x00" * 48000)
+
+    timeline = {
+        "duration_seconds": 1.0,
+        "beats": [{
+            "beat_id": "1A", "block_id": 1,
+            "visual_type": "media_image",
+            "start_seconds": 0.0, "end_seconds": 1.0,
+            "qr_spoken_seconds": [0.25],
+        }],
+    }
+    images = {"items": [{
+        "block_id": 1, "beat_id": "1A", "file": media.name,
+        "sha256": sha256_file(media),
+    }]}
+    manifest = {
+        "avatar_file": avatar.name, "avatar_sha256": sha256_file(avatar),
+        "jobs": [],
+    }
+    audio = {"file": audio_path.name, "sha256": sha256_file(audio_path)}
+    plan = {
+        "ebook_cta_groups": [["1A"]],
+        "avatar": {"qr": {"sha256": sha256_file(qr)}},
+    }
+    run_dir = tmp_path / "video" / "runs" / "fused"
+    run_dir.mkdir(parents=True)
+    result = render_b2_ltx_video(
+        tmp_path, run_dir, timeline, [], manifest, images, audio,
+        cta_plan=plan,
+    )
+    assert result["file"] == "video/runs/fused/final.mp4"
+    assert not (run_dir / "with_ebook_qr.mp4").exists()
+    assert result["sha256"] == sha256_file(tmp_path / result["file"])
+    assert result["professional_ebook_qr"]["website_overlay"]["windows_seconds"] == [
+        [0.25, 1.0],
+    ]
+    assert result["fps"] == 24
+    assert result["beat_count"] == 1
+    assert result["rendered_duration_seconds"] == pytest.approx(1.0, abs=0.15)
+    assert result["composition_timings_seconds"]["final_encoding"] >= 0
