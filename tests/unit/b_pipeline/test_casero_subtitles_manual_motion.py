@@ -9,10 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.compositor.casero_subtitles import (
-    burn_casero_subtitles,
     _captions,
     _shift_around_cta,
     _subtitle_files,
+    burn_casero_subtitles,
 )
 from ai_video_factory.providers import avatar_cta_motion
 
