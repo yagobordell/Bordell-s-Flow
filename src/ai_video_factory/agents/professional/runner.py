@@ -94,10 +94,14 @@ def _direction_input(
             "visual_type, prompts, grids, editor notes and all required fields "
             "in EACH DirectedBeat. Do not type beat.text: Python derives it "
             "from the anchors after receiving your ENTIRE audiovisual plan. "
+            "Source-exact beat.text will be shown in the phase JSON by Python. "
             "Choose boundaries with the visual staging jointly, following "
             "the original complete B1.2 and B2 editorial rules, no arbitrary "
-            "pacing quotas. All beats must be <=100 stripped characters and "
-            "<=40 words.\n"
+            "pacing quotas. Each beat's exact contiguous source slice MUST be "
+            "<=100 stripped characters AND <=40 words. If one full sentence "
+            "exceeds either limit, cut at a natural clause without deleting "
+            "or rewriting any source words. Before responding, verify EVERY "
+            "beat length AND exact anchor against the input script.\n"
             + json.dumps({
                 "narrative_core": core, "groups": groups,
                 "ebook_cover_available": ebook is not None,
@@ -131,6 +135,59 @@ def _direction_input(
             ),
         })
     return [{"role": "user", "content": content}]
+
+
+def _readable_direction(
+    direction: WholeVideoDirection, boundaries: dict[str, Any],
+) -> dict[str, Any]:
+    """Compact phase view with source-exact narration on every resolved beat.
+
+    Unmatched anchors retain text=None: source content is never invented.
+    Raw agent outputs remain available in the internal diagnostic checkpoints.
+    """
+    resolved = {
+        beat["beat_id"]: beat["text"]
+        for block in boundaries.get("blocks", [])
+        for beat in block["beats"]
+    }
+    blocks: list[dict[str, Any]] = []
+    for group in direction.blocks:
+        beats: list[dict[str, Any]] = []
+        for beat in group.beats:
+            narration = resolved.get(beat.beat_id)
+            item: dict[str, Any] = {
+                "beat_id": beat.beat_id,
+                "text": narration,
+                "beat_type": beat.beat_type,
+                "visual_type": beat.visual_type,
+            }
+            if narration is None:
+                item["end_anchor"] = beat.end_anchor
+                item["occurrence"] = beat.occurrence
+            if beat.prompt is not None:
+                item["prompt"] = beat.prompt
+            if beat.video_prompt is not None:
+                item["video_prompt"] = beat.video_prompt
+            if beat.image_prompts:
+                item["image_prompts"] = beat.image_prompts
+            if beat.generation_mode == "grid":
+                item["generation_mode"] = "grid"
+            if beat.editor_notes:
+                item["editor_notes"] = [
+                    note.model_dump(mode="json", exclude_none=True)
+                    for note in beat.editor_notes
+                ]
+            if beat.cta_group_id is not None:
+                item["cta_group_id"] = beat.cta_group_id
+                if beat.cta_reference_sources:
+                    item["cta_reference_sources"] = beat.cta_reference_sources
+            if beat.reference:
+                item["reference"] = True
+            if beat.audio:
+                item["audio"] = True
+            beats.append(item)
+        blocks.append({"block_id": group.block_id, "beats": beats})
+    return {"blocks": blocks}
 
 
 def _compact_report(report: dict[str, Any]) -> dict[str, Any]:
@@ -419,9 +476,12 @@ async def run_professional_director(
     _save(_phase_file(root, "02_planning"), {
         "schema_version": "professional-phase-output-v1",
         "phase": "02_planning", "status": current["status"],
-        "output": joint_direction.model_dump(mode="json"),
-        "materialized_plan": current["plan"],
-        "boundary_validation": current["boundaries"],
+        "output": _readable_direction(joint_direction, current["boundaries"]),
+        "boundary_validation": {
+            "status": current["boundaries"]["status"],
+            "issues": current["boundaries"]["issues"],
+            "total_beats": current["boundaries"]["total_beats"],
+        },
         "validation": initial_report,
     })
     _save(root / "plan_initial.json", {
@@ -574,6 +634,9 @@ async def run_professional_director(
         "protected_cta_editorial_findings": [
             item.model_dump(mode="json") for item in readonly_findings
         ],
+        "proposed_plan": _readable_direction(
+            joint_direction, current["boundaries"],
+        ),
         "skipped_model_call_when_no_issues": not correction_attempts,
     })
 
@@ -582,7 +645,9 @@ async def run_professional_director(
     if current["status"] == "blocked" or current["plan"] is None:
         _save(_phase_file(root, "05_delivery"), {
             "status": "blocked", "validation": _compact_report(final_report),
-            "original_full_audiovisual_plan": joint_direction.model_dump(mode="json"),
+            "proposed_plan": _readable_direction(
+                joint_direction, current["boundaries"],
+            ),
         })
         _save(root / "blocked.json", {
             "validation": _compact_report(final_report),
