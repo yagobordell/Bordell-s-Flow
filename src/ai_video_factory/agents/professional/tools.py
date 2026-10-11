@@ -18,6 +18,7 @@ from ai_video_factory.agents.professional.validation import validate_groups, val
 class ProfessionalPlanWorkspace:
     script: str
     ebook_available: bool = True
+    expected_narrative_core: dict[str, Any] | None = None
     groups: list[dict[str, Any]] = field(default_factory=list)
     candidate: dict[str, Any] | None = None
     protected_cta_beats: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -51,6 +52,7 @@ class ProfessionalPlanWorkspace:
             self.script, self.groups, self.candidate,
             protected_cta_beats=self.protected_cta_beats,
             ebook_available=self.ebook_available,
+            expected_narrative_core=self.expected_narrative_core,
         )
         if self.report["status"] != "blocked":
             # Hard gate also includes ALL legacy downstream contracts and the
