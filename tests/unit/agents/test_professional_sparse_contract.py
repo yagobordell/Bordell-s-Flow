@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ai_video_factory.agents.professional.compact import (
     AvatarBeat,
     BeatNote,
@@ -157,3 +159,80 @@ def test_sparse_visual_patch_changes_only_visual_not_narration():
     assert corrected.blocks[0].beats[0].image_prompts == [
         "Actual new bank card close-up",
     ]
+
+
+def test_repeated_identical_phrases_resolve_without_skipping_or_duplication():
+    source = "No. No. No."
+    result = materialize_sparse_direction(
+        _group(source), _direction(
+            _beat("1A", "No."),
+            _beat("1B", "No."),
+            _beat("1C", "No.", kind="avatar"),
+        ), _core(),
+    )
+    assert result["status"] == "passed", result["issues"]
+    assert [beat["text"] for beat in result["plan"]["blocks"][0]["beats"]] == [
+        "No. ", "No. ", "No.",
+    ]
+
+
+def test_source_exact_but_mid_word_split_is_rejected():
+    result = materialize_sparse_direction(
+        _group("Pague hoy mismo."),
+        _direction(
+            _beat("1A", "Pa"),
+            _beat("1B", "gue hoy mismo.", kind="avatar"),
+        ),
+        _core(),
+    )
+    assert result["status"] == "blocked"
+    assert result["plan"] is None
+    assert "CUT_INSIDE_WORD" in {issue["rule_id"] for issue in result["issues"]}
+
+
+def test_missing_or_extra_source_blocks_never_produce_a_plan():
+    source = _group("First event.")
+    direction = _direction(_beat("1A", "First event.", kind="avatar"))
+    for missing in ([], source + [{"block_id": 2, "text": "Second event."}]):
+        result = materialize_sparse_direction(missing, direction, _core())
+        assert result["status"] == "blocked"
+        assert result["plan"] is None
+        assert "CUT_BLOCKS" in {issue["rule_id"] for issue in result["issues"]}
+
+
+def test_duplicate_cta_assignment_and_unknown_note_block_delivery():
+    source = _group("Scan the QR code now.")
+    owner = CTAAssignment(
+        beat_id="1A", cta_group_id=1, sources=["ebook"],
+    )
+    duplicated = _direction(_beat("1A", source[0]["text"]), cta=[owner, owner])
+    result = materialize_sparse_direction(source, duplicated, _core())
+    assert result["status"] == "blocked"
+    assert "CTA_BEAT" in {issue["rule_id"] for issue in result["issues"]}
+
+    bad_notes = _direction(
+        _beat("1A", source[0]["text"]),
+        notes=[BeatNote(
+            beat_id="1Z", kind="overlay", instruction="Missing ID", trigger=None,
+        )],
+    )
+    result = materialize_sparse_direction(source, bad_notes, _core())
+    assert result["status"] == "blocked"
+    assert "EDITOR_NOTE_BEAT" in {issue["rule_id"] for issue in result["issues"]}
+
+
+def test_duplicate_original_beat_ids_reject_ambiguous_visual_patch():
+    original = SparseDirection(blocks=[
+        SparseGroup(
+            block_id=1, beats=[_beat("1A", "First.")],
+            editor_notes=[], presenter_references=[], cta=[],
+        ),
+        SparseGroup(
+            block_id=2, beats=[_beat("1A", "Second.")],
+            editor_notes=[], presenter_references=[], cta=[],
+        ),
+    ])
+    with pytest.raises(ValueError, match="Duplicate original beat IDs"):
+        apply_sparse_correction(
+            original, SparseCorrection(replaced_groups=[], visual_patches=[]),
+        )
