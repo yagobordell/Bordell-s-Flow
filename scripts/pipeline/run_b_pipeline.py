@@ -3204,6 +3204,33 @@ async def main() -> None:
             expected_b11_calls=max(1, timings.call_count("B1.1")),
             expected_calls=expected_calls,
         )
+        # The existing legacy ledger does not price Agents SDK requests.
+        # Surface ALL observed tokens (also failed structured responses) without
+        # presenting an incorrect zero-dollar total as if the agent were free.
+        if visual_style == "profesional":
+            usage_file = output / "agent_openai" / "usage.json"
+            if usage_file.is_symlink():
+                raise RuntimeError("Unsafe Professional agent token-usage checkpoint.")
+            if usage_file.is_file():
+                saved_usage = json.loads(usage_file.read_text(encoding="utf-8"))
+                agent_phases = saved_usage.get("phases", [])
+                costs["professional_agent"] = {
+                    "input_tokens": sum(
+                        int(p.get("input_tokens", 0)) for p in agent_phases
+                    ),
+                    "output_tokens": sum(
+                        int(p.get("output_tokens", 0)) for p in agent_phases
+                    ),
+                    "total_tokens": sum(
+                        int(p.get("total_tokens", 0)) for p in agent_phases
+                    ),
+                    "model_calls": sum(
+                        int(p.get("requests", 0)) for p in agent_phases
+                    ),
+                    "estimated_cost_usd": None,
+                    "excluded_from_legacy_cost_estimate": True,
+                    "phases": agent_phases,
+                }
         timing_report = timings.report(
             run_seconds=resume_elapsed_offset + perf_counter() - run_started,
             status=status,
@@ -3743,7 +3770,7 @@ async def main() -> None:
     _print_metric(
         "Run",
         timing_report["run_elapsed_seconds"],
-        costs["estimated_total_usd"],
+        None if visual_style == "profesional" else costs["estimated_total_usd"],
     )
     _print_observed_salad_total(costs)
 
