@@ -50,15 +50,22 @@ the exact source spans afterwards. A retry is charged only for an invalid
 structured response or invalid source anchors. **No artificial max_tokens cap**
 is configured on ANY phase.
 
-Phase 2 is deliberately split into two global operations — NOT calls per block:
-(2a) the one logical director applies the complete original professional
-B1.2 beat-definition, semantic atomicity and YouTube viewing-cadence rules to
-the entire script, returning only exact end-phrase anchors and beat types.
-Python materializes all narration literally from the original script and
-requires every beat <=100 stripped characters and <=40 words. If 31 beats are
-too long, all 31 are rejected *before* a single expensive visual prompt call.
-(2b) after all beats are valid, the director chooses visual carriers and
-image/video/editor prompts over the whole video without reprinting beat text.
+Phase 2 consists of EXACTLY ONE global OpenAI audiovisual planning request:
+for every beat the SAME model response contains its original-script end anchor,
+beat_type, visual carrier, still/video image prompts, continuity grid mode,
+authentic CTA reference and source-anchored editor notes. The full original
+B1.2 narrative/YouTube rhythm methodology and all B2/B2.1 visual instructions
+are loaded TOGETHER. Narrative segmentation and cinematography are one creative
+decision, never independently planned in two model calls.
+
+Python subsequently reconstructs each immutable source beat and validates
+<=100 stripped characters, <=40 words, full source tiling, grid legality,
+audio/presenter ratio, CTA and strict B2 compatibility. On an invalid cut,
+the phase-02 output still contains the visual treatment the director chose
+for that cut. The single global correction can replace an affected group's
+source anchors AND visuals in the same structured correction, preserving every
+valid untouched group and source word. At no point is a beat-only output
+considered a completed audiovisual plan.
 
 The whole-video review receives the current plan and ONE compact Python report,
 not an SDK conversation containing every previous huge JSON/tool result.
@@ -94,10 +101,12 @@ legacy B2 and image-grid preflights pass.
   SDK call, including structured JSON failures.
 - `agent_openai/phases/01_groups/output.json`: complete phase 1 grouping,
   exact anchor validation and B1.1-compatible metadata.
-- `agent_openai/phases/02_planning/output.json`: complete phase 2 planning
-  and validation. Its subfolders `beats/` and `visuals/` hold the two
-  global model passes, exact source cuts, first visual plan and diagnostics.
-  These are **one logical editorial phase**, not separate independent bots.
+- `agent_openai/phases/02_planning/output.json`: complete original
+  joint beat+visual plan, with each source end anchor, beat taxonomy,
+  visual carrier, image/video prompts, continuity and editor notes IN THE SAME
+  beat object. The report contains exact source-materialization diagnostics,
+  even if the full integrated proposal is blocked. There are no `beats/`
+  and `visuals/` subpasses or separate model calls.
 - `agent_openai/phases/03_evaluation/output.json`: one complete-video
   editorial assessment and Python validation report.
 - `agent_openai/phases/04_correction/output.json`: all targeted correction
@@ -118,7 +127,7 @@ legacy B2 and image-grid preflights pass.
   The runner later adds avatar metadata and CTA placement references.
 
 **Checkpoints survive even when a later phase fails**: a bad visual generation
-cannot delete an already validated B1.1/B1.2 result. Each logical phase
+cannot delete an already validated B1.1 result. Each logical phase
 has an `output.json`, and B1.1/B1.2/B2 retain their familiar legacy
 paths. The managed run synchronizer copies the five phase outputs
 into `data/<avatar>/<script>/outputs/agent_openai/phases/`, including
@@ -179,9 +188,10 @@ does not create audio; resuming audio later requires valid voice and STT state.
 ## Global correction and visual-direction quality gate
 
 Phase 04 performs at most one global creative/structural correction by default
-after the phase-03 review. Its single structured answer may patch every
-affected beat and resegment explicitly necessary B1.2 groups, while Python
-verifies all agreed invariants. Further expensive creative retries are NOT
+after phase-03 review of the fully integrated phase-02 output. Its one
+DirectionCorrection response can replace an affected narrative group's
+beat boundaries AND all visual decisions together, or update visual fields
+of otherwise valid beats. Python then verifies all agreed invariants. Further expensive creative retries are NOT
 silently launched; unresolved issues remain available as failed phase outputs.
 A malformed JSON SDK reply may still use bounded transport retries.
 
