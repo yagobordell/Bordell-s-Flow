@@ -4,6 +4,7 @@ Mock-based unit tests cannot detect changed SDK constructors, response schemas,
 tool registration or sqlite session implementations. Run this with the same
 `uv --with openai-agents` overlay used by run.ps1.
 """
+# ruff: noqa: S101
 from __future__ import annotations
 
 import tempfile
