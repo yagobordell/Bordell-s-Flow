@@ -129,6 +129,7 @@ def _stats(phase: str, result: Any, seconds: float) -> dict[str, Any]:
 async def run_professional_director(
     script: str, *, output: Path, avatar: bytes, ebook: bytes | None,
     model: str, memory_root: Path | None = None, max_corrections: int = 2,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
     """Run five global phases, validate after each, and save compatible outputs.
 
@@ -136,13 +137,15 @@ async def run_professional_director(
     pipeline. A failed validation is a hard failure: no plan is published.
     """
     try:
-        from agents import Agent, Runner, SQLiteSession
+        from agents import Agent, Runner, SQLiteSession, set_default_openai_key
     except ImportError as exc:
         raise RuntimeError(
             "Missing OpenAI Agents SDK. Install openai-agents or use "
             "'uv run --with openai-agents --locked --extra dev'."
         ) from exc
 
+    if api_key:
+        set_default_openai_key(api_key)
     if not script.strip() or not avatar:
         raise ValueError("A complete raw script and an avatar PNG are mandatory.")
     if output.is_symlink() or output.is_junction():
