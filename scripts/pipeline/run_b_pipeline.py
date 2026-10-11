@@ -559,6 +559,7 @@ def select_visual_style(selected: str | None, *, interactive: bool | None = None
             raise SystemExit("Selección de estilo cancelada.")
         print("Introduce 1 o 2, o q para cancelar.")
 
+
 def select_casero_subtitles(requested: bool | None) -> bool:
     """Choose per-video subtitles, never a persistent avatar setting."""
     if requested is not None:
