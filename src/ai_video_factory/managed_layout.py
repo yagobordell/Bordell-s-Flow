@@ -144,10 +144,16 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
     staging = target / (".outputs-" + uuid4().hex + ".partial")
     staging.mkdir()
     try:
+        professional_agent = (work / "agent_openai").is_dir()
         for stage in ("B1.1", "B1.2", "B2", "B2.1", "B3", "CTA", "agent_openai"):
             folder = work / stage
             if folder.exists():
-                _copy_tree(folder, staging / stage)
+                destination = (
+                    staging / "_pipeline_compat" / stage
+                    if professional_agent and stage != "agent_openai"
+                    else staging / stage
+                )
+                _copy_tree(folder, destination)
         # V bots retain the old private checkpoint layout for safe recovery.
         # Publish the same user-facing stage layout as B1.1/B1.2/B2.
         for stage in ("V1", "V2", "V3", "V4"):
