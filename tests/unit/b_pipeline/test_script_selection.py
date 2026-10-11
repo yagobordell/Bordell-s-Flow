@@ -248,11 +248,15 @@ def test_list_scripts_does_not_require_api_key_or_start_inference(
     assert "roma.txt" in capsys.readouterr().out
 
 
-def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
+def test_selected_scripts_reach_professional_director_and_outputs_do_not_collide(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Whole scripts reach one Professional director; stop saves isolated checkpoints."""
+    from ai_video_factory.agents.professional import runner as director_module
+    from ai_video_factory.bots.contracts import B11Output
+
     folder = tmp_path / "input"
     avatars = tmp_path / "avatar"
     monk = _make_avatar(avatars, "monje.png")
@@ -260,157 +264,59 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     _make_script(folder, "roma.txt", b"  Uno.\r\n\r\nDos.  ")
     _make_script(folder, "japon.txt", b"Tres.\nCuatro.")
     args = Namespace(
-        visual_style="profesional",
-        script_file=None,
-        scripts_dir=folder,
-        script="roma.txt",
-        list_scripts=False,
-        avatars_dir=avatars,
-        avatar="monje.png",
-        list_avatars=False,
-        output=None,
-        max_parallel_calls=3,
-        from_stage="B1.1",
-        no_audio=True,
+        visual_style="profesional", script_file=None, scripts_dir=folder,
+        script="roma.txt", list_scripts=False, avatars_dir=avatars,
+        avatar="monje.png", list_avatars=False, output=tmp_path / "output",
+        max_parallel_calls=3, from_stage="B1.1", stop_stage="openai-agent",
+        no_audio=True, skip_images=False, images_only=False,
+        regenerate_audio=False, resume_audio=False, voice_id="Kore",
     )
     received: list[str] = []
-    streamed_stages: list[str] = []
-    printed_events: list[str] = []
-
-    def observe_metric(name: str, seconds: float, cost: object) -> None:
-        printed_events.append(name)
-        original_metric(name, seconds, cost)
-
-    original_metric = runner._print_metric
-
-    async def fake_run(
-        script: str,
-        *,
-        provider: object,
-        model: str,
-        max_parallel_calls: int,
-        on_input,
-        on_output,
-        on_api_response,
-        on_call_duration,
-        on_stage_duration,
-        on_stage_complete,
-        on_rejected_output,
-        on_rejected_b12_output,
-        on_rejected_b2_output,
-        on_rejected_b21_output,
-        visual_style,
-        enable_casero_cta,
-        avatar_image,
-        start_from,
-        stop_after,
-        previous_b11,
-        previous_b12,
-    ):
-        assert start_from == "B1.1"
-        assert stop_after == "B2.1"
-        assert previous_b11 is None and previous_b12 is None
-        assert callable(on_rejected_output)
-        assert callable(on_rejected_b12_output)
-        assert callable(on_rejected_b2_output)
-        assert callable(on_rejected_b21_output)
-        assert visual_style == "profesional"
-        assert enable_casero_cta is False
-        assert avatar_image.startswith(b"\x89PNG\r\n\x1a\n")
-        assert provider.reasoning_effort == "medium"
-        assert model == "gpt-6-luna"
-        assert max_parallel_calls == 3
-        received.append(script)
-        call_start = len(streamed_stages)
-        print_start = len(printed_events)
-        on_input("B1.1", None, {"plain_script_for_recording": script})
-        on_output("B1.1", None, {"pipeline_stage": "B1.1"})
-        on_input("B1.2", 1, {"current_block_id": 1, "blocks": [{"text": script}]})
-        on_output("B1.2", 1, {"pipeline_stage": "B1.2", "block_id": 1})
-        on_input("B2", 1, {"current_block_id": 1, "blocks": [{"beats": []}]})
-        on_output("B2", 1, {"pipeline_stage": "B2", "blocks": []})
-        on_input("B2.1", None, {"pipeline_stage": "B2", "blocks": []})
-        on_output("B2.1", None, {"pipeline_stage": "B2.1", "modified_beats": [], "error": None})
-        for stage, block_id in (
-            ("B1.1", None), ("B1.2", 1), ("B2", 1), ("B2.1", None)
-        ):
-            on_api_response(
-                stage,
-                block_id,
-                SimpleNamespace(
-                    id=f"resp_{stage}",
-                    model="gpt-6-luna",
-                    service_tier="default",
-                    usage=SimpleNamespace(
-                        input_tokens=100,
-                        input_tokens_details=SimpleNamespace(
-                            cached_tokens=0, cache_write_tokens=0
-                        ),
-                        output_tokens=20,
-                        output_tokens_details=SimpleNamespace(reasoning_tokens=5),
-                    ),
-                ),
-            )
-            on_call_duration(stage, block_id, 0.125)
-            on_stage_duration(stage, 0.250)
-            merged = (
-                None
-                if stage == "B1.1"
-                else {"pipeline_stage": "B2.1", "modified_beats": [], "error": None}
-                if stage == "B2.1"
-                else {"pipeline_stage": stage, "blocks": [{"block_id": 1, "beats": []}]}
-            )
-            on_stage_complete(stage, 1, merged)
-            streamed_stages.append(stage)
-            completed_this_run = streamed_stages[call_start:]
-            assert completed_this_run == [
-                "B1.1", "B1.2", "B2", "B2.1"
-            ][:len(completed_this_run)]
-            assert printed_events[print_start:] == completed_this_run
-            report_path = tmp_path / "output" / ("roma" if "Uno." in script else "japon")
-            partial = json.loads((report_path / "run_report.json").read_text(encoding="utf-8"))
-            assert partial["run"]["status"] == "running"
-            expected_avatar = "monje.png" if "Uno." in script else "maestra.png"
-            assert partial["run"]["avatar"]["filename"] == expected_avatar
-            assert partial["run"]["avatar"]["file"] == "avatar.png"
-            assert (report_path / "avatar.png").is_file()
-            assert partial["api_costs"]["stages"][stage]["estimated_cost_usd"] == (
-                "0.00002000"
-            )
-            assert partial["timings"]["stages"][stage]["elapsed_seconds"] == 0.25
-        return SimpleNamespace(
-            b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
-            b12=[SimpleNamespace(block_id=1)],
-            b2=[],
-            visual_plan=lambda: {
-                "blocks": [{
-                    "beats": [
-                        {"beat_id": "1A", "visual_type": "avatar", "description": None},
-                        {"beat_id": "1B", "visual_type": "avatar_media", "description": "Mapa"},
-                    ]
-                }]
-            },
-            merged_b12_output=lambda: {
-                "pipeline_stage": "B1.2",
-                "blocks": [{"block_id": 1, "beats": []}],
-            },
-            merged_b2_output=lambda: {
-                "pipeline_stage": "B2",
-                "blocks": [{"block_id": 1, "beats": []}],
-            },
-        )
-
-    monkeypatch.setattr(runner, "parse_args", lambda: args)
-    monkeypatch.setattr(runner.settings, "openai_api_key", "fake-key")
-    monkeypatch.setattr(runner.settings, "openai_model", "gpt-6-luna")
-    monkeypatch.setattr(runner.settings, "openai_reasoning_effort", "medium")
-    monkeypatch.setattr(runner.settings, "output_dir", tmp_path / "output")
-    monkeypatch.setattr(runner, "OpenAIProvider", lambda **kwargs: SimpleNamespace(**kwargs))
-    monkeypatch.setattr(runner, "run_b_pipeline", fake_run)
-    monkeypatch.setattr(runner, "_print_metric", observe_metric)
-
-    # The QR provider is covered independently; keep this pipeline fixture offline.
+    original_scripts = ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro."]
     qr_png = _make_avatar(tmp_path, "fake_qr.png")
+
+    async def fake_director(source, **_kwargs):
+        received.append(source)
+        marker = "Dos." if "Uno." in source else "Cuatro."
+        boundary = source.index(marker)
+        text_parts = [source[:boundary], source[boundary:]]
+        core = {"central_question": "Which idea?", "final_answer": "The second."}
+        group = {
+            "block_id": 1, "type": "development", "emotional_entry": "curious",
+            "emotional_exit": "clear",
+            "span": {"first_words": source.strip().split()[0], "last_words": marker},
+        }
+        b11 = B11Output.model_validate({
+            "pipeline_stage": "B1.1", "narrative_core": core,
+            "blocks": [group], "error": None,
+        })
+        beats = [{
+            "beat_id": f"1{letter}", "text": fragment,
+            "beat_type": "claim", "visual_type": "media_image",
+            "prompt": f"One useful photograph {letter}",
+            "video_prompt": None, "audio": False, "reference": False,
+        } for letter, fragment in zip("AB", text_parts, strict=True)]
+        block = {**group, "beats": beats}
+        return {
+            "b11": b11,
+            "projection": {
+                "b2_merged": {"blocks": [block]},
+                "visual_plan": {
+                    "visual_style": "profesional", "narrative_core": core,
+                    "blocks": [block], "ebook_cta_groups": [],
+                },
+                "editor_plan": {"schema_version": "professional-editor-notes-v1",
+                                "blocks": []},
+            },
+            "usage": [
+                {"phase": f"0{i}_{name}", "input_tokens": 100,
+                 "output_tokens": 25, "total_tokens": 125}
+                for i, name in enumerate(
+                    ["groups", "planning", "evaluation", "correction", "delivery"], 1
+                )
+            ],
+            "validation": {"summary": {"avatar_percentage": 0.0}},
+        }
 
     def fake_avatar_qr(**_kwargs):
         data = qr_png.read_bytes()
@@ -421,147 +327,62 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             generator="segno",
         )
 
+    monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner.settings, "openai_api_key", "fake-key")
+    monkeypatch.setattr(runner.settings, "openai_model", "gpt-6-luna")
+    monkeypatch.setattr(runner.settings, "openai_reasoning_effort", "medium")
+    monkeypatch.setattr(runner.settings, "output_dir", tmp_path / "output")
+    monkeypatch.setattr(runner, "OpenAIProvider", lambda **kw: SimpleNamespace(**kw))
     monkeypatch.setattr(runner, "ensure_avatar_qr", fake_avatar_qr)
-
-    async def fake_images(destination, plan):
-        assert (destination / "B2" / "merged_output.json").is_file()
-        assert plan["avatar"]["file"] == "avatar.png"
-        return {
-            "model_id": "gpt-image-2.5-flare",
-            "items": [{"provider": "openai_direct"}],
-        }
-
-    monkeypatch.setattr(runner, "_generate_images", fake_images)
+    monkeypatch.setattr(director_module, "run_professional_director", fake_director)
+    monkeypatch.setattr(
+        runner, "_generate_images",
+        lambda *_args, **_kwargs: pytest.fail("Agent stop must not generate images"),
+    )
+    monkeypatch.setattr(
+        runner, "generate_professional_audio",
+        lambda *_args, **_kwargs: pytest.fail("Agent stop must not generate voice"),
+    )
 
     asyncio.run(runner.main())
-    previous_roma = tmp_path / "output" / "roma"
-    (previous_roma / "stale_previous_run.json").write_text("obsolete", encoding="utf-8")
-    args.script = "japon.txt"
-    args.avatar = "maestra.png"
-    asyncio.run(runner.main())
-    args.script = "roma.txt"
-    args.avatar = "monje.png"
-    asyncio.run(runner.main())
-
-    assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro.", "  Uno.\r\n\r\nDos.  "]
     first = tmp_path / "output" / "roma"
+    (first / "stale_previous_run.json").write_text("obsolete", encoding="utf-8")
+    args.script, args.avatar = "japon.txt", "maestra.png"
+    asyncio.run(runner.main())
+    args.script, args.avatar = "roma.txt", "monje.png"
+    asyncio.run(runner.main())
+
+    assert received == [original_scripts[0], original_scripts[1], original_scripts[0]]
     second = tmp_path / "output" / "japon"
     assert not (first / "stale_previous_run.json").exists()
     for destination in (first, second):
-        assert (destination / "B1.1" / "input.json").is_file()
         assert (destination / "B1.1" / "output.json").is_file()
-        assert (destination / "B1.2" / "block_1" / "input.json").is_file()
         assert (destination / "B1.2" / "block_1" / "output.json").is_file()
-        assert (destination / "B2" / "block_1" / "input.json").is_file()
         assert (destination / "B2" / "block_1" / "output.json").is_file()
-        assert (destination / "B2.1" / "input.json").is_file()
-        assert (destination / "B2.1" / "output.json").is_file()
+        assert (destination / "B2" / "merged_output.json").is_file()
+        assert (destination / "visual_plan.json").is_file()
+        assert (destination / "agent_openai" / "editor_plan.json").is_file()
         assert not (destination / "B3").exists()
-        b12_merged = json.loads(
-            (destination / "B1.2" / "merged_output.json").read_text(encoding="utf-8")
-        )
-        b2_merged = json.loads(
-            (destination / "B2" / "merged_output.json").read_text(encoding="utf-8")
-        )
-        b21_merged = json.loads(
-            (destination / "B2.1" / "merged_output.json").read_text(encoding="utf-8")
-        )
-        assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
-        assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
-        assert b21_merged == {
-            "pipeline_stage": "B2.1", "modified_beats": [], "error": None
-        }
-        consolidated = json.loads(
-            (destination / "run_report.json").read_text(encoding="utf-8")
-        )
-        assert consolidated["run"]["status"] == "completed"
-        assert consolidated["run"]["model"] == "gpt-6-luna"
-        assert consolidated["run"]["reasoning_effort"] == "medium"
-        assert consolidated["run"]["image_generation"] == {
-            "status": "completed",
-            "count": 1,
-            "model_id": "gpt-image-2.5-flare",
-            "openai_direct_count": 1,
-        }
-        assert consolidated["run"]["script_file"] == destination.name + ".txt"
+        assert not (destination / "audio").exists()
+        assert not (destination / "images").exists()
+        report = json.loads((destination / "run_report.json").read_text(encoding="utf-8"))
+        assert report["run"]["stopped_after"] == "openai-agent"
+        assert report["run"]["openai_agent"]["status"] == "completed"
+        assert report["run"]["openai_agent"]["avatar_percentage"] == 0.0
+        assert report["run"]["status"] == "completed"
         original_file = monk if destination == first else teacher
         expected_file = original_file.parent / original_file.stem / original_file.name
-        assert expected_file.is_file() and not original_file.exists()
-        avatar = consolidated["run"]["avatar"]
-        assert avatar["filename"] == expected_file.name
-        assert avatar["source"] == expected_file.as_posix()
-        assert avatar["file"] == "avatar.png"
-        assert avatar["sha256"] == hashlib.sha256(expected_file.read_bytes()).hexdigest()
-        assert avatar["width"] == 2 and avatar["height"] == 2
-        assert avatar["qr"]["url"] == "https://example.com/ebook"
-        assert avatar["qr"]["file"] == "qr.png"
-        assert avatar["qr"]["generator"] == "segno"
-        assert (destination / "qr.png").read_bytes() == qr_png.read_bytes()
-        assert (destination / "avatar.png").read_bytes() == expected_file.read_bytes()
+        assert expected_file.is_file()
         plan = json.loads((destination / "visual_plan.json").read_text(encoding="utf-8"))
-        assert plan["avatar"] == avatar
-        assert [beat["visual_type"] for beat in plan["blocks"][0]["beats"]] == [
-            "avatar", "avatar_media"
-        ]
-        assert "avatar" not in json.loads(
-            (destination / "B2" / "block_1" / "output.json").read_text(encoding="utf-8")
-        )
-        assert consolidated["api_costs"]["pricing_status"] == "complete"
-        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00008000"
-        timing = consolidated["timings"]
-        assert timing["status"] == "completed"
-        assert timing["run_elapsed_seconds"] >= 0
-        assert timing["stages"]["B1.2"]["elapsed_seconds"] == 0.25
-        assert timing["stages"]["B2"]["call_count"] == 1
-        assert timing["stages"]["B2.1"]["call_count"] == 1
-        for old_name in ("api_costs.json", "timings.json", ".b_pipeline_run.json"):
-            assert not (destination / old_name).exists()
-    assert json.loads((first / "B1.1" / "input.json").read_text(encoding="utf-8")) == {
-        "plain_script_for_recording": "  Uno.\r\n\r\nDos.  "
-    }
-    assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
-    terminal = capsys.readouterr().out
-    lines = terminal.splitlines()
-    assert len(lines) == 18
-    for offset in (0, 6, 12):
-        assert lines[offset:offset + 4] == [
-            "  B1.1 total: 0.250 s $0.00002000",
-            "  B1.2 total: 0.250 s $0.00002000",
-            "  B2 total: 0.250 s $0.00002000",
-            "  B2.1 total: 0.250 s $0.00002000",
-        ]
-        assert re.fullmatch(
-            r"  B2 images total: \d+\.\d{3} s \$0\.00000000",
-            lines[offset + 4],
-        ) is not None
-        assert re.fullmatch(
-            r"  Run total: \d+\.\d{3} s \$0\.00008000",
-            lines[offset + 5],
-        ) is not None
-    assert streamed_stages == ["B1.1", "B1.2", "B2", "B2.1"] * 3
-    assert printed_events == [
-        "B1.1", "B1.2", "B2", "B2.1", "B2 images", "Run"
-    ] * 3
-    assert "This token-based estimate is not an OpenAI invoice" not in terminal
-
-    # Skipping images still preserves the complete professional reviewed plan.
-    async def image_stage_must_not_run(_destination, _plan):
-        pytest.fail("--no-image must not invoke AI33 or the official OpenAI fallback")
-
-    monkeypatch.setattr(runner, "_generate_images", image_stage_must_not_run)
-    args.skip_images = True
-    asyncio.run(runner.main())
-    skipped_output = tmp_path / "output" / "roma"
-    assert (skipped_output / "B2" / "merged_output.json").is_file()
-    assert (skipped_output / "B2.1" / "merged_output.json").is_file()
-    assert not (skipped_output / "B3").exists()
-    assert (skipped_output / "visual_plan.json").is_file()
-    assert not (skipped_output / "images").exists()
-    skipped_report = json.loads(
-        (skipped_output / "run_report.json").read_text(encoding="utf-8")
-    )
-    assert skipped_report["run"]["status"] == "completed"
-    assert "image_generation" not in skipped_report["run"]
+        source = original_scripts[0] if destination == first else original_scripts[1]
+        assert "".join(
+            beat["text"] for block in plan["blocks"] for beat in block["beats"]
+        ) == source
+        assert plan["avatar"]["file"] == "avatar.png"
+        assert report["run"]["avatar"]["sha256"] == hashlib.sha256(
+            expected_file.read_bytes()
+        ).hexdigest()
+    assert "Cinco fases completadas" in capsys.readouterr().out
 
 
 def test_existing_direct_path_still_supported(tmp_path: Path) -> None:
