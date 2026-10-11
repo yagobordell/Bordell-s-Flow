@@ -7,6 +7,7 @@ generation requests (images, Gemini, GPU) are dispatched from this module.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -223,6 +224,14 @@ async def run_professional_director(
     })
     plan = await execute("02_planning", phase2, output_type=PlannedVideo)
     workspace.submit_plan_revision(plan.model_dump(mode="json", exclude_none=True))
+    # The first accepted CTA ownership snapshot is frozen for all corrections:
+    # a reviewer may not silently move or repaint an ebook promotion beat.
+    workspace.protected_cta_beats = {
+        beat["beat_id"]: copy.deepcopy(beat)
+        for block in workspace.candidate["blocks"]
+        for beat in block["beats"]
+        if beat.get("cta_group_id") is not None
+    }
     if plan.narrative_core.model_dump() != core:
         raise ValueError("Professional planning changed the B1.1 narrative core.")
     if ebook is None and any(
@@ -297,6 +306,8 @@ async def run_professional_director(
         previous = group_id
     if previous is not None:
         groups_seen.add(previous)
+    if groups_seen and groups_seen != set(range(1, len(groups_seen) + 1)):
+        raise ValueError("CTA groups must have consecutive IDs starting at 1.")
 
     await execute(
         "05_delivery",
