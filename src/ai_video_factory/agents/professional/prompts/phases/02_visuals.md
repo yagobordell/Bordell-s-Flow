@@ -33,8 +33,18 @@ media_image supports 1–4 distinct image prompts for ONE beat, rendered in
 equal-duration subsequences based on later STT frames. Non-CTA media_image
 of >=70 stripped source characters requires >=2 prompts. Avatar and
 avatar_media still have no multi-image list. CTA exceptions preserve their
-authentic ebook reference and compositor-owned QR/site overlays. If no real
-ebook cover is provided, NO ebook CTA metadata or imagined cover is allowed.
+authentic ebook reference and compositor-owned QR/site overlays. When the
+actual narration contains an ebook offer and the real cover is supplied,
+identify the entire spoken promotional passage as a contiguous protected
+CTA group, even across narrative block boundaries. The ebook and QR speech
+itself must be CTA-owned. All newly generated CTA image assets must be
+conditioned on the actual ebook cover using cta_reference_sources=["ebook"]
+(or ["presenter","ebook"] only when the supplied presenter is genuinely
+depicted). Reused avatar pixels require cta_reference_sources=[].
+Keep the CTA text, order, promotional facts and protected carrier rules
+exactly source-faithful. Without an actual ebook cover, the creative agent
+may plan only scripts with no real protected ebook promotion; do not invent
+or silently discard the source offer.
 
 For source-critical brands, matching numeric claims, and editorial headlines,
 prefer precise source-anchored postproduction overlays with authentic supplied
