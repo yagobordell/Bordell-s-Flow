@@ -23,13 +23,15 @@ _PHASE: dict[str, tuple[str, ...]] = {
     "01_groups": (
         "rules/grouping.md", "phases/01_groups.md", "memory/groups.md",
     ),
-    "02_planning": (
-        "rules/beat_segmentation.md", *_VISUAL,
-        "phases/02_planning.md", "memory/beats_visuals.md",
+    "02_beats": (
+        "rules/beat_segmentation.md",
+        "phases/02_beats.md", "memory/beats_visuals.md",
+    ),
+    "02_visuals": (
+        *_VISUAL, "phases/02_visuals.md", "memory/beats_visuals.md",
     ),
     "03_evaluation": (
-        "rules/beat_segmentation.md", *_VISUAL,
-        "phases/03_evaluation.md", "memory/beats_visuals.md",
+        *_VISUAL, "phases/03_evaluation.md", "memory/beats_visuals.md",
     ),
     "04_correction": (
         "rules/beat_segmentation.md", *_VISUAL,
