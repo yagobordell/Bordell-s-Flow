@@ -11,9 +11,9 @@ in the rules; never invent a target number of cuts, beats or seconds.
 
 The controller runs five LOGICAL phases over the SAME full script:
 1. B1.1 original global group delimitation; Python materializes verbatim.
-2. Global beat segmentation under ALL proven B1.2 tests; only once ALL
-   source beats pass Python, global visual/media/Haiku planning under the
-   complete B2 and B2.1 instructions.
+2. ONE global complete audiovisual plan: decide all source beat boundaries
+   and all corresponding B2/B2.1 visual and editor choices TOGETHER in
+   the same model response. Validate only after both are already planned.
 3. Whole-video editorial and deterministic evaluation.
 4. Explicit local visual patches or explicit complete replacements for
    resegmented blocks, never regenerating a valid whole-video plan to fix
