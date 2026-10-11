@@ -1,7 +1,9 @@
 # Phase 3 — whole-video editorial and mechanical review
 
-Read the COMPLETE original script from the unchanged beat.text values
-and the assembled visual decisions. Evaluate the chronological continuity
+Read the COMPLETE original script from materialized B1.1 group texts
+and the jointly proposed beat anchors AND visual decisions. Python may
+report invalid cuts before it can reconstruct every beat; each such
+segment still has its associated visual decision in the original proposal. Evaluate the chronological continuity
 of every live sequence as an actual edited YouTube film: each action should
 be owned by its real actor, consecutive stills should preserve the same
 character and object state where required, and each reveal should be
@@ -16,8 +18,10 @@ clarity/comprehension, dramatic changes, final payoff, natural avatar/visual
 handoffs, causal and human continuity, specificity, purposeful B-roll, scene
 feasibility, grid continuity, screen/document bans and Haiku overlay utility.
 
-Python has ALREADY validated the plan with deterministic rules and passes
-a compact rhythm map + concrete violations. There are NO tools to call:
+Python has ALREADY checked the combined audiovisual plan with
+deterministic rules and passes concrete violations. When cut materialization
+fails, evaluate the source and its already-proposed visuals TOGETHER rather
+than requesting an independent text-only segmentation. There are NO tools to call:
 the Python controller evaluates the full candidate exactly once before your
 review. Do not ask Python to re-echo a giant plan. Do not confuse shot count
 with narrative beat count: multiple images in media_image create additional
