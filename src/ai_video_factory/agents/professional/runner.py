@@ -236,7 +236,10 @@ async def run_professional_director(
             tools=[],
         )
         for attempt in range(corrections + 1):
-            print(f"\n  [OpenAI] Fase {stage}, intento {attempt + 1}/{corrections + 1}",
+            logical_phase = "02_planning" if stage in {"02_beats", "02_visuals"} else stage
+            subphase = stage.removeprefix("02_") if logical_phase == "02_planning" else None
+            label = logical_phase + (f" / {subphase}" if subphase else "")
+            print(f"\n  [OpenAI] Fase {label}, intento {attempt + 1}/{corrections + 1}",
                   flush=True)
             start = perf_counter()
             meter = Meter()
@@ -259,7 +262,7 @@ async def run_professional_director(
                 )
             except ModelBehaviorError:
                 entry = {
-                    "phase": stage, "status": "invalid_json",
+                    "phase": logical_phase, "subphase": subphase, "status": "invalid_json",
                     "attempt": attempt + 1,
                     "elapsed_seconds": round(perf_counter() - start, 3),
                     "calls": meter.calls,
@@ -279,7 +282,7 @@ async def run_professional_director(
                 continue
             except Exception as exc:
                 entry = {
-                    "phase": stage, "status": "failed",
+                    "phase": logical_phase, "subphase": subphase, "status": "failed",
                     "attempt": attempt + 1, "error": type(exc).__name__,
                     "calls": meter.calls,
                     "input_tokens": sum(x["input_tokens"] for x in meter.calls),
@@ -293,7 +296,8 @@ async def run_professional_director(
                     "agent_openai/usage.json. Nada enviado a generación."
                 ) from None
             metrics = {
-                "phase": stage, "status": "passed", "attempt": attempt + 1,
+                "phase": logical_phase, "subphase": subphase,
+                "status": "passed", "attempt": attempt + 1,
                 "seconds": round(perf_counter() - start, 3),
                 "requests": result.context_wrapper.usage.requests,
                 "input_tokens": result.context_wrapper.usage.input_tokens,
@@ -308,7 +312,7 @@ async def run_professional_director(
             usage.append(metrics)
             _save(root / "usage.json", {"phases": usage})
             print(
-                f"  [OpenAI {stage}] entrada={metrics['input_tokens']} "
+                f"  [OpenAI {label}] entrada={metrics['input_tokens']} "
                 f"salida={metrics['output_tokens']} "
                 f"total={metrics['total_tokens']} "
                 f"caché={metrics['cached_input_tokens']} "
@@ -404,7 +408,8 @@ async def run_professional_director(
         })
         raise ValueError(
             "No se han podido validar todos los beats ANTES de generar visuales. "
-            "Los fallos y límites están guardados en agent_openai/phases/02_beats."
+            "Los fallos y límites están guardados en "
+            "agent_openai/phases/02_planning/beats."
         )
 
     source_beats = cuts_validation["blocks"]
@@ -469,7 +474,8 @@ async def run_professional_director(
             if index == 1:
                 raise RuntimeError(
                     "Global visual correction still does not align with "
-                    "the validated B1.2 beats. See 02_visuals/repair_2.json."
+                    "the validated B1.2 beats. See "
+                    "02_planning/visuals/repair_2.json."
                 ) from None
             continue
         _save(_phase_file(root, "02_visuals",
@@ -489,7 +495,8 @@ async def run_professional_director(
                 mismatched_visual_blocks(source_beats, visuals),
         })
         raise ValueError(
-            "Visual alignment remains invalid; see 02_visuals/output.json."
+            "Visual alignment remains invalid; see "
+            "02_planning/visuals/output.json."
         )
     candidate = assemble_plan(
         narrative_core=core, source_beats=source_beats, visuals=visuals,
