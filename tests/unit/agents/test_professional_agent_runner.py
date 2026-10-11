@@ -200,9 +200,9 @@ def test_director_one_joint_plan_and_global_correction(
     assert phase2["output"]["blocks"][0]["beats"][0]["visual_type"] == "media_image"
     first = phase2["output"]["blocks"][0]["beats"][0]
     assert first["text"] == (
-        parts[0] + parts[1] if bad_cut else (
-            "This phrase is absent from the original source."
-            if missing_anchor else parts[0]
+        "This phrase is absent from the original source."
+        if missing_anchor else (
+            parts[0] + parts[1] if bad_cut else parts[0]
         )
     )
     assert "end_anchor" not in first
