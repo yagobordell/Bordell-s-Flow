@@ -210,7 +210,8 @@ def _validate_visual(
         elif visual == "avatar_media":
             if not isinstance(prompt, str) or not prompt.strip() or motion is not None or not audio:
                 issues.append(_issue(
-                    "AVATAR_MEDIA", "avatar_media needs one still-image prompt, no motion, audio=true.",
+                    "AVATAR_MEDIA", "avatar_media requires one still-image prompt, "
+                    "no motion and audio=true.",
                     block_id=block_id, beat_ids=[beat_id],
                 ))
         elif visual == "media_video":
