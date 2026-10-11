@@ -270,6 +270,10 @@ async def run_professional_director(
                 _save(root / "usage.json", {"phases": usage})
                 _save(_phase_file(root, stage, f"failed_json_{attempt + 1}.json"), entry)
                 if attempt == corrections:
+                    _save(_phase_file(root, stage), {
+                        "phase": stage, "status": "blocked",
+                        "error": "invalid_json", "attempts": corrections + 1,
+                    })
                     raise RuntimeError(
                         f"{stage}: respuesta JSON inválida tras "
                         f"{corrections + 1} intentos. Ver agent_openai/usage.json."
@@ -286,6 +290,10 @@ async def run_professional_director(
                 }
                 usage.append(entry)
                 _save(root / "usage.json", {"phases": usage})
+                _save(_phase_file(root, stage), {
+                    "phase": stage, "status": "failed",
+                    "error_type": type(exc).__name__, "usage": entry,
+                })
                 raise RuntimeError(
                     f"{stage} falló ({type(exc).__name__}); datos en "
                     "agent_openai/usage.json. Nada enviado a generación."
@@ -501,11 +509,16 @@ async def run_professional_director(
             beat.beat_id for group in correction.replaced_groups for beat in group.beats
         )
         replaced_ids = {group.block_id for group in correction.replaced_groups}
+        original_beat_groups = {
+            beat.beat_id: group.block_id
+            for group in joint_direction.blocks for beat in group.beats
+        }
         remaining_editorial = [
             {"rule_id": "EDITORIAL_ISSUE_UNADDRESSED",
              "message": item.problem, "beat_id": item.beat_id}
             for item in editable_findings
             if item.beat_id not in modified
+            and original_beat_groups.get(item.beat_id) not in replaced_ids
             and not (item.beat_id is None and (modified or replaced_ids))
         ]
         if remaining_editorial:
@@ -562,11 +575,6 @@ async def run_professional_director(
     # Both beats and visuals were planned TOGETHER, and both are valid.
     # Only NOW save the legacy B1.2 bridge, never as a false standalone plan.
     source_beats = current["boundaries"]["blocks"]
-    _b12_checkpoints(output, source_beats, core)
-    _save(root / "beats.json", {
-        "source_sha256": source_sha,
-        "narrative_core": core, "blocks": source_beats,
-    })
     workspace.protected_cta_beats = {
         beat["beat_id"]: copy.deepcopy(beat)
         for group in current["plan"]["blocks"]
@@ -579,6 +587,13 @@ async def run_professional_director(
         })
         raise ValueError("Professional director blocked at final protected CTA gate.")
     projection = workspace.deliver()
+    # Publish legacy B1.2 only when there is an approved whole AV plan,
+    # never as a standalone text-only planning deliverable.
+    _b12_checkpoints(output, source_beats, core)
+    _save(root / "beats.json", {
+        "source_sha256": source_sha,
+        "narrative_core": core, "blocks": source_beats,
+    })
     final_plan = workspace.candidate
     if final_plan is None or final_plan["narrative_core"] != core:
         raise ValueError("Professional planning changed the approved source core.")
