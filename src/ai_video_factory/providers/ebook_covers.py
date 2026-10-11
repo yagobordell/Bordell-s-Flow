@@ -166,17 +166,25 @@ def resolve_professional_ebook_covers(
             "Selecciona su portada auténtica antes de planificar el vídeo.",
             flush=True,
         )
-        try:
-            cover_name = input(
-                "  Nombre de la portada PNG en data/ (con o sin .png): "
-            ).strip()
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise ValueError("Selección de portada cancelada.") from exc
-        if cover_name.lower().endswith(".png"):
-            cover_name = cover_name[:-4]
-        if not cover_name:
-            raise ValueError("Es necesario indicar el nombre de la portada PNG.")
-        selected = (cover_name,)
+        while True:
+            try:
+                cover_name = input(
+                    "  Nombre de la portada PNG en data/ "
+                    "(con o sin .png; q para cancelar): "
+                ).strip()
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise ValueError("Selección de portada cancelada.") from exc
+            if cover_name.casefold() in {"q", "quit", "cancelar"}:
+                raise ValueError("Selección de portada cancelada.")
+            if cover_name.lower().endswith(".png"):
+                cover_name = cover_name[:-4]
+            try:
+                _safe_cover(data_dir, cover_name)
+            except ValueError as exc:
+                print(f"  [Profesional] {exc}", flush=True)
+                continue
+            selected = (cover_name,)
+            break
     return ensure_ebook_covers(
         avatar, data_dir=data_dir, names=selected, interactive=interactive,
     )
