@@ -135,3 +135,55 @@ def test_positive_direction_rules_and_carriers_are_visible_to_model():
     assert "Correct segmentation:" not in beat_prompt
     assert "Source:" not in beat_prompt
     assert "For example," not in beat_prompt
+
+
+def test_real_spoken_ebook_and_qr_beats_cannot_be_silently_unprotected():
+    script = "My ebook helps you remember. Scan the QR code to get it. Stay safe."
+    groups = [{
+        "block_id": 1, "type": "close",
+        "emotional_entry": "curiosity", "emotional_exit": "confidence",
+        "span": {
+            "first_words": "My ebook helps you remember.",
+            "last_words": "Stay safe.",
+        },
+    }]
+    texts = [
+        "My ebook helps you remember. ",
+        "Scan the QR code to get it. ",
+        "Stay safe.",
+    ]
+    beats = []
+    for index, text in enumerate(texts):
+        media = index < 2
+        beats.append({
+            "beat_id": f"1{chr(65 + index)}",
+            "beat_type": "claim" if media else "verdict",
+            "text": text,
+            "visual_type": "media_image" if media else "avatar",
+            "prompt": None, "video_prompt": None,
+            "reference": False, "audio": not media,
+            "editor_notes": [],
+            **({
+                "image_prompts": ["Authentic ebook-related still in a home."],
+                "generation_mode": "independent",
+            } if media else {}),
+        })
+    plan = {
+        "visual_style": "profesional",
+        "narrative_core": {
+            "central_question": "How to stay safe?",
+            "final_answer": "Remember the warning signs.",
+        },
+        "blocks": [{"block_id": 1, "beats": beats}],
+    }
+    report = validate_plan(script, groups, plan, ebook_available=True)
+    assert report["status"] == "blocked"
+    codes = {issue["rule_id"] for issue in report["issues"]}
+    assert "CTA_SPOKEN_ASSET_UNPROTECTED" in codes
+    assert "CTA_SPOKEN_OFFER_MISSING" in codes
+    for beat in beats[:2]:
+        beat["cta_group_id"] = 1
+        beat["cta_reference_sources"] = ["ebook"]
+        beat["reference"] = True
+    result = validate_plan(script, groups, plan, ebook_available=True)
+    assert result["status"] == "passed", result["issues"]
