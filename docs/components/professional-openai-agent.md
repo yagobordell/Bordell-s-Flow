@@ -41,6 +41,29 @@ invocation use:
 uv run --locked --with "openai-agents>=0.22,<0.24" --extra dev python scripts/pipeline/run_b_pipeline.py myscript.txt --style profesional --stop openai-agent --avatar AvatarName
 ```
 
+## Phase-one cost and ebook capability gate
+
+B1.1 now emits exactly one strict structured GroupProposal without model-side tool calls.
+The SDK is limited to one model turn for each B1.1 attempt; deterministic Python
+materializes and validates block boundaries. A second attempt is paid only
+if that previous attempt returned invalid JSON or invalid boundaries. Output
+tokens are bounded to 8192 for this phase. Groups passed into the global phase
+two do not repeat the full text of each materialized group: the original
+script is still supplied verbatim.
+
+Before making any paid request, the CLI announces whether a real ebook cover
+is available. With no cover, `cta_group_id` and ebook references are prohibited
+for all beats, including when the model guesses a promotional CTA. Python reports
+`CTA_COVER_UNAVAILABLE` as a correctable validation issue rather than
+throwing away the full paid phase-two result. This does not replace genuine
+ebook promotion: to produce an authentic ebook CTA, configure `--ebook-cover`
+or the avatar's saved ebook cover metadata before running.
+
+The deterministic validation includes a frozen B1.1 narrative_core comparison.
+No candidate plan is considered green until source tiling, narration length,
+carrier/audio limits, source-attached editor anchors, CTA/ebook gating and the
+legacy B2 and image-grid preflights pass.
+
 ## Phase logs and saved outputs
 
 - `agent_openai/usage.json` records tokens, cache hits, request count and wall time
