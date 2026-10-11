@@ -170,6 +170,13 @@ def _validate_visual(
                     block_id=block_id, beat_ids=[beat_id],
                     details={"characters": len(text.strip()), "image_prompts": len(validated)},
                 ))
+            if protected and beat.get("generation_mode") == "grid":
+                issues.append(_issue(
+                    "CTA_GRID_PROTECTED",
+                    "Protected CTA assets use one independent authentic "
+                    "reference image, never a continuity grid.",
+                    block_id=block_id, beat_ids=[beat_id],
+                ))
             if protected and len(validated) != 1:
                 issues.append(_issue(
                     "CTA_IMAGE_FROZEN", "CTA image beats keep one original image prompt.",
