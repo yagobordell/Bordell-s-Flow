@@ -279,6 +279,14 @@ def parse_args() -> argparse.Namespace:
         help="Stop after a stage; Profesional: --stop openai-agent ends after its five phases.",
     )
     parser.add_argument(
+        "--feedback-gpt", "--fedback-gpt", dest="feedback_gpt", metavar="TEXT_OR_@FILE",
+        help="Profesional: proponer ajustes de memoria a partir de un comentario o @feedback.md.",
+    )
+    parser.add_argument(
+        "--approve-gpt-feedback", type=Path, metavar="PROPOSAL_JSON",
+        help="Aprobar solo las nuevas notas de memoria, nunca modificar reglas automáticamente.",
+    )
+    parser.add_argument(
         "--skip-images",
         "--no-image",
         dest="skip_images",
@@ -321,6 +329,16 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
+    if args.feedback_gpt is not None or args.approve_gpt_feedback is not None:
+        if args.feedback_gpt is not None and args.approve_gpt_feedback is not None:
+            parser.error("Choose feedback proposal OR approval, not both.")
+        if (
+            args.stop_stage is not None or args.images_only or args.videos_only
+            or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
+            or args.skip_images or args.no_audio or args.no_video or args.publish_only
+            or args.youtube_only or args.qr_only or args.replace_professional_voice
+        ):
+            parser.error("Feedback mode cannot be combined with generation flags.")
     if args.replace_professional_voice and (
         args.voice_id is None or args.voice_audio is not None or args.default_voice
         or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
@@ -2681,6 +2699,36 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
+    if args.feedback_gpt is not None or args.approve_gpt_feedback is not None:
+        from ai_video_factory.agents.professional.feedback import (
+            approve_feedback, propose_feedback,
+        )
+
+        output_root = args.output if args.output is not None else settings.output_dir
+        output = output_root / script_file.stem
+        report_file = output / "run_report.json"
+        if report_file.is_symlink() or not report_file.is_file():
+            raise SystemExit("Feedback needs an existing saved Professional run.")
+        saved_report = json.loads(report_file.read_text(encoding="utf-8"))
+        if saved_report.get("run", {}).get("visual_style") != "profesional":
+            raise SystemExit("Feedback is available only for Profesional.")
+        memory_root = args.avatars_dir / "_professional_gpt_memory"
+        if args.approve_gpt_feedback is not None:
+            applied = approve_feedback(
+                args.approve_gpt_feedback, output=output, memory_root=memory_root,
+            )
+            print("  Feedback approved: " + json.dumps(applied, ensure_ascii=False))
+        else:
+            if not settings.openai_api_key:
+                raise SystemExit("OPENAI_API_KEY is required for GPT feedback.")
+            text = script_file.read_text(encoding="utf-8")
+            path = await propose_feedback(
+                argument=args.feedback_gpt, output=output, script=text,
+                model=settings.openai_model,
+            )
+            print(f"  Feedback proposal ready for review: {path}")
+            print(f"  Apply: --approve-gpt-feedback {path}")
+        return
     if getattr(args, "youtube_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         output = output_root / script_file.stem
@@ -3315,6 +3363,7 @@ async def main() -> None:
                 script, output=output, avatar=avatar_bytes,
                 ebook=covers.files[0].read_bytes() if covers is not None else None,
                 model=settings.openai_model,
+                memory_root=args.avatars_dir / "_professional_gpt_memory",
             )
             director_blocks = directed["projection"]["b2_merged"]["blocks"]
             b11 = directed["b11"]
