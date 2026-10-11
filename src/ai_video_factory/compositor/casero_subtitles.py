@@ -117,7 +117,16 @@ def _captions(groups: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
                 if piece.endswith((".", "!", "?", ";", ":")):
                     _flush_caption(pending, captions)
         _flush_caption(pending, captions)
-    return captions
+    # Whisper can return overlapping/zero-length word intervals. Ensure
+    # adjacent events never appear simultaneously as two visual lines.
+    normalized = []
+    for index, caption in enumerate(captions):
+        start, end = caption["start"], caption["end"]
+        if index + 1 < len(captions):
+            end = min(end, captions[index + 1]["start"])
+        if end > start:
+            normalized.append({**caption, "end": end})
+    return normalized
 
 
 def _srt_time(seconds: float) -> str:
