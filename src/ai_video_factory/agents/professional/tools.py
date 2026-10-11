@@ -50,6 +50,26 @@ class ProfessionalPlanWorkspace:
             self.script, self.groups, self.candidate,
             protected_cta_beats=self.protected_cta_beats,
         )
+        if self.report["status"] != "blocked":
+            # Hard gate also includes ALL legacy downstream contracts and the
+            # image-grid planner. A green narrative validator alone is unsafe.
+            from ai_video_factory.providers.image_grids import GridPlanError
+
+            try:
+                project_professional_plan(
+                    self.script, self.groups, self.candidate,
+                    protected_cta_beats=self.protected_cta_beats,
+                )
+            except (ValueError, TypeError, GridPlanError) as exc:
+                self.report["issues"].append({
+                    "rule_id": "DOWNSTREAM_PREFLIGHT",
+                    "severity": "error",
+                    "message": str(exc),
+                    "block_id": None,
+                    "beat_ids": [],
+                    "details": {},
+                })
+                self.report["status"] = "blocked"
         return copy.deepcopy(self.report)
 
     def get_rhythm_map(self) -> dict[str, Any]:
