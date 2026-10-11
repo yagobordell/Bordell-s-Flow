@@ -56,9 +56,13 @@ def fixture_source():
     return script, blocks, core, beats
 
 
-def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch):
+@pytest.mark.parametrize("fail_first_json", [False, True])
+def test_real_five_phase_controller_uses_one_agent_session(
+    tmp_path, monkeypatch, fail_first_json,
+):
     script, blocks, core, beats = fixture_source()
     invocations = []
+    FakeModelBehaviorError = type("ModelBehaviorError", (Exception,), {})
 
     class FakeRunner:
         @staticmethod
@@ -89,13 +93,15 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
                     SimpleNamespace(usage=usage, response_id="test-response",
                                     request_id="test-request"),
                 )
+            if fail_first_json and len(invocations) == 1:
+                raise FakeModelBehaviorError("Invalid JSON when parsing model output")
             return SimpleNamespace(final_output=final, context_wrapper=SimpleNamespace(usage=usage))
 
     fake_agents = SimpleNamespace(
         Agent=FakeAgent, Runner=FakeRunner, SQLiteSession=FakeSession,
         function_tool=lambda function: function,
         set_default_openai_key=lambda key: None,
-        ModelBehaviorError=type("ModelBehaviorError", (Exception,), {}),
+        ModelBehaviorError=FakeModelBehaviorError,
         ModelSettings=lambda **kwargs: SimpleNamespace(**kwargs),
         RunHooks=type("RunHooks", (), {}),
     )
@@ -103,14 +109,22 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
     result = asyncio.run(run_professional_director(
         script, output=tmp_path, avatar=b"PNG", ebook=None, model="test-model",
     ))
-    assert len(invocations) == 5  # all five global stages, including creative correction
+    expected_calls = 6 if fail_first_json else 5
+    assert len(invocations) == expected_calls
     assert len({id(item[1]) for item in invocations}) == 1
     assert all("Professional Director" in item[0].name for item in invocations)
     assert all(item[0].model == "test-model" for item in invocations)
     assert any(tool.__name__ == "submit_groups" for tool in invocations[0][0].tools)
-    assert invocations[1][0].tools == []
-    assert all(tool.__name__ != "submit_plan_revision" for tool in invocations[3][0].tools)
-    assert len(result["usage"]) == 5
+    assert invocations[2 if fail_first_json else 1][0].tools == []
+    assert all(
+        tool.__name__ != "submit_plan_revision"
+        for tool in invocations[4 if fail_first_json else 3][0].tools
+    )
+    assert len(result["usage"]) == expected_calls
+    if fail_first_json:
+        assert result["usage"][0]["status"] == "invalid_structured_output"
+        assert result["usage"][0]["total_tokens"] == 150
+        assert (tmp_path / "agent_openai" / "01_groups_invalid_json_1.json").is_file()
     assert result["validation"]["status"] == "passed"
     saved = json.loads((tmp_path / "agent_openai" / "approved_plan.json").read_text())
     assert saved["source_sha256"] == result["validation"]["source_sha256"]
