@@ -10,6 +10,10 @@ import re
 from hashlib import sha256
 from typing import Any
 
+from ai_video_factory.agents.professional.preflight import (
+    is_explicit_ebook_cta_anchor,
+    requires_ebook_cover,
+)
 from ai_video_factory.bots.contracts import BeatType, BlockMeta
 from ai_video_factory.bots.workflow import materialize_blocks
 
@@ -366,6 +370,8 @@ def validate_plan(
         current_run = []
 
     protected_cta_beats = protected_cta_beats or {}
+    authentic_cta_required = requires_ebook_cover(script)
+    cta_covered_anchors: list[str] = []
     for group, block in zip(materialized, blocks, strict=True):
         block_id = group["block_id"]
         if not isinstance(block, dict) or block.get("block_id") != block_id:
@@ -426,6 +432,17 @@ def validate_plan(
                 ))
             reconstructed += text
             protected = beat.get("cta_group_id") is not None
+            if authentic_cta_required and is_explicit_ebook_cta_anchor(text):
+                if not protected:
+                    issues.append(_issue(
+                        "CTA_SPOKEN_ASSET_UNPROTECTED",
+                        "The source explicitly promotes an ebook/QR. "
+                        "The spoken offer beat needs the authentic ebook CTA "
+                        "classification and image reference.",
+                        block_id=block_id, beat_ids=[beat_id],
+                    ))
+                else:
+                    cta_covered_anchors.append(beat_id)
             if protected and not ebook_available:
                 issues.append(_issue(
                     "CTA_COVER_UNAVAILABLE",
@@ -498,6 +515,13 @@ def validate_plan(
         cursor += len(group["text"])
     finish_run()
 
+    if authentic_cta_required and not cta_covered_anchors:
+        issues.append(_issue(
+            "CTA_SPOKEN_OFFER_MISSING",
+            "The source contains a real ebook QR promotion but the "
+            "submitted audiovisual plan does not classify its spoken "
+            "promotional beats as an authentic ebook CTA.",
+        ))
     missing_protected = set(protected_cta_beats) - all_ids
     if missing_protected:
         issues.append(_issue(
