@@ -393,6 +393,29 @@ async def run_professional_director(
         return material
 
     current = check_direction(joint_direction)
+    # Protect the source-backed authentic ebook passage across the correction
+    # phase, not only AFTER correction. A correct CTA cannot be silently
+    # relabeled, rearranged or visually replaced during later review.
+    if ebook is not None and current["plan"] is not None:
+        from ai_video_factory.agents.professional.preflight import (
+            requires_ebook_cover,
+        )
+
+        if requires_ebook_cover(script):
+            protected = {
+                beat["beat_id"]: copy.deepcopy(beat)
+                for group in current["plan"]["blocks"]
+                for beat in group["beats"]
+                if beat.get("cta_group_id") is not None
+            }
+            if protected and not any(
+                issue["rule_id"] in {
+                    "CTA_COVER_UNAVAILABLE",
+                    "CTA_SPOKEN_ASSET_UNPROTECTED",
+                    "CTA_SPOKEN_OFFER_MISSING",
+                } for issue in current["issues"]
+            ):
+                workspace.protected_cta_beats = protected
     initial_report = _compact_report(current["validation"])
     _save(_phase_file(root, "02_planning"), {
         "schema_version": "professional-phase-output-v1",
