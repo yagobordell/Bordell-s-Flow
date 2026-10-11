@@ -21,7 +21,7 @@ from agents import (
 )
 from agents.agent_output import AgentOutputSchema
 
-from ai_video_factory.agents.professional.runner import PlannedVideo
+from ai_video_factory.agents.professional.runner import GroupProposal, PlannedVideo
 from ai_video_factory.agents.professional.tools import (
     ProfessionalPlanWorkspace,
     build_agents_sdk_tools,
@@ -30,7 +30,7 @@ from ai_video_factory.bots.contracts import B11Output
 
 
 def check() -> None:
-    for output_type in (B11Output, PlannedVideo):
+    for output_type in (GroupProposal, B11Output, PlannedVideo):
         schema = AgentOutputSchema(output_type)
         assert schema.is_strict_json_schema()
         body = schema.json_schema()
