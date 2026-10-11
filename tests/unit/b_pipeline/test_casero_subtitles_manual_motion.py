@@ -363,5 +363,5 @@ def test_quick_adjacent_stt_words_cannot_create_overlapping_captions() -> None:
     ]
     cues = _captions([words])
     assert len(cues) == 3
-    assert all(left["end"] <= right["start"] for left, right in zip(cues, cues[1:]))
+    assert all(left["end"] <= right["start"] for left, right in zip(cues, cues[1:], strict=False))
     assert all(cue["end"] > cue["start"] for cue in cues)
