@@ -12,11 +12,11 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from ai_video_factory.agents.professional.direction import (
-    DirectedBeat as LegacyDirectedBeat,
-    DirectedGroup as LegacyDirectedGroup,
-    WholeVideoDirection as LegacyWholeVideoDirection,
-    materialize_direction,
+from ai_video_factory.agents.professional.visuals import (
+    VisualChoice,
+    VisualGroup,
+    WholeVideoVisuals,
+    assemble_plan,
 )
 from ai_video_factory.bots.contracts import BeatType, StrictModel
 
@@ -180,14 +180,22 @@ def materialize_sparse_direction(
     direction: SparseDirection,
     core: dict[str, Any],
 ) -> dict[str, Any]:
-    """Deterministically normalize a sparse model response into existing B2."""
+    """Build source-exact visuals even if beat lengths need editorial repair.
+
+    Structural/source mismatches prevent assembly. A fully tiled source is
+    assembled without legacy end anchors so downstream Python validators can
+    report avatar runs, ratio, image splits, and genuine ebook CTA defects in
+    the *same* round as beat length errors. No automatic cuts or rewrites.
+    """
     issues: list[dict[str, Any]] = []
+    boundary_issues: list[dict[str, Any]] = []
+    source_blocks: list[dict[str, Any]] = []
+    visual_blocks: list[VisualGroup] = []
     if len(groups) != len(direction.blocks):
         issues.append({
             "rule_id": "CUT_BLOCKS", "severity": "error",
             "message": "Every source group must be present exactly once.",
         })
-    legacy_groups: list[LegacyDirectedGroup] = []
     for source, group in zip(groups, direction.blocks, strict=False):
         block_id = source["block_id"]
         if group.block_id != block_id:
@@ -250,24 +258,39 @@ def materialize_sparse_direction(
             })
         if issues:
             continue
-        converted: list[LegacyDirectedBeat] = []
+        source_beats: list[dict[str, Any]] = []
+        visual_choices: list[VisualChoice] = []
+        position = 0
         for beat, original in zip(group.beats, original_texts, strict=True):
+            length = len(original.strip())
+            words = len(original.split())
+            if length > 100 or words > 40:
+                boundary_issues.append({
+                    "rule_id": "BEAT_LENGTH", "severity": "error",
+                    "beat_ids": [beat.beat_id], "block_id": block_id,
+                    "message": (
+                        f"Beat has {length} stripped characters and {words} words "
+                        "(max 100 chars, 40 words). Choose semantic source cuts."
+                    ),
+                    "source_start": position,
+                    "source_end": position + len(original),
+                })
+            position += len(original)
+            source_beats.append({
+                "beat_id": beat.beat_id, "text": original,
+                "beat_type": beat.beat_type,
+            })
             owner = cta.get(beat.beat_id)
             kind = beat.visual_type
             sources = list(owner.sources) if owner else None
-            is_reference = (
-                beat.beat_id in group.presenter_references
-                or bool(sources)
-            )
             fields: dict[str, Any] = {
                 "beat_id": beat.beat_id,
-                "end_anchor": original.rstrip(),
-                "occurrence": 1,
-                "beat_type": beat.beat_type,
                 "visual_type": kind,
                 "prompt": getattr(beat, "prompt", None),
                 "video_prompt": getattr(beat, "video_prompt", None),
-                "reference": is_reference,
+                "reference": (
+                    beat.beat_id in group.presenter_references or bool(sources)
+                ),
                 "audio": kind in ("avatar", "avatar_media"),
                 "image_prompts": getattr(beat, "image_prompts", None),
                 "generation_mode": getattr(beat, "generation_mode", None),
@@ -275,21 +298,42 @@ def materialize_sparse_direction(
                 "cta_group_id": owner.cta_group_id if owner else None,
                 "cta_reference_sources": sources,
             }
-            converted.append(LegacyDirectedBeat.model_validate(fields))
-        legacy_groups.append(LegacyDirectedGroup(
-            block_id=block_id, beats=converted,
+            visual_choices.append(VisualChoice.model_validate(fields))
+        source_blocks.append({
+            "block_id": block_id, "beats": source_beats,
+        })
+        visual_blocks.append(VisualGroup(
+            block_id=block_id, beats=visual_choices,
         ))
+    boundary_issues = [*issues, *boundary_issues]
+    boundaries = {
+        "status": "blocked" if boundary_issues else "passed",
+        "issues": boundary_issues,
+        "blocks": source_blocks,
+        "total_beats": sum(len(block["beats"]) for block in source_blocks),
+    }
+    result: dict[str, Any] = {
+        "status": "blocked",
+        "issues": list(boundary_issues),
+        "boundaries": boundaries,
+        "direction": direction.model_dump(mode="json"),
+        "plan": None,
+    }
     if issues:
-        return {
-            "status": "blocked", "issues": issues, "plan": None,
-            "boundaries": {
-                "status": "blocked", "issues": issues, "blocks": [],
-                "total_beats": 0,
-            },
-        }
-    return materialize_direction(
-        groups, LegacyWholeVideoDirection(blocks=legacy_groups), core,
-    )
+        return result
+    try:
+        result["plan"] = assemble_plan(
+            narrative_core=core, source_beats=source_blocks,
+            visuals=WholeVideoVisuals(blocks=visual_blocks),
+        )
+    except (ValueError, TypeError) as exc:
+        result["issues"].append({
+            "rule_id": "VISUAL_ASSEMBLY", "severity": "error",
+            "message": str(exc),
+        })
+        return result
+    result["status"] = boundaries["status"]
+    return result
 
 
 def _suffix(number: int) -> str:
