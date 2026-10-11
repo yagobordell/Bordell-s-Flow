@@ -1,7 +1,8 @@
 """Canonical global beat-cut contracts, using the proven B1.2 editorial method.
 
-The model chooses ALL narrative cuts in one whole-script pass. Python derives
-literal beat text from offsets, never from generated prose, and rejects every
+The model chooses ALL narrative cuts in one whole-script pass, using short
+verbatim source-end anchors instead of error-prone model-calculated offsets.
+Python derives literal beat text from resolved anchors and rejects every
 overlong or orphan technical segment before any paid visual prompting.
 No runtime code prescribes rhythm, beat counts or shot-change frequency.
 """
@@ -16,7 +17,11 @@ from ai_video_factory.bots.contracts import BeatType, StrictModel
 
 
 class BeatCut(StrictModel):
-    end: int = Field(gt=0, description="Exclusive character offset in the materialized B1.1 group")
+    end_anchor: str = Field(
+        min_length=1,
+        description="Verbatim source phrase ending THIS beat, INCLUDING its punctuation",
+    )
+    occurrence: int = Field(ge=1, description="1-based occurrence after previous beat")
     beat_type: BeatType
 
 
@@ -41,7 +46,7 @@ def validate_and_materialize_cuts(
     groups: list[dict[str, Any]],
     proposal: WholeScriptCuts | dict[str, Any],
 ) -> dict[str, Any]:
-    """Validate exact source offsets and both original B1.2 limits."""
+    """Resolve exact source phrase anchors and apply both original B1.2 limits."""
     if isinstance(proposal, dict):
         proposal = WholeScriptCuts.model_validate(proposal)
     issues: list[dict[str, Any]] = []
@@ -67,14 +72,29 @@ def validate_and_materialize_cuts(
         beats: list[dict[str, Any]] = []
         for count, cut in enumerate(candidate.cuts, 1):
             beat_id = f"{block_id}{_suffix(count)}"
-            if cut.end <= start or cut.end > len(text):
+            anchor = cut.end_anchor
+            search_at = start
+            match = -1
+            for _ in range(cut.occurrence):
+                match = text.find(anchor, search_at)
+                if match < 0:
+                    break
+                search_at = match + len(anchor)
+            if match < start:
                 issues.append({
-                    "rule_id": "CUT_OFFSET", "severity": "error",
+                    "rule_id": "CUT_ANCHOR", "severity": "error",
                     "beat_ids": [beat_id],
-                    "message": f"Invalid exclusive cut {cut.end}, source range is ({start}, {len(text)}].",
+                    "message": (
+                        f"Exact end anchor {anchor!r} occurrence {cut.occurrence} "
+                        "is absent after the preceding beat. Copy real source words."
+                    ),
                 })
                 continue
-            segment = text[start:cut.end]
+            end = match + len(anchor)
+            # B1.2 ownership: inter-beat separators belong to preceding beat.
+            while end < len(text) and text[end].isspace():
+                end += 1
+            segment = text[start:end]
             if not segment.strip():
                 issues.append({
                     "rule_id": "CUT_EMPTY", "severity": "error",
@@ -90,13 +110,13 @@ def validate_and_materialize_cuts(
                         f"and {len(segment.split())} words (max 100 chars, 40 words). "
                         "Choose better semantic cut positions; do not change source text."
                     ),
-                    "source_start": start, "source_end": cut.end,
+                    "source_start": start, "source_end": end,
                 })
             beats.append({
                 "beat_id": beat_id, "beat_type": cut.beat_type,
                 "text": segment,
             })
-            start = cut.end
+            start = end
         if start != len(text):
             issues.append({
                 "rule_id": "CUT_TILING", "severity": "error",
