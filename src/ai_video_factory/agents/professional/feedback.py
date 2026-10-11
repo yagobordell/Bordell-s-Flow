@@ -47,10 +47,13 @@ def parse_feedback_arg(argument: str) -> str:
 async def propose_feedback(
     *,
     argument: str, output: Path, script: str, model: str,
+    api_key: str | None = None,
 ) -> Path:
     """Make a pending, auditable proposal; do not change any active prompt."""
-    from agents import Agent, Runner
+    from agents import Agent, Runner, set_default_openai_key
 
+    if api_key:
+        set_default_openai_key(api_key)
     text = parse_feedback_arg(argument)
     if not text.strip() or len(text) > 25_000:
         raise ValueError("Feedback must be nonempty and at most 25,000 characters.")
