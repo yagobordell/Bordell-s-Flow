@@ -14,10 +14,10 @@ The QR is drawn later by CODE at top-right during every CTA and retained 90 seco
 
 Exactly four allowed visual_type options:
 
-- avatar: reuse original speaking avatar; prompt=null, video_prompt=null, reference=false, reference_sources=[], audio=true.
-- avatar_media: original speaking avatar plus ONE generated support still; prompt nonempty, video_prompt=null, reference=true, audio=true, reference_sources=["ebook"] ONLY. Never attach Enzo/presenter reference to an avatar_media supporting image.
-- media_image: full-screen generated B-roll still, prompt nonempty, video_prompt=null, audio=false, reference=true, reference_sources=["ebook"] or ["presenter","ebook"].
-- media_video: full-screen silent B-roll, one starting-frame prompt and nonempty subsequent-motion video_prompt, audio=false, reference=true, with the same reference_sources choices as media_image.
+- avatar: reuse original speaking avatar; prompt=null, video_prompt=null, reference=false, cta_reference_sources=[], audio=true.
+- avatar_media: original speaking avatar plus ONE generated support still; prompt nonempty, image_prompts=null, video_prompt=null, reference=true, audio=true, cta_reference_sources=["ebook"] ONLY. Never attach Enzo/presenter reference to an avatar_media supporting image.
+- media_image: full-screen generated B-roll still, prompt=null, image_prompts holding exactly ONE nonempty still prompt, video_prompt=null, audio=false, reference=true, cta_reference_sources=["ebook"] or ["presenter","ebook"]. CTA metadata is keyed by cta_group_id and must preserve the reference cover.
+- media_video: full-screen silent B-roll, one starting-frame prompt and nonempty subsequent-motion video_prompt, image_prompts=null, audio=false, reference=true, with the same cta_reference_sources choices as media_image.
 
 **Every newly generated CTA image**, including avatar_media's support image and the starting image of media_video, MUST use the authentic ebook reference. This is an input-conditioning requirement and does not require the ebook to be shown in the resulting frame. When visible, preserve the exact real cover artwork and title. Reused original avatar does not generate any image and needs no ebook reference. Use the presenter reference alongside ebook ONLY when a full-screen B-roll image actually depicts the supplied person. Such images must depict them in a clearly different room/physical location from their reference image. No generated person speaks directly to camera, mouths lines or lip-syncs; only the reused avatar layer speaks. Other character actions remain owned by those characters.
 
@@ -47,5 +47,5 @@ The contextual note must therefore be sufficiently rich and specific for the ima
 
 Number only related generated images in a meaningful continuity sequence, up to 18 logical assets; the application uses physical grids of up to four cells and conditions later grids on their predecessor. Never force unrelated images into the same story, or add a visible ebook in every cell solely because its reference is attached.
 
-Output a strict JSON object containing only beats: one entry per supplied beat in order, with exactly beat_id, visual_type, prompt, video_prompt, reference, audio, reference_sources. No metadata, rewritten dialogue or explanations.
+Output VisualChoice objects only for the model-owned visual fields. Source beat text, IDs and beat_type are joined by Python from the immutable script. Every CTA-owned generated asset must carry its authentic ebook reference; output image_prompts rather than prompt for media_image.
 
