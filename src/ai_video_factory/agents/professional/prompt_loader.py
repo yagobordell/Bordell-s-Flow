@@ -11,6 +11,7 @@ from pathlib import Path
 
 _BASE = ("agent.md", "rules/source_integrity.md")
 _VISUAL = (
+    "rules/direction_continuity.md",
     "rules/visual_types.md",
     "rules/screens_documents.md",
     "rules/video_motion.md",
