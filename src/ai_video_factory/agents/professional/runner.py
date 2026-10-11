@@ -15,12 +15,10 @@ import json
 from pathlib import Path
 from time import perf_counter
 from typing import Any
-from uuid import uuid4
 
 from pydantic import Field
 
 from ai_video_factory.agents.professional.beats import (
-    GroupCuts,
     WholeScriptCuts,
     combine_cut_corrections,
     validate_and_materialize_cuts,
