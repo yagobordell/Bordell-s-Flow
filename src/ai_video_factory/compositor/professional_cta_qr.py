@@ -148,6 +148,77 @@ def _enable_windows(
     )
 
 
+def build_professional_cta_mux_overlay(
+    output: Path,
+    run_dir: Path,
+    timeline: dict[str, Any],
+    plan: dict[str, Any],
+) -> tuple[list[str], str, dict[str, Any]] | None:
+    """Prepare QR/website inputs for the EXISTING final x264 encode.
+
+    Inputs 0 and 1 are the concatenated video and original PCM narration.
+    Extra overlay inputs start at 2. Do not re-encode the finished MP4.
+    The same CTA window calculations and rasterized website as the legacy
+    two-pass compositor are used; no paid inference inputs are changed.
+    """
+    qr_windows = professional_cta_windows(timeline, plan)
+    if not qr_windows:
+        return None
+    website_windows = professional_cta_website_windows(timeline, plan)
+    qr = output / "qr.png"
+    qr_meta = plan.get("avatar", {}).get("qr", {})
+    if qr.is_symlink() or not qr.is_file():
+        raise ProfessionalCTAOverlayError("Missing safe persisted QR file")
+    if not isinstance(qr_meta, dict) or qr_meta.get("sha256") != sha256_file(qr):
+        raise ProfessionalCTAOverlayError("Saved QR does not match avatar identity")
+    with Image.open(qr) as image:
+        if image.format != "PNG":
+            raise ProfessionalCTAOverlayError("QR must be a real PNG")
+        image.verify()
+
+    inputs = ["-loop", "1", "-i", str(qr)]
+    # Renumber video frames BEFORE applying timestamp-windowed overlays,
+    # exactly as the intermediate final.mp4 did in the original two-pass path.
+    graph = (
+        f"[0:v]setpts=N/({_FPS}*TB),fps={_FPS},format=yuv420p[base];"
+        "[2:v]scale=280:280:flags=neighbor,format=rgba[qr];"
+        "[base][qr]overlay=x=main_w-overlay_w-34:y=34:"
+        f"enable='{_enable_windows(qr_windows, inclusive_end=True)}':"
+        f"eval=frame:format={'auto' if website_windows else 'yuv420'}"
+        f"[{'qr_base' if website_windows else 'v'}]"
+    )
+    if website_windows:
+        card = run_dir / "ebook_cta_website.png"
+        _website_card(card)
+        inputs.extend(["-loop", "1", "-i", str(card)])
+        graph += (
+            ";[3:v]format=rgba[website];"
+            "[qr_base][website]overlay="
+            "x=(main_w-overlay_w)/2:"
+            f"y=main_h-overlay_h-{_WEBSITE_BOTTOM_MARGIN_PX}:"
+            f"enable='{_enable_windows(website_windows, inclusive_end=False)}':"
+            "eval=frame:format=yuv420[v]"
+        )
+
+    metadata = {
+        "qr_sha256": qr_meta["sha256"],
+        "position": "top_right",
+        "size_pixels": 280,
+        "first_cta_tail_seconds": 90,
+        "windows_seconds": [[start, end] for start, end in qr_windows],
+        "website_overlay": {
+            "version": _WEBSITE_VERSION,
+            "text": _WEBSITE,
+            "position": "bottom_center_above_subtitles",
+            "font_size_pixels": _WEBSITE_FONT_PX,
+            "black_outline_pixels": _WEBSITE_STROKE_PX,
+            "bottom_margin_pixels": _WEBSITE_BOTTOM_MARGIN_PX,
+            "windows_seconds": [[start, end] for start, end in website_windows],
+        },
+    }
+    return inputs, graph, metadata
+
+
 def apply_professional_ebook_qr(
     output: Path, run_dir: Path,
     rendered: dict[str, Any], timeline: dict[str, Any], plan: dict[str, Any],
