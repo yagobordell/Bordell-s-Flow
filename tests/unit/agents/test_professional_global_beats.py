@@ -11,9 +11,9 @@ from ai_video_factory.agents.professional.beats import (
     validate_and_materialize_cuts,
 )
 from ai_video_factory.agents.professional.visuals import (
+    VisualChoice,
     VisualCorrection,
     VisualGroup,
-    VisualChoice,
     WholeVideoVisuals,
     apply_correction,
     assemble_plan,
