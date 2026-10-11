@@ -53,6 +53,36 @@ class VisualAlignmentRepair(StrictModel):
     blocks: list[VisualGroup] = Field(min_length=1)
 
 
+def canonicalize_visual_order(
+    source_beats: list[dict[str, Any]],
+    visuals: WholeVideoVisuals,
+) -> WholeVideoVisuals:
+    """Match uniquely keyed visual decisions to source IDs, without AI calls.
+
+    Reordering keyed output objects is *not* beat resegmentation or a rhythm
+    decision. If any ID is missing, duplicated or extra, keep the original
+    response for explicit model repair instead.
+    """
+    group_ids = [x.block_id for x in visuals.blocks]
+    expected_ids = [x["block_id"] for x in source_beats]
+    if len(set(group_ids)) != len(group_ids) or set(group_ids) != set(expected_ids):
+        return visuals
+    lookup = {x.block_id: x for x in visuals.blocks}
+    ordered: list[VisualGroup] = []
+    for source in source_beats:
+        group = lookup[source["block_id"]]
+        selected_ids = [x.beat_id for x in group.beats]
+        wanted_ids = [x["beat_id"] for x in source["beats"]]
+        if len(set(selected_ids)) != len(selected_ids) or set(selected_ids) != set(wanted_ids):
+            return visuals
+        beats = {x.beat_id: x for x in group.beats}
+        ordered.append(VisualGroup(
+            block_id=source["block_id"],
+            beats=[beats[i] for i in wanted_ids],
+        ))
+    return WholeVideoVisuals(blocks=ordered)
+
+
 def mismatched_visual_blocks(
     source_beats: list[dict[str, Any]],
     visuals: WholeVideoVisuals,
