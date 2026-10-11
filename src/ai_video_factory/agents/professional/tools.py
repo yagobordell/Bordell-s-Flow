@@ -85,7 +85,14 @@ def build_agents_sdk_tools(workspace: ProfessionalPlanWorkspace) -> list[Any]:
         """Validate B1.1-style group anchors from a JSON array."""
         try:
             groups = json.loads(groups_json)
-            return workspace.submit_groups(groups)
+            report = workspace.submit_groups(groups)
+            # Materialized text stays controller-owned, not echoed as a giant
+            # tool response that would exhaust the model's context.
+            return {
+                "status": report["status"], "issues": report["issues"],
+                "block_count": len(report.get("groups", [])),
+                "source_sha256": report.get("source_sha256"),
+            }
         except (ValueError, TypeError) as exc:
             return {"status": "blocked", "message": str(exc)}
 
