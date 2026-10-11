@@ -5,6 +5,8 @@ import json
 
 import pytest
 
+from ai_video_factory.agents.professional.validation import validate_plan
+
 from ai_video_factory.agents.professional.compact import (
     AvatarBeat,
     BeatNote,
@@ -236,3 +238,28 @@ def test_duplicate_original_beat_ids_reject_ambiguous_visual_patch():
         apply_sparse_correction(
             original, SparseCorrection(replaced_groups=[], visual_patches=[]),
         )
+
+
+def test_existing_cover_does_not_authorize_invented_cta():
+    script = "Always verify unexpected requests."
+    groups = [{
+        "block_id": 1, "type": "development",
+        "emotional_entry": "concern", "emotional_exit": "clarity",
+        "span": {
+            "first_words": script,
+            "last_words": script,
+        },
+    }]
+    direction = _direction(
+        _beat("1A", script),
+        cta=[CTAAssignment(
+            beat_id="1A", cta_group_id=1, sources=["ebook"],
+        )],
+    )
+    materialized = materialize_sparse_direction(_group(script), direction, _core())
+    assert materialized["status"] == "passed", materialized["issues"]
+    report = validate_plan(
+        script, groups, materialized["plan"], ebook_available=True,
+    )
+    assert report["status"] == "blocked"
+    assert "CTA_UNGROUNDED" in {issue["rule_id"] for issue in report["issues"]}
