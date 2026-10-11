@@ -545,9 +545,10 @@ async def run_professional_director(
         ]
         if remaining_editorial:
             checked["status"] = "blocked"
-            checked["issues"].extend(remaining_editorial)
             checked["validation"]["status"] = "blocked"
-            checked["validation"]["issues"].extend(remaining_editorial)
+            if checked["validation"]["issues"] is not checked["issues"]:
+                checked["validation"]["issues"].extend(remaining_editorial)
+            checked["issues"].extend(remaining_editorial)
         _save(_phase_file(root, "04_correction", "attempt_1.json"), {
             "output": correction.model_dump(mode="json"),
             "revised_direction": corrected_direction.model_dump(mode="json"),
