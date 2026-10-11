@@ -177,7 +177,7 @@ def materialize_sparse_direction(
             "message": "Every source group must be present exactly once.",
         })
     legacy_groups: list[LegacyDirectedGroup] = []
-    for source, group in zip(groups, direction.blocks):
+    for source, group in zip(groups, direction.blocks, strict=False):
         block_id = source["block_id"]
         if group.block_id != block_id:
             issues.append({
