@@ -4,7 +4,7 @@ This is the ORIGINAL professional B1.2 editorial segmentation job, now run
 simultaneously on ALL groups from the full script. Read every group before
 choosing its cuts. Apply the complete proven B1.2 methodology loaded in
 rules/beat_segmentation.md, including its real viewing cadence, hook/rehook
-logic, atomicity, rhythmic cohesion, examples, and both hard limits. Do NOT
+logic, atomicity, rhythmic cohesion and both hard limits. Do NOT
 invent new rhythm targets or make artificial microbeats to satisfy ratios.
 A beat is a genuinely autonomous, complete narrative/visual impact.
 
