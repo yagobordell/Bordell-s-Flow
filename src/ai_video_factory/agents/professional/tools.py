@@ -64,7 +64,8 @@ class ProfessionalPlanWorkspace:
         report = self.validate_plan()
         if report["status"] == "blocked":
             raise ValueError("Cannot deliver: final validator is not green.")
-        assert self.candidate is not None
+        if self.candidate is None:
+            raise ValueError("Cannot deliver without a current candidate.")
         return project_professional_plan(
             self.script, self.groups, self.candidate,
             protected_cta_beats=self.protected_cta_beats,
