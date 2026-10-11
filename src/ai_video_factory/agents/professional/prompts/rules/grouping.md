@@ -107,17 +107,15 @@ For every remaining candidate block:
 
 The presence of internal beat, scene or sequence structure is expected and is not by itself evidence of a block boundary. The completion of an independently meaningful submovement is.
 
-### Segmentation calibration
+### Narrative grouping judgment
 
-Use these examples to calibrate scale; they do not prescribe any block count.
-
-- **Numbered tutorial/list:** if an introduction is followed by six numbered uses and each use independently introduces, develops and lands a distinct application, normally represent those six uses as six separate blocks rather than one large "six uses" development block. A warning, mechanism or demonstration that is necessary to complete one use stays inside that use unless it becomes an independently complete contribution of its own.
-- **Repeated cases/examples:** when several cases each establish a distinct example and its consequence or lesson, each completed case is a strong block candidate even when all cases support one thesis.
-- **Correction followed by new material:** when a correction fully replaces or limits an earlier understanding and the narration then resumes a different application or argument, the completed correction may be its own block.
-- **Continuous scene:** do not create new blocks merely for camera-like changes, actions, reactions, sentences or local beats inside one still-unfinished narrative contribution.
-- **Setup plus payoff:** do not split a setup from the payoff it exists only to enable. Split after the payoff if the contribution is then complete and another begins.
-
-If two adjacent stretches could each be summarized as a complete distinct narrative job without relying on the other to finish that job, prefer separate blocks. If one stretch exists mainly to finish the other's job, keep them together.
+A block is a complete, independently meaningful macro-contribution to the
+central question, with its own narrative entry, development and payoff.
+Keep its necessary evidence, explanation, action, reaction and internal
+micro-beats together until that contribution lands. A distinct completed
+contribution merits a separate block even if both share topic, narrator,
+person, place or larger thesis. Use the actual text and macro-function,
+never target numbers of groups, beat count, or timing.
 
 ## Transition sentences and hinges
 
