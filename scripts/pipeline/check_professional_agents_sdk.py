@@ -31,14 +31,18 @@ from ai_video_factory.agents.professional.tools import (
     ProfessionalPlanWorkspace,
     build_agents_sdk_tools,
 )
-from ai_video_factory.agents.professional.visuals import VisualCorrection, WholeVideoVisuals
+from ai_video_factory.agents.professional.visuals import (
+    VisualAlignmentRepair,
+    VisualCorrection,
+    WholeVideoVisuals,
+)
 from ai_video_factory.bots.contracts import B11Output
 
 
 def check() -> None:
     for output_type in (
         GroupProposal, B11Output, WholeScriptCuts, WholeVideoVisuals,
-        CreativeReview, VisualCorrection,
+        CreativeReview, VisualCorrection, VisualAlignmentRepair,
     ):
         schema = AgentOutputSchema(output_type)
         assert schema.is_strict_json_schema()
