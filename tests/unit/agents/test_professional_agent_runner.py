@@ -9,9 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.agents.professional.compact import (
+    AvatarBeat,
+    CTAAssignment,
+    ImageBeat,
+    ImagePatch,
     SparseCorrection as DirectionCorrection,
     SparseDirection as WholeVideoDirection,
-    SparseGroup, ImageBeat, AvatarBeat, ImagePatch, CTAAssignment,
+    SparseGroup,
 )
 from ai_video_factory.agents.professional.feedback import (
     approve_feedback,
