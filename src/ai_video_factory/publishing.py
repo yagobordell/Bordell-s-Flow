@@ -161,6 +161,10 @@ def _collect(
         for item in sorted(agent_output.rglob("*")):
             if item.is_symlink() or item.is_junction():
                 raise PublicationError("Linked Professional OpenAI checkpoint")
+            # Feedback proposals are mutable AFTER a completed publication.
+            # Publish the immutable phase records, not the evolving review inbox.
+            if item.relative_to(agent_output).parts[0] == "feedback":
+                continue
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
