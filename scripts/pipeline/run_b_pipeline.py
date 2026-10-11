@@ -2850,9 +2850,9 @@ async def main() -> None:
                 "The new Professional director starts from B1.1 only. "
                 "Use --images-only or --resume-audio on saved outputs."
             )
-        if args.stop_stage not in (None, "openai-agent"):
+        if getattr(args, "stop_stage", None) not in (None, "openai-agent"):
             raise SystemExit("Profesional uses --stop openai-agent, not legacy B stages.")
-    elif args.stop_stage == "openai-agent":
+    elif getattr(args, "stop_stage", None) == "openai-agent":
         raise SystemExit("--stop openai-agent is available only for Profesional.")
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
         raise SystemExit("--replace-professional-voice is available only in Profesional")
