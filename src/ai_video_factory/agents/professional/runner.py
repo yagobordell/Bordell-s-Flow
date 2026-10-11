@@ -426,6 +426,13 @@ async def run_professional_director(
             + visual_validation_error
         ) from None
     workspace.submit_plan_revision(candidate)
+    if workspace.report is not None and workspace.report["status"] != "blocked":
+        workspace.protected_cta_beats = {
+            beat["beat_id"]: copy.deepcopy(beat)
+            for group in candidate["blocks"]
+            for beat in group["beats"]
+            if beat.get("cta_group_id") is not None
+        }
     _save(_phase_file(root, "02_visuals"), {
         "output": candidate, "validation": workspace.report,
     })
@@ -467,11 +474,13 @@ async def run_professional_director(
     # 04: visual PATCHES, not a full replanning of every beat. A true
     # narrative recut must explicitly replace its group's cuts and visuals.
     changed_review = review.issues
+    correction_feedback: list[dict[str, Any]] = []
     for index in range(max_corrections):
         report = workspace.validate_plan()
         if report["status"] != "blocked" and not changed_review:
             break
-        assert workspace.candidate is not None
+        if workspace.candidate is None:
+            raise RuntimeError("Lost canonical plan before correction.")
         prev_by_id = {
             b["beat_id"]: b for group in workspace.candidate["blocks"]
             for b in group["beats"]
@@ -511,6 +520,7 @@ async def run_professional_director(
                 "visual_manifest": manifest,
                 "relevant_visual_choices": relevant,
                 "ebook_cover_available": ebook is not None,
+                "previous_rejected_correction": correction_feedback,
             }, ensure_ascii=False),
             VisualCorrection,
         )
@@ -522,6 +532,7 @@ async def run_professional_director(
                 "output": response.model_dump(mode="json"),
                 "validation": new_beats,
             })
+            correction_feedback = new_beats["issues"]
             changed_review = []
             continue
         try:
@@ -539,6 +550,10 @@ async def run_professional_director(
                     "message": str(exc),
                 }]},
             })
+            correction_feedback = [{
+                "rule_id": "INVALID_CORRECTION",
+                "message": str(exc),
+            }]
             changed_review = []
             continue
         outcome = workspace.submit_plan_revision(updated_plan)
@@ -550,17 +565,18 @@ async def run_professional_director(
         _save(root / f"correction_{index + 1}.json", {
             "plan": updated_plan, "validation": outcome,
         })
-        if outcome["status"] != "blocked":
-            cuts = proposed_cuts
-            source_beats = new_beats["blocks"]
-            if response.resegmented_blocks:
-                _b12_checkpoints(output, source_beats, core)
-                _save(_phase_file(root, "02_beats", "final_after_correction.json"),
-                      {"cuts": cuts.model_dump(mode="json"),
-                       "blocks": source_beats})
-            changed_review = []
-        else:
-            changed_review = []
+        # Whenever a structurally valid correction changes source cuts, all
+        # subsequent attempts must use those cuts, even if visual preflight
+        # remains blocked. Keep the B1.2 output files synchronized as well.
+        cuts = proposed_cuts
+        source_beats = new_beats["blocks"]
+        if response.resegmented_blocks:
+            _b12_checkpoints(output, source_beats, core)
+            _save(_phase_file(root, "02_beats", "final_after_correction.json"),
+                  {"cuts": cuts.model_dump(mode="json"),
+                   "blocks": source_beats})
+        correction_feedback = outcome.get("issues", [])
+        changed_review = []
 
     # 05: Python-only release. A green result is never asserted by the LLM.
     final_report = workspace.validate_plan()
