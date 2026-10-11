@@ -234,8 +234,8 @@ def test_fused_overlay_uses_existing_cta_timing_and_raster(tmp_path):
     assert "[0:v]setpts=N/(24*TB),fps=24,format=yuv420p[base]" in graph
     assert "[2:v]scale=280:280:flags=neighbor,format=rgba[qr]" in graph
     assert "[3:v]format=rgba[website]" in graph
-    assert "between(t\\\\,10.000000\\\\,125.000000)" in graph
-    assert "gte(t\\\\,12.370000)*lt(t\\\\,35.000000)" in graph
+    assert r"between(t\,10.000000\,125.000000)" in graph
+    assert r"gte(t\,12.370000)*lt(t\,35.000000)" in graph
     assert metadata["website_overlay"]["text"] == "zellenne.com"
     assert metadata["website_overlay"]["windows_seconds"] == [
         [12.37, 35.0], [179.125, 185.0],
