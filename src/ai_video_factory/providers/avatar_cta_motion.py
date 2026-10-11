@@ -119,7 +119,22 @@ def ensure_avatar_cta_motion(
         file = directory / "motion_manual.mp4"
         print(f"Coloca el motion graphic manual en: {file}\n"
               "Formato: MP4 H.264, 1920x1080, 30 FPS, yuv420p, sin audio.")
-        probe_manual_motion(file)
+        while True:
+            try:
+                probe_manual_motion(file)
+                break
+            except SystemExit as exc:
+                if not interactive:
+                    raise
+                print(str(exc))
+                try:
+                    answer = input(
+                        "Copia/corrige el MP4 y pulsa Enter para validar (q cancela): "
+                    ).strip().lower()
+                except (EOFError, KeyboardInterrupt) as stop:
+                    raise SystemExit("Configuración manual cancelada.") from stop
+                if answer in {"q", "quit"}:
+                    raise SystemExit("Configuración manual cancelada.") from exc
         record.update(file=file.name, sha256=hashlib.sha256(file.read_bytes()).hexdigest())
     temp = saved.with_name("motion_source.json.part")
     if temp.exists() or temp.is_symlink():
