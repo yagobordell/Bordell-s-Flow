@@ -123,7 +123,7 @@ def test_orphan_single_grid_asset_is_invalid_but_same_image_can_be_independent()
 def test_positive_direction_rules_and_carriers_are_visible_to_model():
     content = load_phase_instructions("02_planning")
     assert "rules/direction_continuity.md" in content
-    assert "SAME participants" in content
+    assert "track the participant\u0027s" in content
     assert "grid" in content
     assert "image_prompts" in content
     assert "prompt=null" in content
