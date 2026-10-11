@@ -185,10 +185,8 @@ def _validate_visual(
             if mode not in {"grid", "independent"}:
                 issues.append(_issue("IMAGE_GENERATION_MODE", "Invalid image generation mode.",
                                      block_id=block_id, beat_ids=[beat_id]))
-            if mode == "grid" and len(validated) == 1:
-                issues.append(_issue("IMAGE_GENERATION_MODE",
-                                     "A single image cannot form a numbered grid.",
-                                     block_id=block_id, beat_ids=[beat_id]))
+            # A one-image beat CAN join a multi-beat continuity grid.
+            # Whole-sequence validity is evaluated after reading its peers.
         if prompt is not None or motion is not None or audio:
             issues.append(_issue(
                 "IMAGE_CARRIER", "media_image uses image_prompts, prompt=null, "
@@ -375,6 +373,22 @@ def validate_plan(
             issues.append(_issue("EMPTY_BLOCK", "Block has no beats.", block_id=block_id))
             continue
         reconstructed = ""
+        grid_assets: list[str] = []
+
+        def finish_grid_run() -> None:
+            nonlocal grid_assets
+            if grid_assets and (len(grid_assets) < 2 or len(grid_assets) > 18):
+                issues.append(_issue(
+                    "GRID_SEQUENCE_SIZE",
+                    "A continuous numbered image run must comprise 2–18 "
+                    "assets, possibly across several neighboring beats. "
+                    "Choose actual related stills and a coherent grid boundary.",
+                    block_id=block_id,
+                    beat_ids=list(dict.fromkeys(grid_assets)),
+                    details={"image_count": len(grid_assets)},
+                ))
+            grid_assets = []
+
         for index, beat in enumerate(beats, start=1):
             if not isinstance(beat, dict):
                 issues.append(_issue("BEAT_SCHEMA", "Beat must be an object.", block_id=block_id))
@@ -426,6 +440,13 @@ def validate_plan(
                             block_id=block_id, beat_ids=[beat_id],
                         ))
             kind = beat.get("visual_type")
+            if (kind == "media_image"
+                    and beat.get("generation_mode") == "grid"
+                    and beat.get("cta_group_id") is None
+                    and isinstance(beat.get("image_prompts"), list)):
+                grid_assets.extend([beat_id] * len(beat["image_prompts"]))
+            else:
+                finish_grid_run()
             avatar_count += kind == "avatar"
             avatar_media_count += kind == "avatar_media"
             if beat.get("audio") is True:
@@ -445,6 +466,7 @@ def validate_plan(
                 "source_start": cursor + len(reconstructed) - len(text),
                 "source_end": cursor + len(reconstructed),
             })
+        finish_grid_run()
         if reconstructed != group["text"]:
             issues.append(_issue(
                 "SOURCE_INTEGRITY",
