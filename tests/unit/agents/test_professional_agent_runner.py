@@ -62,7 +62,7 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
 
     class FakeRunner:
         @staticmethod
-        async def run(agent, payload, *, session, max_turns=18):
+        async def run(agent, payload, *, session, max_turns=18, hooks=None):
             invocations.append((agent, session, payload))
             if agent.output_type is B11Output:
                 final = B11Output.model_validate({
@@ -83,12 +83,21 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
                 requests=1, input_tokens=100, output_tokens=50,
                 total_tokens=150, input_tokens_details=SimpleNamespace(cached_tokens=5),
             )
+            if hooks is not None:
+                await hooks.on_llm_end(
+                    SimpleNamespace(usage=usage), agent,
+                    SimpleNamespace(usage=usage, response_id="test-response",
+                                    request_id="test-request"),
+                )
             return SimpleNamespace(final_output=final, context_wrapper=SimpleNamespace(usage=usage))
 
     fake_agents = SimpleNamespace(
         Agent=FakeAgent, Runner=FakeRunner, SQLiteSession=FakeSession,
         function_tool=lambda function: function,
         set_default_openai_key=lambda key: None,
+        ModelBehaviorError=type("ModelBehaviorError", (Exception,), {}),
+        ModelSettings=lambda **kwargs: SimpleNamespace(**kwargs),
+        RunHooks=type("RunHooks", (), {}),
     )
     monkeypatch.setitem(sys.modules, "agents", fake_agents)
     result = asyncio.run(run_professional_director(
@@ -98,6 +107,9 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
     assert len({id(item[1]) for item in invocations}) == 1
     assert all("Professional Director" in item[0].name for item in invocations)
     assert all(item[0].model == "test-model" for item in invocations)
+    assert any(tool.__name__ == "submit_groups" for tool in invocations[0][0].tools)
+    assert invocations[1][0].tools == []
+    assert all(tool.__name__ != "submit_plan_revision" for tool in invocations[3][0].tools)
     assert len(result["usage"]) == 5
     assert result["validation"]["status"] == "passed"
     saved = json.loads((tmp_path / "agent_openai" / "approved_plan.json").read_text())
