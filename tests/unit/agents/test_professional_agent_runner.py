@@ -222,6 +222,35 @@ def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
                 / "attempt_1.json").is_file()
 
 
+def test_missing_ebook_cover_blocks_real_promo_without_spending_model_tokens(
+    tmp_path, monkeypatch,
+):
+    calls = []
+
+    class MustNotBeCalled:
+        @staticmethod
+        async def run(agent, payload, *, max_turns=1, hooks=None):
+            calls.append("paid-request")
+            raise AssertionError("Preflight must reject before paid model work")
+
+    monkeypatch.setitem(sys.modules, "agents", SimpleNamespace(
+        Agent=FakeAgent, Runner=MustNotBeCalled,
+        ModelBehaviorError=FakeModelBehaviorError,
+        RunHooks=type("RunHooks", (), {}),
+        set_default_openai_key=lambda key: None,
+    ))
+    script = (
+        "Our advice is useful today. Scan the QR code and get the ebook "
+        "to revisit these warning signs."
+    )
+    with pytest.raises(ValueError, match="PREFLIGHT_EBOOK_COVER_REQUIRED"):
+        asyncio.run(run_professional_director(
+            script, output=tmp_path, avatar=b"PNG", ebook=None, model="offline",
+        ))
+    assert calls == []
+    assert not (tmp_path / "agent_openai" / "usage.json").exists()
+
+
 def test_b11_and_valid_beats_survive_later_model_failure(tmp_path, monkeypatch):
     script, groups, core, cuts, _choices = _fixture()
 
