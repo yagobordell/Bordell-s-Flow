@@ -53,7 +53,7 @@ def check() -> None:
     assert clone.output_type is PlannedVideo
     assert clone.model == agent.model
     assert issubclass(ModelBehaviorError, Exception)
-    assert isinstance(RunHooks(), RunHooks)
+    assert callable(getattr(RunHooks(), "on_llm_end", None))
     assert callable(set_default_openai_key)
 
     workspace = ProfessionalPlanWorkspace(script="Un comienzo. Y un final.")
