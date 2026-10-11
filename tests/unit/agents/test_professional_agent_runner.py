@@ -94,11 +94,11 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
     result = asyncio.run(run_professional_director(
         script, output=tmp_path, avatar=b"PNG", ebook=None, model="test-model",
     ))
-    assert len(invocations) == 4  # stages 1,2,3,5; no correction needed
+    assert len(invocations) == 5  # all five global stages, including creative correction
     assert len({id(item[1]) for item in invocations}) == 1
     assert all("Professional Director" in item[0].name for item in invocations)
     assert all(item[0].model == "test-model" for item in invocations)
-    assert len(result["usage"]) == 4
+    assert len(result["usage"]) == 5
     assert result["validation"]["status"] == "passed"
     saved = json.loads((tmp_path / "agent_openai" / "approved_plan.json").read_text())
     assert saved["source_sha256"] == result["validation"]["source_sha256"]
