@@ -132,6 +132,7 @@ def render_b2_ltx_video(
     output: Path, run_dir: Path, timeline: dict[str, Any],
     jobs: list[B2VideoJob], manifest: dict[str, Any],
     images: dict[str, Any], audio: dict[str, Any],
+    *, cta_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Transcode beat-level visuals, concatenate, and mux the ORIGINAL PCM master."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
@@ -349,30 +350,48 @@ def render_b2_ltx_video(
     if final.is_symlink() or temporary.is_symlink():
         raise B2VideoCompositionError("Refusing linked final LTX video")
     temporary.unlink(missing_ok=True)
+    overlay_metadata: dict[str, Any] | None = None
     try:
-        _run_ffmpeg([
+        command = [
             "-f", "concat", "-safe", "0", "-i", str(concat),
             "-i", str(soundtrack),
-            "-map", "0:v:0", "-map", "1:a:0",
-            # Concat of independent MP4 tracks can carry tiny timestamp gaps
-            # even though each beat has the expected number of frames.
-            # Renumber every decoded frame to a true 24-fps output clock,
-            # without ever using LTX's embedded audio.
-            "-vf", f"setpts=N/({_FPS}*TB),fps={_FPS},format=yuv420p",
+        ]
+        if cta_plan is not None and cta_plan.get("ebook_cta_groups"):
+            from ai_video_factory.compositor.professional_cta_qr import (
+                build_professional_cta_mux_overlay,
+            )
+
+            prepared = build_professional_cta_mux_overlay(
+                output, run_dir, timeline, cta_plan,
+            )
+            if prepared is not None:
+                overlay_inputs, overlay_filter, overlay_metadata = prepared
+                command.extend(overlay_inputs)
+                command.extend(["-filter_complex", overlay_filter, "-map", "[v]"])
+        if overlay_metadata is None:
+            # Independent MP4 beat tracks can have timestamp gaps. Normalize
+            # every decoded frame to a real 24-fps clock before final encoding.
+            command.extend([
+                "-map", "0:v:0",
+                "-vf", f"setpts=N/({_FPS}*TB),fps={_FPS},format=yuv420p",
+            ])
+        command.extend([
+            "-map", "1:a:0",
             "-frames:v", str(total_frames), "-r", str(_FPS),
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
             "-video_track_timescale", "12288",
             "-c:a", "aac", "-b:a", "192k",
             "-t", f"{timeline['duration_seconds']:.9f}",
             "-movflags", "+faststart", str(temporary),
-        ], "B2 LTX final mux")
+        ])
+        _run_ffmpeg(command, "B2 LTX final mux")
         actual = _probe_final(temporary, timeline["duration_seconds"], total_frames)
         temporary.replace(final)
     finally:
         temporary.unlink(missing_ok=True)
     timeline_path = run_dir / "timeline.json"
     _save_json(timeline_path, timeline)
-    return {
+    result = {
         "file": final.relative_to(output).as_posix(),
         "sha256": sha256_file(final),
         "duration_seconds": timeline["duration_seconds"],
@@ -387,3 +406,6 @@ def render_b2_ltx_video(
         "avatar_media_layout": "side_by_side_50_50",
         "media_image_motion": {"animated_beats": image_count},
     }
+    if overlay_metadata is not None:
+        result["professional_ebook_qr"] = overlay_metadata
+    return result
