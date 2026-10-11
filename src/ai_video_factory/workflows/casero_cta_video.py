@@ -103,8 +103,12 @@ def cta_assets(directory: Path) -> dict[str, Any]:
         files[key] = file
     if not (0 < tts["half_seconds"] <= LTX_A2V_RECOMMENDED_MAX_SECONDS):
         raise CTACompositionError("CTA first-half speech exceeds pinned LTX A2V duration")
-    if source["mode"] == "manual" and identity.get("manual_motion_sha256") != source["sha256"]:
-        raise CTACompositionError("Manual motion differs from cached CTA identity")
+    if source["mode"] == "manual":
+        if identity.get("manual_motion_sha256") != source["sha256"]:
+            raise CTACompositionError("Manual motion differs from cached CTA identity")
+        required = float(tts["half_seconds"]) + 1.5
+        if abs(float(motion.get("duration_seconds", 0)) - required) > 1e-5:
+            raise CTACompositionError("Saved manual motion duration differs from CTA speech")
     return {**identity, "files": files, "half_seconds": float(tts["half_seconds"]),
             "duration_seconds": float(tts["duration_seconds"])}
 
@@ -296,6 +300,12 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
             and previous.get("width") == _WIDTH
             and previous.get("height") == _HEIGHT
         ):
+            source = motion_source(directory)
+            if source["mode"] == "manual":
+                if previous.get("manual_motion_sha256") != source["sha256"]:
+                    raise CTACompositionError("Cached CTA belongs to another manual motion")
+            elif "manual_motion_sha256" in previous:
+                raise CTACompositionError("Cached CTA motion source changed")
             return path
         # A verified v1/v2 completion is intentionally retained on disk but is
         # not reused by a current run: new production video is Full HD/run-v2.
