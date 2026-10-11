@@ -81,6 +81,11 @@ jobs:
       - name: Ruff
         run: uv run --no-sync ruff check .
 
+      - name: Actual OpenAI Agents SDK integration (offline)
+        run: >-
+          uv run --locked --with "openai-agents>=0.22,<0.24" --extra dev
+          python scripts/pipeline/check_professional_agents_sdk.py
+
       - name: Initialize test Postgres
         shell: bash
         run: |
