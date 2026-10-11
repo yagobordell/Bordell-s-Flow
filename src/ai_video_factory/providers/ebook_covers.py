@@ -130,3 +130,53 @@ def ensure_ebook_covers(
         finally:
             tmp.unlink(missing_ok=True)
     return EbookCovers(tuple(source_files), tuple(hashes))
+
+
+def resolve_professional_ebook_covers(
+    avatar: Path, *, script: str, data_dir: Path,
+    names: Sequence[str] | None = None,
+    interactive: bool | None = None,
+) -> EbookCovers | None:
+    """Ask for the real PNG once when Professional narration promotes an ebook.
+
+    Preserve Casero's existing optional-two-cover selection unchanged.
+    A real spoken QR/ebook CTA is a reason to ask for its asset, not a reason
+    to raise after preparing a run or to delete the promotion from the plan.
+    """
+    from ai_video_factory.agents.professional.preflight import requires_ebook_cover
+
+    record = avatar.parent / "meta" / "ebook_covers.json"
+    required = requires_ebook_cover(script)
+    if names is None and not required and not record.is_file() and not record.is_symlink():
+        return None
+    selected = names
+    if selected is None and required and not record.is_file():
+        if record.is_symlink():
+            raise ValueError("No se permiten enlaces en ebook_covers.json.")
+        if interactive is None:
+            interactive = sys.stdin.isatty()
+        if not interactive:
+            raise ValueError(
+                "El guion promociona un ebook y necesita su portada PNG. "
+                "Indica --ebook-cover NOMBRE (archivo data/NOMBRE.png) "
+                "en esta ejecución no interactiva."
+            )
+        print(
+            "\n  [Profesional] El guion incluye un CTA de ebook con QR. "
+            "Selecciona su portada auténtica antes de planificar el vídeo.",
+            flush=True,
+        )
+        try:
+            cover_name = input(
+                "  Nombre de la portada PNG en data/ (con o sin .png): "
+            ).strip()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise ValueError("Selección de portada cancelada.") from exc
+        if cover_name.lower().endswith(".png"):
+            cover_name = cover_name[:-4]
+        if not cover_name:
+            raise ValueError("Es necesario indicar el nombre de la portada PNG.")
+        selected = (cover_name,)
+    return ensure_ebook_covers(
+        avatar, data_dir=data_dir, names=selected, interactive=interactive,
+    )
