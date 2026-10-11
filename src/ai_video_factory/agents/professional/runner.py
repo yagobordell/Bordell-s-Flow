@@ -69,6 +69,20 @@ class PlannedVideo(StrictModel):
     blocks: list[PlannedBlock] = Field(min_length=1)
 
 
+def _wire_plan(plan: PlannedVideo) -> dict[str, Any]:
+    """Preserve mandatory nullable B2 fields, omit absent optional metadata."""
+    result = plan.model_dump(mode="json")
+    for block in result["blocks"]:
+        for beat in block["beats"]:
+            for field in (
+                "cta_group_id", "cta_reference_sources",
+                "image_prompts", "generation_mode",
+            ):
+                if beat.get(field) is None:
+                    beat.pop(field, None)
+    return result
+
+
 def _save(path: Path, payload: dict[str, Any]) -> None:
     """Checkpoint each phase; reject symlink and write via temporary replacement."""
     if path.is_symlink() or path.parent.is_symlink():
@@ -225,7 +239,7 @@ async def run_professional_director(
                      ensure_ascii=False),
     })
     plan = await execute("02_planning", phase2, output_type=PlannedVideo)
-    workspace.submit_plan_revision(plan.model_dump(mode="json", exclude_none=True))
+    workspace.submit_plan_revision(_wire_plan(plan))
     # The first accepted CTA ownership snapshot is frozen for all corrections:
     # a reviewer may not silently move or repaint an ebook promotion beat.
     workspace.protected_cta_beats = {
@@ -278,7 +292,7 @@ async def run_professional_director(
             output_type=PlannedVideo, use_tools=True,
         )
         workspace.submit_plan_revision(
-            corrected.model_dump(mode="json", exclude_none=True)
+            _wire_plan(corrected)
         )
         _save(root / f"correction_{attempt + 1}.json", {
             "plan": workspace.candidate, "validation": workspace.validate_plan(),
