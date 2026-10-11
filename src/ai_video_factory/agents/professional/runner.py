@@ -179,6 +179,14 @@ async def run_professional_director(
         set_default_openai_key(api_key)
     if not script.strip() or not avatar:
         raise ValueError("A complete raw script and an avatar PNG are mandatory.")
+    if ebook is None:
+        print(
+            "  [OpenAI preflight] No hay portada real de ebook. "
+            "CTA de ebook DESACTIVADO para este run. "
+            "Si tu guion promociona un ebook, configura --ebook-cover "
+            "antes de ejecutar la planificación.",
+            flush=True,
+        )
     if output.is_symlink() or output.is_junction():
         raise ValueError("Unsafe agent run directory.")
     root = output / "agent_openai"
@@ -370,11 +378,6 @@ async def run_professional_director(
     # avatar image and actual cover when present.
     phase2 = _image_input(script, avatar, ebook)
     if ebook is None:
-        print(
-            "  [OpenAI] No hay portada de ebook configurada: "
-            "CTA de ebook desactivado; sin cta_group_id ni referencias al ebook.",
-            flush=True,
-        )
         phase2[0]["content"].insert(0, {
             "type": "input_text",
             "text": (
