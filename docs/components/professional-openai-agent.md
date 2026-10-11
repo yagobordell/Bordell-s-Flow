@@ -171,3 +171,36 @@ The combined model+render path must still be tested on actual projects and
 real OpenAI credentials. Offline CI validates the code, mock agent phases and
 contracts, not live model quality or LTX output. A stopped agent-only run
 does not create audio; resuming audio later requires valid voice and STT state.
+
+## Global correction and visual-direction quality gate
+
+Phase 04 performs at most one global creative/structural correction by default
+after the phase-03 review. Its single structured answer may patch every
+affected beat and resegment explicitly necessary B1.2 groups, while Python
+verifies all agreed invariants. Further expensive creative retries are NOT
+silently launched; unresolved issues remain available as failed phase outputs.
+A malformed JSON SDK reply may still use bounded transport retries.
+
+The full-model visual directions require source-owned concrete actor actions,
+same-identity cross-beat chronological continuity, physically possible
+single-shot events and semantic progression instead of repeated generic
+phone imagery. Meaningful continuous still sequences can share a single
+numbered grid across multiple beats, including one-image beats. Python
+validates asset count and performs numbering; it does not decide pacing.
+
+Source-critical readable screen or document information and branded symbolic
+detail are planned as source-anchored postproduction overlays (using truly
+available/verified assets), rather than synthesized into generated screen or
+card pixels. The original absolute screen/document rule remains binding.
+Important conceptual headlines and contrast/reveal moments are also
+candidates for Haiku editor notes, determined editorially from the
+complete story, not from any fixed beat type or quota.
+
+The authoritative five exported phase folders are 01_groups,
+02_planning, 03_evaluation, 04_correction, and 05_delivery. Subpasses
+inside 02_planning do not create independent public editorial stages.
+
+Prompt authoring follows official OpenAI recommendations for clear,
+positive, specific instructions and explicit structured output contracts.
+Per editorial direction, the Markdown instructions deliberately do
+not contain input/output few-shot cases or scenario-by-scenario templates.
