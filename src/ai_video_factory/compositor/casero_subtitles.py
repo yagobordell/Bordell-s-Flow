@@ -52,20 +52,24 @@ def _shift_around_cta(
     if not insertion:
         return [words]
     cut = float(insertion["video_cut_seconds"])
+    boundary = float(insertion.get("source_boundary_seconds", cut))
     duration = float(insertion["cta_duration_seconds"])
-    if not math.isfinite(cut) or not math.isfinite(duration) or cut < 0 or duration <= 0:
+    if (not all(math.isfinite(x) for x in (cut, boundary, duration))
+            or cut < 0 or boundary < 0 or duration <= 0):
         raise CaseroSubtitleError("Invalid CTA insertion timing")
     before, after = [], []
     for word in words:
-        if word["start"] < cut:
-            if word["end"] > cut + 0.02:
-                raise CaseroSubtitleError("CTA placement splits a spoken subtitle word")
-            before.append({**word, "end": min(word["end"], cut)})
+        # Source words are partitioned by the actual aligned boundary, not the
+        # snapped video frame. These may differ by up to half a frame at 24fps.
+        if word["start"] < boundary:
+            end = min(word["end"], cut)
+            if word["start"] < end:
+                before.append({**word, "end": end})
         else:
-            after.append({
-                **word, "start": word["start"] + duration,
-                "end": word["end"] + duration,
-            })
+            start = max(word["start"], cut) + duration
+            end = max(word["end"], cut) + duration
+            if end > start:
+                after.append({**word, "start": start, "end": end})
     # A hard boundary prevents captions overlapping the CTA insert.
     return [before, after]
 
