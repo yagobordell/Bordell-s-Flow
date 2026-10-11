@@ -1,7 +1,6 @@
 import asyncio
 import hashlib
 import json
-import re
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
