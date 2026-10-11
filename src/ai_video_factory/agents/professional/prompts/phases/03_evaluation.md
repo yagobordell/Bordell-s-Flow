@@ -1,9 +1,9 @@
 # Phase 3 — whole-video editorial and mechanical review
 
 Read the COMPLETE original script from materialized B1.1 group texts
-and the jointly proposed beat anchors AND visual decisions. Python may
-report invalid cuts before it can reconstruct every beat; each such
-segment still has its associated visual decision in the original proposal. Evaluate the chronological continuity
+and the jointly proposed beat text AND visual decisions. Python reports
+source and carrier violations while preserving the proposed visual intent.
+Evaluate the chronological continuity
 of every live sequence as an actual edited YouTube film: each action should
 be owned by its real actor, consecutive stills should preserve the same
 character and object state where required, and each reveal should be
