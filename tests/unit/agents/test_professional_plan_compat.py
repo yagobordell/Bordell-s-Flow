@@ -9,7 +9,37 @@ from ai_video_factory.agents.professional.prompt_loader import (
 )
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai_batch_images import described_beats
-from tests.unit.agents.test_professional_agent_validation import sample
+def sample():
+    parts = ["Una idea concreta. ", "Otra idea clara. ", "Una tercera prueba. ", "Y cerramos."]
+    script = "".join(parts)
+    groups = [{
+        "block_id": 1, "type": "close",
+        "emotional_entry": "neutro", "emotional_exit": "conclusion",
+        "span": {"first_words": "Una idea concreta.", "last_words": "Y cerramos."},
+    }]
+    beats = [
+        {
+            "beat_id": f"1{chr(65 + i)}", "text": part,
+            "beat_type": "claim",
+            "visual_type": "media_image", "prompt": None, "video_prompt": None,
+            "audio": False, "reference": False,
+            "image_prompts": [f"Meaningful image {i + 1}"],
+            "generation_mode": "independent",
+        }
+        for i, part in enumerate(parts)
+    ]
+    beats[-1] = {
+        "beat_id": "1D", "text": parts[-1], "beat_type": "return",
+        "visual_type": "avatar", "prompt": None, "video_prompt": None,
+        "audio": True, "reference": False,
+    }
+    plan = {
+        "visual_style": "profesional",
+        "narrative_core": {"central_question": "¿Qué?", "final_answer": "Una conclusión."},
+        "blocks": [{"block_id": 1, "beats": beats}],
+    }
+    return script, groups, plan
+
 
 
 @pytest.mark.parametrize("count", [2, 3, 4])
