@@ -1,8 +1,10 @@
-"""Five whole-script passes of ONE OpenAI Agents SDK director, Professional only.
+"""One logical Professional Agents SDK director, cut-first and source-safe.
 
-A per-video session preserves continuity. Each phase receives an explicit source
-copy and immutable rules. Only deterministic Python can release a plan. No
-generation requests (images, Gemini, GPU) are dispatched from this module.
+B1.1 groups -> global B1.2 semantic cuts -> global audiovisual plan ->
+whole-video editorial review -> targeted corrections -> deterministic delivery.
+No per-group model calls, fixed rhythm quotas, or repeated SDK chat-history
+injection. Preserve each accepted output in legacy B-stage folders and
+versioned phase folders, even if a subsequent phase fails.
 """
 from __future__ import annotations
 
@@ -12,505 +14,597 @@ import hashlib
 import json
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from pydantic import Field
 
+from ai_video_factory.agents.professional.beats import (
+    GroupCuts,
+    WholeScriptCuts,
+    combine_cut_corrections,
+    validate_and_materialize_cuts,
+)
 from ai_video_factory.agents.professional.prompt_loader import load_phase_instructions
-from ai_video_factory.agents.professional.tools import (
-    ProfessionalPlanWorkspace,
-    build_agents_sdk_tools,
+from ai_video_factory.agents.professional.tools import ProfessionalPlanWorkspace
+from ai_video_factory.agents.professional.visuals import (
+    VisualCorrection,
+    WholeVideoVisuals,
+    apply_correction,
+    assemble_plan,
 )
 from ai_video_factory.bots.contracts import (
     B11Output,
-    BeatType,
+    B12Output,
     BlockMeta,
     NarrativeCore,
     StrictModel,
-    VisualType,
 )
 
 
 class GroupProposal(StrictModel):
-    """Success-only B1.1 response: no redundant stage or error/null branches."""
+    """Success-only B1.1 group boundaries."""
 
     narrative_core: NarrativeCore
     blocks: list[BlockMeta] = Field(min_length=1)
 
 
-class EditorialTrigger(StrictModel):
-    text: str
-    occurrence: int = Field(ge=1)
+class EditorialFinding(StrictModel):
+    beat_id: str | None
+    problem: str
+    correction: str
 
 
-class EditorialNote(StrictModel):
-    kind: str
-    instruction: str | None
-    trigger: EditorialTrigger | None
+class CreativeReview(StrictModel):
+    """Editorial diagnosis only: Python owns all structural validation."""
 
-
-class PlannedBeat(StrictModel):
-    beat_id: str
-    text: str
-    beat_type: BeatType
-    visual_type: VisualType
-    prompt: str | None
-    video_prompt: str | None
-    reference: bool
-    audio: bool
-    image_prompts: list[str] | None
-    generation_mode: Literal["grid", "independent"] | None
-    editor_notes: list[EditorialNote]
-    cta_group_id: int | None
-    cta_reference_sources: list[Literal["presenter", "ebook"]] | None
-
-
-class PlannedBlock(StrictModel):
-    block_id: int
-    beats: list[PlannedBeat] = Field(min_length=1)
-
-
-class PlannedVideo(StrictModel):
-    visual_style: Literal["profesional"]
-    narrative_core: NarrativeCore
-    blocks: list[PlannedBlock] = Field(min_length=1)
-
-
-def _wire_plan(plan: PlannedVideo) -> dict[str, Any]:
-    """Preserve mandatory nullable B2 fields, omit absent optional metadata."""
-    result = plan.model_dump(mode="json")
-    for block in result["blocks"]:
-        for beat in block["beats"]:
-            for field in (
-                "cta_group_id", "cta_reference_sources",
-                "image_prompts", "generation_mode",
-            ):
-                if beat.get(field) is None:
-                    beat.pop(field, None)
-    return result
+    whole_video_assessment: str
+    issues: list[EditorialFinding]
 
 
 def _save(path: Path, payload: dict[str, Any]) -> None:
-    """Checkpoint each phase; reject symlink and write via temporary replacement."""
     if path.is_symlink() or path.parent.is_symlink():
-        raise ValueError(f"Unsafe agent checkpoint: {path}")
+        raise ValueError(f"Unsafe Professional checkpoint: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + ".tmp")
     if temp.is_symlink():
-        raise ValueError(f"Unsafe agent checkpoint temporary file: {temp}")
-    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        raise ValueError(f"Unsafe Professional temporary checkpoint: {temp}")
+    temp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     temp.replace(path)
 
 
-def _image_input(script: str, avatar: bytes, ebook: bytes | None) -> list[dict[str, Any]]:
-    content: list[dict[str, str]] = [
-        {"type": "input_text", "text": "AUTHORITY — FULL ORIGINAL SCRIPT:\n" + script},
-        {"type": "input_text", "text": (
-            "Use the following PNG only as presenter identity/reference. "
-            "Never recreate its speaking room in generated B-roll."
-        )},
-        {
+def _phase_file(root: Path, stage: str, name: str = "output.json") -> Path:
+    return root / "phases" / stage / name
+
+
+def _visual_input(
+    blocks: list[dict[str, Any]], core: dict[str, Any],
+    avatar: bytes, ebook: bytes | None,
+) -> list[dict[str, Any]]:
+    """One exact source copy: concatenated beat text, plus actual reference images."""
+    content: list[dict[str, Any]] = [{
+        "type": "input_text",
+        "text": (
+            "COMPLETE IMMUTABLE ORIGINAL SCRIPT AS VERBATIM ORDERED BEAT TEXTS. "
+            "These texts concatenate to the authoritative complete script. "
+            "Create a visual for EACH beat ID; do not retype narration.\n"
+            + json.dumps({
+                "narrative_core": core,
+                "source_beats": blocks,
+                "ebook_cover_available": ebook is not None,
+            }, ensure_ascii=False)
+        ),
+    }, {
+        "type": "input_text",
+        "text": (
+            "Authentic talking-presenter identity reference. "
+            "Do not recreate the original narrator's room for generated B-roll."
+        ),
+    }, {
+        "type": "input_image",
+        "image_url": "data:image/png;base64," + base64.b64encode(avatar).decode("ascii"),
+    }]
+    if ebook is None:
+        content.insert(0, {
+            "type": "input_text",
+            "text": (
+                "CAPABILITY GATE: NO AUTHENTIC EBOOK COVER PROVIDED. "
+                "All CTA metadata fields MUST be null. "
+                "Do not invent a book cover, ebook CTA or protected ebook asset; "
+                "preserve the script's actual narration."
+            ),
+        })
+    else:
+        content.extend([{
+            "type": "input_text",
+            "text": "Authentic ebook cover, valid only for actual spoken ebook promotion.",
+        }, {
             "type": "input_image",
-            "image_url": "data:image/png;base64," + base64.b64encode(avatar).decode("ascii"),
-        },
-    ]
-    if ebook is not None:
-        content.extend([
-            {"type": "input_text", "text": (
-                "Authentic ebook cover. CTA beats must preserve its exact identity. "
-                "Only create CTA visuals when actual ebook promotion occurs."
-            )},
-            {
-                "type": "input_image",
-                "image_url": "data:image/png;base64,"
-                + base64.b64encode(ebook).decode("ascii"),
-            },
-        ])
+            "image_url": "data:image/png;base64,"
+            + base64.b64encode(ebook).decode("ascii"),
+        }])
     return [{"role": "user", "content": content}]
 
 
-def _stats(phase: str, result: Any, seconds: float) -> dict[str, Any]:
-    usage = result.context_wrapper.usage
-    details = getattr(usage, "input_tokens_details", None)
-    cached = getattr(details, "cached_tokens", 0) or 0
-    report = {
-        "phase": phase, "seconds": round(seconds, 3),
-        "requests": usage.requests, "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens, "total_tokens": usage.total_tokens,
-        "cached_input_tokens": cached,
+def _compact_report(report: dict[str, Any]) -> dict[str, Any]:
+    rhythm = report.get("rhythm_map") or {}
+    return {
+        "status": report.get("status"),
+        "summary": report.get("summary"),
+        "issues": report.get("issues", []),
+        "rhythm_map": {
+            "basis": rhythm.get("basis"),
+            "between_beat_changes": rhythm.get("between_beat_changes"),
+            "within_beat_changes": rhythm.get("within_beat_changes"),
+            "beats": rhythm.get("beats", []),
+        },
     }
-    print(
-        f"  [OpenAI {phase}] {seconds:.1f}s | entrada={usage.input_tokens} "
-        f"salida={usage.output_tokens} total={usage.total_tokens} "
-        f"caché={cached} solicitudes={usage.requests}",
-        flush=True,
-    )
-    return report
+
+
+def _b12_checkpoints(output: Path, blocks: list[dict[str, Any]],
+                     core: dict[str, Any]) -> None:
+    """Mirror old B1.2 output.json per group, plus its merged payload."""
+    for group in blocks:
+        result = B12Output.model_validate({
+            "pipeline_stage": "B1.2", "block_id": group["block_id"],
+            "beats": group["beats"], "error": None,
+        })
+        _save(output / "B1.2" / f"block_{group['block_id']}" / "output.json",
+              result.model_dump(mode="json"))
+    _save(output / "B1.2" / "merged_output.json", {
+        "schema_version": "b-pipeline-merged-v1",
+        "pipeline_stage": "B1.2",
+        "narrative_core": core, "blocks": blocks,
+    })
 
 
 async def run_professional_director(
     script: str, *, output: Path, avatar: bytes, ebook: bytes | None,
-    model: str, memory_root: Path | None = None, max_corrections: int = 2,
+    model: str, memory_root: Path | None = None, max_corrections: int = 3,
     api_key: str | None = None,
 ) -> dict[str, Any]:
-    """Run five global phases, validate after each, and save compatible outputs.
-
-    Output is consumed by the *existing* downstream Professional TTS/image
-    pipeline. A failed validation is a hard failure: no plan is published.
-    """
+    """Full-script Professional pipeline, gate all downstream work on Python."""
     try:
-        from agents import (
-            Agent,
-            ModelBehaviorError,
-            ModelSettings,
-            RunHooks,
-            Runner,
-            SQLiteSession,
-            set_default_openai_key,
-        )
+        from agents import Agent, ModelBehaviorError, RunHooks, Runner, set_default_openai_key
     except ImportError as exc:
         raise RuntimeError(
-            "Missing OpenAI Agents SDK. Install openai-agents or use "
-            "'uv run --with openai-agents --locked --extra dev'."
+            "Missing Agents SDK. Run with the pinned `uv --with openai-agents` overlay."
         ) from exc
-
     if api_key:
         set_default_openai_key(api_key)
     if not script.strip() or not avatar:
-        raise ValueError("A complete raw script and an avatar PNG are mandatory.")
-    if ebook is None:
-        print(
-            "  [OpenAI preflight] No hay portada real de ebook. "
-            "CTA de ebook DESACTIVADO para este run. "
-            "Si tu guion promociona un ebook, configura --ebook-cover "
-            "antes de ejecutar la planificación.",
-            flush=True,
-        )
+        raise ValueError("Whole nonempty script and actual avatar PNG are required.")
     if output.is_symlink() or output.is_junction():
-        raise ValueError("Unsafe agent run directory.")
+        raise ValueError("Unsafe Professional output path.")
     root = output / "agent_openai"
     if root.is_symlink():
-        raise ValueError("Unsafe agent checkpoint directory.")
+        raise ValueError("Unsafe Professional agent checkpoint path.")
     root.mkdir(parents=True, exist_ok=True)
-    session = SQLiteSession("professional-" + uuid4().hex, str(root / "conversation.db"))
+    if ebook is None:
+        print(
+            "  [OpenAI preflight] No hay portada real del ebook. "
+            "La función especial CTA de ebook está desactivada; "
+            "si el guion promociona un ebook, configura su portada auténtica.",
+            flush=True,
+        )
+
+    source_sha = hashlib.sha256(script.encode("utf-8")).hexdigest()
     workspace = ProfessionalPlanWorkspace(script=script, ebook_available=ebook is not None)
-    tools = build_agents_sdk_tools(workspace)
-    base = Agent(name="Bordell Professional Director", model=model)
-    phases: list[dict[str, Any]] = []
+    director = Agent(name="Bordell Professional Director", model=model)
+    usage: list[dict[str, Any]] = []
 
-    class UsageHooks(RunHooks):
-        """Account for paid model calls even when strict JSON parsing fails."""
-
+    class Meter(RunHooks):
         def __init__(self) -> None:
             self.calls: list[dict[str, Any]] = []
 
         async def on_llm_end(self, context: Any, agent: Any, response: Any) -> None:
-            usage = response.usage
-            details = getattr(usage, "input_tokens_details", None)
-            item = {
-                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
-                "cached_input_tokens": int(getattr(details, "cached_tokens", 0) or 0),
+            info = response.usage
+            cache = getattr(getattr(info, "input_tokens_details", None),
+                            "cached_tokens", 0) or 0
+            self.calls.append({
+                "input_tokens": int(getattr(info, "input_tokens", 0) or 0),
+                "output_tokens": int(getattr(info, "output_tokens", 0) or 0),
+                "total_tokens": int(getattr(info, "total_tokens", 0) or 0),
+                "cached_input_tokens": int(cache),
                 "response_id": getattr(response, "response_id", None),
-                "request_id": getattr(response, "request_id", None),
-            }
-            self.calls.append(item)
-            # Durable accounting, even if Runner raises while parsing this response.
-            _save(root / "usage.json", {"phases": phases, "pending_calls": self.calls})
+            })
+            _save(root / "usage.json", {
+                "phases": usage, "in_progress_calls": self.calls,
+            })
 
-    async def execute(
-        phase: str, input_data: str | list[dict[str, Any]],
-        *, output_type: Any = str, use_tools: bool = False,
+    async def invoke(
+        stage: str, data: Any, schema: Any, *,
+        corrections: int = 2,
     ) -> Any:
-        # Group anchors and whole-video plans are validated by Python AFTER
-        # one structured model response. Avoid extra tool round trips for B1.1.
-        enabled_tools = tools[2:] if use_tools and phase in {
-            "03_evaluation", "04_correction", "05_delivery"
-        } else []
-        # No model write tool for the immense complete video plan: the
-        # controller validates the single typed final output after each pass.
-        actor = base.clone(
-            instructions=load_phase_instructions(phase, memory_root=memory_root)
-            + (
-                "\n\nOUTPUT CONTRACT: The SDK enforces strict structured JSON. "
-                "Return only the required schema object, never Markdown fences, "
-                "comments or explanatory prose outside schema fields."
-                if output_type is not str else ""
+        # Exactly one SDK model turn/request per attempt. No Sessions: they
+        # duplicated complete earlier scripts, images, tool reports and plans.
+        # The SAME logical director receives source truth per global phase.
+        actor = director.clone(
+            instructions=load_phase_instructions(
+                stage, memory_root=memory_root,
             ),
-            output_type=output_type,
-            tools=enabled_tools,
-            model_settings=ModelSettings(
-                max_tokens=8192 if phase == "01_groups" else 50000,
-                parallel_tool_calls=False,
-            ),
+            output_type=schema,
+            tools=[],
         )
-        # Two bounded JSON repairs do not affect the semantic B1.1 validation
-        # retry budget. No paid image/audio/video requests occur here.
-        for attempt in range(3):
-            print(
-                f"\n  [OpenAI] Fase {phase} | llamada {attempt + 1}/3 ...",
-                flush=True,
-            )
-            hooks = UsageHooks()
-            started = perf_counter()
-            try:
+        for attempt in range(corrections + 1):
+            print(f"\n  [OpenAI] Fase {stage}, intento {attempt + 1}/{corrections + 1}",
+                  flush=True)
+            start = perf_counter()
+            meter = Meter()
+            request = copy.deepcopy(data)
+            if attempt:
                 repair = (
-                    "La respuesta anterior no cumplió el JSON estricto del "
-                    "SDK. Devuelve UNA salida íntegra conforme al esquema "
-                    "sin bloques Markdown ni campos extra.\n\n"
+                    "Your previous response did not parse as strict JSON. "
+                    "Return one valid complete schema-conforming object. "
+                    "Do not change the task's original source or rules.\n"
                 )
-                if attempt == 0:
-                    retry_prompt = input_data
-                elif isinstance(input_data, str):
-                    retry_prompt = repair + input_data
+                if isinstance(request, str):
+                    request = repair + request
                 else:
-                    # Preserve original image attachments in every retry.
-                    retry_prompt = copy.deepcopy(input_data)
-                    retry_prompt[0]["content"].insert(
+                    request[0]["content"].insert(
                         0, {"type": "input_text", "text": repair},
                     )
+            try:
                 result = await Runner.run(
-                    actor, retry_prompt, session=session,
-                    max_turns=1 if phase == "01_groups" else 18, hooks=hooks,
+                    actor, request, max_turns=1, hooks=meter,
                 )
-            except ModelBehaviorError as exc:
-                elapsed = perf_counter() - started
-                calls = hooks.calls
-                record = {
-                    "phase": phase, "attempt": attempt + 1,
-                    "status": "invalid_structured_output",
-                    "error_type": type(exc).__name__,
-                    "seconds": round(elapsed, 3), "calls": calls,
-                    "requests": len(calls),
-                    "input_tokens": sum(i["input_tokens"] for i in calls),
-                    "output_tokens": sum(i["output_tokens"] for i in calls),
-                    "total_tokens": sum(i["total_tokens"] for i in calls),
+            except ModelBehaviorError:
+                entry = {
+                    "phase": stage, "status": "invalid_json",
+                    "attempt": attempt + 1,
+                    "elapsed_seconds": round(perf_counter() - start, 3),
+                    "calls": meter.calls,
+                    "input_tokens": sum(x["input_tokens"] for x in meter.calls),
+                    "output_tokens": sum(x["output_tokens"] for x in meter.calls),
+                    "total_tokens": sum(x["total_tokens"] for x in meter.calls),
+                    "requests": len(meter.calls),
                 }
-                phases.append(record)
-                _save(root / "usage.json", {"phases": phases})
-                _save(root / f"{phase}_invalid_json_{attempt + 1}.json", record)
-                print(
-                    f"  [OpenAI {phase}] JSON inválido (intento {attempt + 1}/3); "
-                    f"tokens facturados observados={record['total_tokens']}",
-                    flush=True,
-                )
-                if attempt == 2:
+                usage.append(entry)
+                _save(root / "usage.json", {"phases": usage})
+                _save(_phase_file(root, stage, f"failed_json_{attempt + 1}.json"), entry)
+                if attempt == corrections:
                     raise RuntimeError(
-                        f"{phase}: el SDK rechazó 3 respuestas estructuradas. "
-                        f"Diagnóstico: {root / 'usage.json'}. No se inicia ninguna "
-                        "generación posterior."
+                        f"{stage}: respuesta JSON inválida tras "
+                        f"{corrections + 1} intentos. Ver agent_openai/usage.json."
                     ) from None
                 continue
             except Exception as exc:
-                calls = hooks.calls
-                record = {
-                    "phase": phase, "attempt": attempt + 1,
-                    "status": "failed", "error_type": type(exc).__name__,
-                    "seconds": round(perf_counter() - started, 3),
-                    "calls": calls, "requests": len(calls),
-                    "input_tokens": sum(i["input_tokens"] for i in calls),
-                    "output_tokens": sum(i["output_tokens"] for i in calls),
-                    "total_tokens": sum(i["total_tokens"] for i in calls),
+                entry = {
+                    "phase": stage, "status": "failed",
+                    "attempt": attempt + 1, "error": type(exc).__name__,
+                    "calls": meter.calls,
+                    "input_tokens": sum(x["input_tokens"] for x in meter.calls),
+                    "output_tokens": sum(x["output_tokens"] for x in meter.calls),
+                    "total_tokens": sum(x["total_tokens"] for x in meter.calls),
                 }
-                phases.append(record)
-                _save(root / "usage.json", {"phases": phases})
+                usage.append(entry)
+                _save(root / "usage.json", {"phases": usage})
                 raise RuntimeError(
-                    f"OpenAI phase {phase} failed ({type(exc).__name__}). "
-                    f"Check {root / 'usage.json'}. No downstream media jobs started."
+                    f"{stage} falló ({type(exc).__name__}); datos en "
+                    "agent_openai/usage.json. Nada enviado a generación."
                 ) from None
-            metrics = _stats(phase, result, perf_counter() - started)
-            metrics["attempt"] = attempt + 1
-            metrics["status"] = "completed"
-            phases.append(metrics)
-            _save(root / "usage.json", {"phases": phases})
+            metrics = {
+                "phase": stage, "status": "passed", "attempt": attempt + 1,
+                "seconds": round(perf_counter() - start, 3),
+                "requests": result.context_wrapper.usage.requests,
+                "input_tokens": result.context_wrapper.usage.input_tokens,
+                "output_tokens": result.context_wrapper.usage.output_tokens,
+                "total_tokens": result.context_wrapper.usage.total_tokens,
+                "cached_input_tokens": (
+                    getattr(getattr(result.context_wrapper.usage,
+                                    "input_tokens_details", None),
+                            "cached_tokens", 0) or 0
+                ),
+            }
+            usage.append(metrics)
+            _save(root / "usage.json", {"phases": usage})
+            print(
+                f"  [OpenAI {stage}] entrada={metrics['input_tokens']} "
+                f"salida={metrics['output_tokens']} "
+                f"total={metrics['total_tokens']} "
+                f"caché={metrics['cached_input_tokens']} "
+                f"solicitudes={metrics['requests']}",
+                flush=True,
+            )
             return result.final_output
-        raise RuntimeError("Unreachable structured-output retry state.")
+        raise RuntimeError("Unreachable structured-output retry loop")
 
-    source_hash = hashlib.sha256(script.encode("utf-8")).hexdigest()
-    input_script = "Guion completo (fuente literal inmutable):\n" + script
-
-    # 1. B1.1 produces anchors only. Python materializes the original bytes.
-    groups_ok = False
-    check: dict[str, Any] = {"status": "blocked", "issues": []}
-    for attempt in range(max_corrections + 1):
-        proposal = await execute(
-            "01_groups", input_script if attempt == 0 else (
-                "Repara ÚNICAMENTE los anclajes B1.1 rechazados por Python. "
-                + json.dumps(check, ensure_ascii=False) + "\n" + input_script
-            ),
-            output_type=GroupProposal,
+    # 01: original B1.1 grouping; Python owns exact materialized source.
+    group_validation: dict[str, Any] = {}
+    for index in range(max_corrections + 1):
+        answer = await invoke(
+            "01_groups",
+            "GUION ORIGINAL COMPLETO, INMUTABLE:\n" + script
+            + ("\n\nErrores específicos de anclajes previos:\n"
+               + json.dumps(group_validation.get("issues", []), ensure_ascii=False)
+               if index else ""),
+            GroupProposal,
         )
         b11 = B11Output(
-            pipeline_stage="B1.1", narrative_core=proposal.narrative_core,
-            blocks=proposal.blocks, error=None,
+            pipeline_stage="B1.1",
+            narrative_core=answer.narrative_core,
+            blocks=answer.blocks, error=None,
         )
-        check = workspace.submit_groups([
-            x.model_dump(mode="json") for x in proposal.blocks
+        group_validation = workspace.submit_groups([
+            g.model_dump(mode="json") for g in answer.blocks
         ])
-        _save(root / f"groups_attempt_{attempt + 1}.json", {
-            "output": b11.model_dump(mode="json"), "validation": check,
+        _save(_phase_file(root, "01_groups", f"attempt_{index + 1}.json"), {
+            "output": b11.model_dump(mode="json"),
+            "validation": group_validation,
         })
-        if check["status"] == "passed":
-            groups_ok = True
+        if group_validation["status"] == "passed":
             break
-        print(
-            "  [OpenAI 01_groups] Límite(s) rechazado(s) por Python: "
-            + "; ".join(
-                issue["rule_id"] + ": " + issue["message"]
-                for issue in check["issues"][:4]
-            ),
-            flush=True,
-        )
-    if not groups_ok:
-        raise ValueError("Professional grouping exhausted validation retries.")
-    if b11.narrative_core is None:
-        raise ValueError("B1.1 narrative core was not returned.")
-    core = b11.narrative_core.model_dump(mode="json")
+        print("  [01_groups] Error: " + "; ".join(
+            i["message"] for i in group_validation["issues"][:5]
+        ), flush=True)
+    if group_validation["status"] != "passed":
+        raise ValueError("B1.1 no pudo delimitar el guion; ver 01_groups.")
+    core = answer.narrative_core.model_dump(mode="json")
     workspace.expected_narrative_core = copy.deepcopy(core)
+    materialized_groups = group_validation["groups"]
+    _save(_phase_file(root, "01_groups"), {
+        "output": b11.model_dump(mode="json"),
+        "validation": group_validation,
+    })
     _save(root / "groups.json", {
-        "source_sha256": source_hash, "narrative_core": core,
-        "blocks": check["groups"],
+        "source_sha256": source_sha,
+        "narrative_core": core, "blocks": materialized_groups,
     })
+    _save(output / "B1.1" / "output.json", b11.model_dump(mode="json"))
 
-    # 2. Full video, not a request per group. Input includes the original
-    # avatar image and actual cover when present.
-    phase2 = _image_input(script, avatar, ebook)
-    if ebook is None:
-        phase2[0]["content"].insert(0, {
-            "type": "input_text",
-            "text": (
-                "RUN CAPABILITY GATE: An authentic ebook cover is NOT provided. "
-                "This run CANNOT create ebook CTA beats. "
-                "For EVERY beat, set cta_group_id=null and "
-                "cta_reference_sources=null. "
-                "Do not invent an ebook promotion, book cover, offer, price, "
-                "QR overlay or ebook-related asset. "
-                "If narration mentions a call to action, preserve the literal "
-                "narration and illustrate it as ordinary non-ebook material. "
-                "If the actual text explicitly promotes an ebook, the operator "
-                "must configure a real ebook cover in a separate run; do not "
-                "fabricate a replacement."
-            ),
+    # 02a: ONE global B1.2 call before any visual prompting. Return only
+    # short verbatim end anchors and beat types; Python reconstructs beat text.
+    cuts_validation: dict[str, Any] = {}
+    cuts: WholeScriptCuts | None = None
+    for index in range(max_corrections + 1):
+        previous = (
+            "\n\nPreviously rejected beat cuts (correct the issues, keep "
+            "all valid narrative boundaries):\n"
+            + json.dumps({
+                "issues": cuts_validation.get("issues", []),
+                "previous_cuts": cuts.model_dump(mode="json") if cuts else None,
+            }, ensure_ascii=False)
+        ) if index else ""
+        cuts = await invoke(
+            "02_beats",
+            "ORIGINAL SCRIPT, AS EXACT CONSECUTIVE MATERIALIZED GROUP TEXTS. "
+            "Read ALL groups before choosing any cuts; the concatenation is "
+            "the original script verbatim. Source anchors are per group.\n"
+            + json.dumps({
+                "narrative_core": core, "groups": materialized_groups,
+            }, ensure_ascii=False) + previous,
+            WholeScriptCuts,
+        )
+        cuts_validation = validate_and_materialize_cuts(materialized_groups, cuts)
+        _save(_phase_file(root, "02_beats", f"attempt_{index + 1}.json"), {
+            "proposed_cuts": cuts.model_dump(mode="json"),
+            "validation": cuts_validation,
         })
-    phase2[0]["content"].append({
-        "type": "input_text",
-        "text": "Materialized B1.1 groups and narrative_core (authoritative):\n"
-        + json.dumps({
-            "narrative_core": core,
-            "groups": [
-                {key: value for key, value in group.items() if key != "text"}
-                for group in check["groups"]
-            ],
-        }, ensure_ascii=False),
-    })
-    plan = await execute("02_planning", phase2, output_type=PlannedVideo)
-    workspace.submit_plan_revision(_wire_plan(plan))
-    # The first accepted CTA ownership snapshot is frozen for all corrections:
-    # a reviewer may not silently move or repaint an ebook promotion beat.
-    if workspace.report is not None and workspace.report["status"] != "blocked":
-        workspace.protected_cta_beats = {
-            beat["beat_id"]: copy.deepcopy(beat)
-            for block in workspace.candidate["blocks"]
-            for beat in block["beats"]
-            if beat.get("cta_group_id") is not None
-        }
-    # A changed narrative core is now a Python validation issue, so phase 4
-    # can repair it before the delivery gate instead of wasting phase 2.
-    # Missing cover is a deterministic, repairable plan validation error.
-    # Never throw away the paid phase-2 output before saving its checkpoint.
-    _save(root / "plan_initial.json", {
-        "plan": workspace.candidate, "validation": workspace.report,
-    })
-
-    # 3. The model can actively call the bounded Python validation functions.
-    assessment = await execute(
-        "03_evaluation",
-        "Evalúa el plan audiovisual completo; ejecuta las herramientas Python de "
-        "validación y ritmo. No modifiques todavía la planificación. "
-        "Informe determinista actual:\n"
-        + json.dumps(workspace.validate_plan(), ensure_ascii=False),
-        use_tools=True,
-    )
-    _save(root / "review.json", {
-        "assessment": str(assessment), "validation": workspace.validate_plan(),
-    })
-
-    # 4. Cohesive revisions; each is followed by Python validation.
-    for attempt in range(max_corrections):
-        report = workspace.validate_plan()
-        # The first correction pass is ALWAYS needed: Python cannot evaluate
-        # causal fidelity, repetition or motion reliability.
-        if attempt > 0 and report["status"] != "blocked":
+        if cuts_validation["status"] == "passed":
             break
-        corrected = await execute(
-            "04_correction",
-            "Revisa el plan completo, aplica las correcciones necesarias y "
-            "devuelve la versión corregida íntegra. Guion completo:\n"
-            + script + "\nGrupos:\n"
-            + json.dumps(check["groups"], ensure_ascii=False)
-            + "\nPlan completo:\n"
-            + json.dumps(workspace.candidate, ensure_ascii=False)
-            + "\nInforme Python:\n" + json.dumps(report, ensure_ascii=False)
-            + "\nRevisión creativa del agente:\n" + str(assessment),
-            output_type=PlannedVideo, use_tools=True,
+        print("  [02_beats] Límites rechazados: " + "; ".join(
+            x["message"] for x in cuts_validation["issues"][:5]
+        ), flush=True)
+    if cuts_validation["status"] != "passed" or cuts is None:
+        raise ValueError(
+            "No se han podido validar todos los beats ANTES de generar visuales. "
+            "Los fallos y límites están guardados en agent_openai/phases/02_beats."
         )
-        workspace.submit_plan_revision(
-            _wire_plan(corrected)
-        )
-        _save(root / f"correction_{attempt + 1}.json", {
-            "plan": workspace.candidate, "validation": workspace.validate_plan(),
-        })
 
-    # 5. Final fresh check (in the controller, independent of model claims).
-    report = workspace.validate_plan()
-    if report["status"] == "blocked":
-        _save(root / "blocked.json", {"validation": report})
-        raise ValueError("Professional director cannot deliver: " +
-                         ", ".join(i["rule_id"] for i in report["issues"]))
-    if workspace.candidate is None or workspace.candidate["narrative_core"] != core:
-        raise ValueError("Final Professional narrative_core is inconsistent with B1.1.")
-    # CTA groups must be contiguous, chronologically ordered and nonoverlapping.
-    cta_ids = [
-        (beat["beat_id"], beat.get("cta_group_id"))
-        for block in workspace.candidate["blocks"] for beat in block["beats"]
-    ]
-    groups_seen: set[int] = set()
-    previous: int | None = None
-    for beat_id, group_id in cta_ids:
-        if group_id is not None and (
-            type(group_id) is not int or group_id < 1
-            or (group_id in groups_seen and group_id != previous)
-        ):
-            raise ValueError(f"Invalid CTA group/ordering at {beat_id}.")
-        if group_id != previous:
-            if previous is not None:
-                groups_seen.add(previous)
-        previous = group_id
-    if previous is not None:
-        groups_seen.add(previous)
-    if groups_seen and groups_seen != set(range(1, len(groups_seen) + 1)):
-        raise ValueError("CTA groups must have consecutive IDs starting at 1.")
+    source_beats = cuts_validation["blocks"]
+    _save(_phase_file(root, "02_beats"), {
+        "cuts": cuts.model_dump(mode="json"),
+        "output": source_beats, "validation": cuts_validation,
+    })
+    _save(root / "beats.json", {
+        "source_sha256": source_sha, "narrative_core": core,
+        "blocks": source_beats,
+    })
+    _b12_checkpoints(output, source_beats, core)
 
-    await execute(
-        "05_delivery",
-        "Confirma la entrega, sin modificar el plan. Ejecuta el validador y "
-        "no declares válido nada que Python rechace. "
-        + json.dumps(report["summary"], ensure_ascii=False),
-        use_tools=True,
+    # 02b: complete-video visual planning; source beat IDs and text are
+    # immutable and not repeated in the model's structured visual output.
+    visuals = await invoke(
+        "02_visuals", _visual_input(source_beats, core, avatar, ebook),
+        WholeVideoVisuals,
     )
+    visual_validation_error: str | None = None
+    try:
+        candidate = assemble_plan(
+            narrative_core=core, source_beats=source_beats, visuals=visuals,
+        )
+    except ValueError as exc:
+        visual_validation_error = str(exc)
+        # Reject a broken visual contract BEFORE pretending to have a plan.
+        _save(_phase_file(root, "02_visuals"), {
+            "output": visuals.model_dump(mode="json"),
+            "error": visual_validation_error,
+        })
+        raise RuntimeError(
+            "El agente devolvió un inventario visual incompatible con los "
+            "beats ya validados; respuesta guardada en 02_visuals/output.json: "
+            + visual_validation_error
+        ) from None
+    workspace.submit_plan_revision(candidate)
+    _save(_phase_file(root, "02_visuals"), {
+        "output": candidate, "validation": workspace.report,
+    })
+    _save(root / "plan_initial.json", {
+        "plan": candidate, "validation": workspace.report,
+    })
+    _save(output / "B2" / "candidate_output.json", {
+        "output": candidate, "validation": workspace.report,
+    })
+
+    # 03: ONE global creative review, one existing Python deterministic report.
+    # No tools, no SDK session history, no repeated enormous tool outputs.
+    review = await invoke(
+        "03_evaluation",
+        "Review the COMPLETE original script in the validated beat texts "
+        "below and the accompanying visual choices. Evaluate real YouTube "
+        "narrative rhythm, momentum, specificity and physical feasibility. "
+        "Python deterministic failures are authoritative; do NOT invent "
+        "new rhythm quotas. Return concrete, actionable editorial findings.\n"
+        + json.dumps({
+            "plan": workspace.candidate,
+            "python_validation": _compact_report(workspace.validate_plan()),
+        }, ensure_ascii=False),
+        CreativeReview,
+    )
+    _save(_phase_file(root, "03_evaluation"), {
+        "output": review.model_dump(mode="json"),
+        "validation": _compact_report(workspace.validate_plan()),
+    })
+    _save(root / "review.json", {
+        "assessment": review.model_dump(mode="json"),
+        "validation": _compact_report(workspace.validate_plan()),
+    })
+    _save(output / "B2.1" / "review_output.json", {
+        "schema_version": "professional-editorial-review-v1",
+        "review": review.model_dump(mode="json"),
+    })
+
+    # 04: visual PATCHES, not a full replanning of every beat. A true
+    # narrative recut must explicitly replace its group's cuts and visuals.
+    changed_review = review.issues
+    for index in range(max_corrections):
+        report = workspace.validate_plan()
+        if report["status"] != "blocked" and not changed_review:
+            break
+        assert workspace.candidate is not None
+        prev_by_id = {
+            b["beat_id"]: b for group in workspace.candidate["blocks"]
+            for b in group["beats"]
+        }
+        affected = {
+            beat_id for i in report.get("issues", [])
+            for beat_id in i.get("beat_ids", [])
+        }
+        affected.update(i.beat_id for i in changed_review if i.beat_id)
+        # For global failures (avatar fraction, editorial rhythm, preflight)
+        # include the whole visual manifest as context, but do not ask the
+        # model to re-emit the full plan.
+        manifest = [{
+            "beat_id": b["beat_id"], "visual_type": b["visual_type"],
+            "block_id": g["block_id"], "image_count": len(b.get("image_prompts", []))
+            if isinstance(b.get("image_prompts"), list) else 1,
+        } for g in workspace.candidate["blocks"] for b in g["beats"]]
+        relevant = (
+            list(prev_by_id.values()) if not affected
+            else [b for k, b in prev_by_id.items() if k in affected]
+        )
+        response = await invoke(
+            "04_correction",
+            "Apply exact, limited changes to this WHOLE-video plan, from "
+            "the complete narration (source_beats), deterministic issues "
+            "and editorial review. NEVER fabricate beat text. "
+            "Return only visual_patches for existing beats. For a genuine "
+            "narrative resegmentation, return resegmented_blocks plus "
+            "full replanned visual entries ONLY for the resegmented group. "
+            "Unchanged beats and groups must NOT be emitted in the output.\n"
+            + json.dumps({
+                "source_beats": source_beats,
+                "issues": report.get("issues", []),
+                "editorial_findings": [
+                    x.model_dump(mode="json") for x in changed_review
+                ],
+                "visual_manifest": manifest,
+                "relevant_visual_choices": relevant,
+                "ebook_cover_available": ebook is not None,
+            }, ensure_ascii=False),
+            VisualCorrection,
+        )
+        proposed_cuts = combine_cut_corrections(cuts, response.resegmented_blocks)
+        new_beats = validate_and_materialize_cuts(materialized_groups, proposed_cuts)
+        if new_beats["status"] != "passed":
+            _save(_phase_file(root, "04_correction",
+                              f"attempt_{index + 1}.json"), {
+                "output": response.model_dump(mode="json"),
+                "validation": new_beats,
+            })
+            changed_review = []
+            continue
+        try:
+            updated_plan = apply_correction(
+                current_plan=workspace.candidate,
+                source_beats=new_beats["blocks"],
+                correction=response,
+            )
+        except ValueError as exc:
+            _save(_phase_file(root, "04_correction",
+                              f"attempt_{index + 1}.json"), {
+                "output": response.model_dump(mode="json"),
+                "validation": {"status": "blocked", "issues": [{
+                    "rule_id": "INVALID_CORRECTION",
+                    "message": str(exc),
+                }]},
+            })
+            changed_review = []
+            continue
+        outcome = workspace.submit_plan_revision(updated_plan)
+        _save(_phase_file(root, "04_correction",
+                          f"attempt_{index + 1}.json"), {
+            "output": response.model_dump(mode="json"),
+            "plan": updated_plan, "validation": outcome,
+        })
+        _save(root / f"correction_{index + 1}.json", {
+            "plan": updated_plan, "validation": outcome,
+        })
+        if outcome["status"] != "blocked":
+            cuts = proposed_cuts
+            source_beats = new_beats["blocks"]
+            if response.resegmented_blocks:
+                _b12_checkpoints(output, source_beats, core)
+                _save(_phase_file(root, "02_beats", "final_after_correction.json"),
+                      {"cuts": cuts.model_dump(mode="json"),
+                       "blocks": source_beats})
+            changed_review = []
+        else:
+            changed_review = []
+
+    # 05: Python-only release. A green result is never asserted by the LLM.
+    final_report = workspace.validate_plan()
+    if final_report["status"] == "blocked":
+        _save(_phase_file(root, "05_delivery"), {
+            "status": "blocked", "validation": final_report,
+        })
+        _save(root / "blocked.json", {"validation": final_report})
+        codes = sorted(set(i["rule_id"] for i in final_report["issues"]))
+        raise ValueError(
+            "Professional director cannot deliver (" + ", ".join(codes)
+            + "). Complete report: agent_openai/phases/05_delivery/output.json"
+        )
+
     projection = workspace.deliver()
+    final_plan = workspace.candidate
+    if final_plan is None:
+        raise RuntimeError("No canonical Professional plan to publish.")
+    if final_plan["narrative_core"] != core:
+        raise ValueError("Professional B1.1 narrative_core changed.")
     _save(root / "approved_plan.json", {
-        "source_sha256": source_hash,
-        "groups": check["groups"], "plan": workspace.candidate,
-        "validation": report, "usage": phases,
+        "source_sha256": source_sha,
+        "groups": materialized_groups, "plan": final_plan,
+        "validation": final_report, "usage": usage,
     })
     _save(root / "editor_plan.json", projection["editor_plan"])
+    _save(_phase_file(root, "05_delivery"), {
+        "status": "passed",
+        "source_sha256": source_sha,
+        "plan": final_plan, "validation": final_report,
+    })
+    _save(output / "B2" / "merged_output.json", projection["b2_merged"])
+    for block in projection["b2_merged"]["blocks"]:
+        block_payload = {
+            "pipeline_stage": "B2", "narrative_core": core,
+            "blocks": [block], "error": None,
+        }
+        _save(output / "B2" / f"block_{block['block_id']}" / "output.json",
+              block_payload)
+    _save(output / "visual_plan.json", projection["visual_plan"])
+    print("  [OpenAI] Plan completo validado y outputs por fase guardados.",
+          flush=True)
     return {
-        "b11": b11,
-        "groups": check["groups"],
-        "projection": projection,
-        "usage": phases,
-        "validation": report,
+        "b11": b11, "groups": materialized_groups,
+        "projection": projection, "usage": usage,
+        "validation": final_report,
     }
