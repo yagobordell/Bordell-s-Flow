@@ -502,17 +502,18 @@ async def run_professional_director(
             correction = await invoke(
                 "04_correction",
                 "Return ONE coherent correction covering ALL remaining structural "
-                "and editorial issues. EVERY previously failing source span MUST "
-                "be split at exact, meaningful verbatim anchors so each revised "
-                "beat is <=100 stripped characters AND <=40 words. Do NOT "
-                "merge an overlong sentence into one beat, duplicate source "
-                "narration, change the narration, or create a phantom beat. "
-                "Verify EACH new anchor exists after the previous one. "
-                "Use replaced_groups for narrative recuts: each entire "
-                "replaced group MUST include BOTH new beat anchors AND all "
-                "corresponding visual choices. Use visual_patches only for "
-                "unchanged boundaries. Preserve untouched blocks and protected "
-                "CTA material. Return empty lists only when no edits are needed.\n"
+                "and editorial issues. EVERY failing source span MUST "
+                "be divided into semantically complete beats, each carrying "
+                "its exact original text and satisfying <=100 stripped "
+                "characters AND <=40 words. Never merge an overlong "
+                "sentence into one beat, drop or duplicate words, or create "
+                "phantom narration. The concatenated beat texts must cover "
+                "the complete original group in order. Use replaced_groups "
+                "for narrative recuts: every revised beat carries BOTH "
+                "its source text AND visual choice. Use visual_patches "
+                "only for unchanged text and metadata. Preserve untouched "
+                "blocks and protected CTA assets. Return empty lists only "
+                "when there is genuinely nothing to correct.\n"
                 + json.dumps({
                     "narrative_core": core,
                     "original_groups": materialized_groups,
