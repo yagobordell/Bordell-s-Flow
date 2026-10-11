@@ -10,6 +10,7 @@ import json
 import math
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -139,6 +140,7 @@ def render_b2_ltx_video(
         raise B2VideoCompositionError("ffmpeg and ffprobe are required for B2 LTX video")
     if run_dir.is_symlink():
         raise B2VideoCompositionError("Refusing linked LTX render directory")
+    composition_started = time.perf_counter()
     beats = timeline["beats"]
     avatar = _verified_asset(
         output, manifest.get("avatar_file", "avatar.png"),
@@ -189,6 +191,7 @@ def render_b2_ltx_video(
     total_frames = 0
     image_count = 0
 
+    segment_prepare_started = time.perf_counter()
     for index, beat in enumerate(beats):
         first = round(beat["start_seconds"] * _FPS)
         last = round(beat["end_seconds"] * _FPS)
@@ -338,6 +341,7 @@ def render_b2_ltx_video(
         beat["render_start_frame"] = first
         beat["render_end_frame"] = last
 
+    segment_prepare_seconds = time.perf_counter() - segment_prepare_started
     if previous_end != round(timeline["duration_seconds"] * _FPS):
         raise B2VideoCompositionError("Final B2 frame count differs from narration")
     concat = run_dir / "timeline.ffconcat"
@@ -384,8 +388,12 @@ def render_b2_ltx_video(
             "-t", f"{timeline['duration_seconds']:.9f}",
             "-movflags", "+faststart", str(temporary),
         ])
+        encoding_started = time.perf_counter()
         _run_ffmpeg(command, "B2 LTX final mux")
+        final_encode_seconds = time.perf_counter() - encoding_started
+        verification_started = time.perf_counter()
         actual = _probe_final(temporary, timeline["duration_seconds"], total_frames)
+        final_verify_seconds = time.perf_counter() - verification_started
         temporary.replace(final)
     finally:
         temporary.unlink(missing_ok=True)
@@ -405,6 +413,12 @@ def render_b2_ltx_video(
         "audio_source": "original_fish_pcm_master_only",
         "avatar_media_layout": "side_by_side_50_50",
         "media_image_motion": {"animated_beats": image_count},
+        "composition_timings_seconds": {
+            "segment_preparation": round(segment_prepare_seconds, 3),
+            "final_encoding": round(final_encode_seconds, 3),
+            "final_verification": round(final_verify_seconds, 3),
+            "composition_total": round(time.perf_counter() - composition_started, 3),
+        },
     }
     if overlay_metadata is not None:
         result["professional_ebook_qr"] = overlay_metadata
