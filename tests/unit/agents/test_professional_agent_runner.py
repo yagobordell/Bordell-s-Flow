@@ -115,7 +115,8 @@ def test_real_five_phase_controller_uses_one_agent_session(
     assert len({id(item[1]) for item in invocations}) == 1
     assert all("Professional Director" in item[0].name for item in invocations)
     assert all(item[0].model == "test-model" for item in invocations)
-    assert any(tool.__name__ == "submit_groups" for tool in invocations[0][0].tools)
+    assert invocations[0][0].tools == []
+    assert invocations[0][0].model_settings.max_tokens == 8192
     assert invocations[2 if fail_first_json else 1][0].tools == []
     assert all(
         tool.__name__ != "submit_plan_revision"
