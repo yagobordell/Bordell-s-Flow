@@ -530,6 +530,34 @@ async def run_professional_director(
             }, ensure_ascii=False),
             VisualCorrection,
         )
+        # A reported editorial problem must not be silently erased by an
+        # unrelated successful Python validation. Track requested repairs.
+        patched_ids = {item.beat_id for item in response.visual_patches}
+        resegmented_ids = {
+            beat["beat_id"]
+            for group in workspace.candidate["blocks"]
+            if group["block_id"] in {
+                part.block_id for part in response.resegmented_blocks
+            }
+            for beat in group["beats"]
+        }
+        delivered = patched_ids | resegmented_ids
+        if not delivered and changed_review:
+            feedback = {
+                "rule_id": "EDITORIAL_REVIEW_UNADDRESSED",
+                "message": (
+                    "The whole-video review found concrete problems, but "
+                    "the correction made no changes. Return targeted patches "
+                    "or explicit resegmentation rather than discarding review."
+                ),
+            }
+            correction_feedback = [feedback]
+            _save(_phase_file(root, "04_correction",
+                              f"attempt_{index + 1}.json"), {
+                "output": response.model_dump(mode="json"),
+                "validation": {"status": "blocked", "issues": [feedback]},
+            })
+            continue
         proposed_cuts = combine_cut_corrections(cuts, response.resegmented_blocks)
         new_beats = validate_and_materialize_cuts(materialized_groups, proposed_cuts)
         if new_beats["status"] != "passed":
@@ -582,7 +610,11 @@ async def run_professional_director(
                   {"cuts": cuts.model_dump(mode="json"),
                    "blocks": source_beats})
         correction_feedback = outcome.get("issues", [])
-        changed_review = []
+        changed_review = [
+            issue for issue in changed_review
+            if issue.beat_id not in delivered
+            and not (issue.beat_id is None and delivered)
+        ]
 
     _save(_phase_file(root, "04_correction"), {
         "status": workspace.validate_plan()["status"],
