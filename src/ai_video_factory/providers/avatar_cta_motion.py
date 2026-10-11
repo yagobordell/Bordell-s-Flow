@@ -13,8 +13,14 @@ from fractions import Fraction
 from pathlib import Path
 
 
+def _sha256(file: Path) -> str:
+    with file.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
 def probe_manual_motion(file: Path) -> float:
-    if file.is_symlink() or not file.is_file() or file.suffix.lower() != ".mp4":
+    if (file.is_symlink() or file.is_junction()
+            or not file.is_file() or file.suffix.lower() != ".mp4"):
         raise SystemExit(f"Falta el motion graphic MP4 manual: {file}")
     try:
         result = subprocess.run(
@@ -30,16 +36,17 @@ def probe_manual_motion(file: Path) -> float:
             raise ValueError("un único canal de vídeo y ningún canal de audio")
         track = video[0]
         rate = Fraction(track.get("avg_frame_rate", "0/1"))
+        nominal_rate = Fraction(track.get("r_frame_rate", "30/1"))
         if (
             track.get("codec_name") != "h264"
             or track.get("width") != 1920
             or track.get("height") != 1080
             or track.get("pix_fmt") != "yuv420p"
-            or rate != 30
+            or rate != 30 or nominal_rate != 30
         ):
             raise ValueError("H.264, yuv420p, 1920x1080, 30 FPS")
         duration = float(info["format"]["duration"])
-        if not 0 < duration < 3600:
+        if not 1.5 <= duration < 3600:
             raise ValueError("duración MP4 positiva y válida")
         return duration
     except (OSError, subprocess.CalledProcessError, KeyError, TypeError,
@@ -68,7 +75,7 @@ def motion_source(directory: Path) -> dict[str, object]:
             raise SystemExit("Motion manual debe llamarse motion_manual.mp4")
         file = directory / "motion_manual.mp4"
         probe_manual_motion(file)
-        digest = hashlib.sha256(file.read_bytes()).hexdigest()
+        digest = _sha256(file)
         if record.get("sha256") != digest:
             raise SystemExit("Motion manual cambiado: revisar SHA-256 antes de continuar")
     return record
@@ -135,7 +142,7 @@ def ensure_avatar_cta_motion(
                     raise SystemExit("Configuración manual cancelada.") from stop
                 if answer in {"q", "quit"}:
                     raise SystemExit("Configuración manual cancelada.") from exc
-        record.update(file=file.name, sha256=hashlib.sha256(file.read_bytes()).hexdigest())
+        record.update(file=file.name, sha256=_sha256(file))
     temp = saved.with_name("motion_source.json.part")
     if temp.exists() or temp.is_symlink():
         raise SystemExit("Configuración de motion incompleta; reconciliar .part")
