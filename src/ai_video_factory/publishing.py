@@ -150,7 +150,12 @@ def _collect(
                 raise PublicationError(f"Linked bot checkpoint: {item}")
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
-                add("Bots/" + rel, rel)
+                destination = (
+                    "Bots/_pipeline_compat/" + rel
+                    if (work / "agent_openai").is_dir()
+                    else "Bots/" + rel
+                )
+                add(destination, rel)
     # This directory exists only for Professional OpenAI runs. Archive all
     # accepted and rejected phase artifacts alongside the legacy B-stage
     # outputs in completed publications; Casero is unaffected.
