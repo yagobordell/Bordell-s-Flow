@@ -1,7 +1,9 @@
-"""Minimal visual-only model output: Python owns immutable beat IDs and text.
+"""Visual choice subcontracts inside each JOINT narrated+visual beat.
 
-A whole-video model choice refers to the validated B1.2 beats by ID, but
-never retypes narration, ID source boundaries, or narrative beat taxonomy.
+The Professional SDK phase-02 response is WholeVideoDirection, where each
+DirectedBeat contains its source boundary and its visual choices together.
+VisualChoice is reused only for validating visual data and applying targeted
+visual patches, never for a separate text-first then visuals model call.
 """
 from __future__ import annotations
 
