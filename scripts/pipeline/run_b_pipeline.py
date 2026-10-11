@@ -11,8 +11,8 @@ import sys
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
 from time import perf_counter
+from types import SimpleNamespace
 from typing import Literal
 from uuid import uuid4
 
@@ -2699,9 +2699,11 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
-    if args.feedback_gpt is not None or args.approve_gpt_feedback is not None:
+    if (getattr(args, "feedback_gpt", None) is not None
+        or getattr(args, "approve_gpt_feedback", None) is not None):
         from ai_video_factory.agents.professional.feedback import (
-            approve_feedback, propose_feedback,
+            approve_feedback,
+            propose_feedback,
         )
 
         output_root = args.output if args.output is not None else settings.output_dir
