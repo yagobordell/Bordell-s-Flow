@@ -396,3 +396,90 @@ def test_approve_feedback_updates_memory_only(tmp_path):
     assert "approved_memory_only" in proposal.read_text()
     with pytest.raises(ValueError, match="not pending approval"):
         approve_feedback(proposal, output=output, memory_root=memory)
+
+
+def test_global_correction_retries_only_while_source_errors_improve(
+    tmp_path, monkeypatch,
+):
+    """A 2-error -> 1-error -> green recut stays in one 04 phase."""
+    script, groups, core, parts = _fixture()
+    seen = []
+    correction_calls = 0
+
+    def direction_from_indices(indices):
+        original = _direction(parts).blocks[0].beats
+        beats = []
+        for number, index in enumerate(indices):
+            beat = original[index].model_copy(deep=True)
+            beat.beat_id = f"1{chr(65 + number)}"
+            beats.append(beat)
+        return WholeVideoDirection(blocks=[
+            DirectedGroup(block_id=1, beats=beats),
+        ])
+
+    class FakeRunner:
+        @staticmethod
+        async def run(agent, payload, *, max_turns=1, hooks=None):
+            nonlocal correction_calls
+            seen.append(agent.output_type)
+            if agent.output_type is GroupProposal:
+                output = GroupProposal.model_validate({
+                    "narrative_core": core, "blocks": groups,
+                })
+            elif agent.output_type is WholeVideoDirection:
+                output = direction_from_indices([1, 3])
+            elif agent.output_type is CreativeReview:
+                output = CreativeReview(
+                    whole_video_assessment="Must fix source lengths",
+                    issues=[],
+                )
+            elif agent.output_type is DirectionCorrection:
+                correction_calls += 1
+                indices = [0, 1, 3] if correction_calls == 1 else [0, 1, 2, 3]
+                output = DirectionCorrection(
+                    replaced_groups=direction_from_indices(indices).blocks,
+                    visual_patches=[],
+                )
+            else:
+                raise AssertionError(f"Unexpected type: {agent.output_type}")
+            usage = SimpleNamespace(
+                requests=1, input_tokens=10, output_tokens=10,
+                total_tokens=20,
+                input_tokens_details=SimpleNamespace(cached_tokens=0),
+            )
+            if hooks:
+                await hooks.on_llm_end(
+                    None, agent, SimpleNamespace(
+                        usage=usage, response_id="offline",
+                    ),
+                )
+            return SimpleNamespace(
+                final_output=output,
+                context_wrapper=SimpleNamespace(usage=usage),
+            )
+
+    monkeypatch.setitem(sys.modules, "agents", SimpleNamespace(
+        Agent=FakeAgent, Runner=FakeRunner,
+        ModelBehaviorError=FakeModelBehaviorError,
+        RunHooks=type("RunHooks", (), {}),
+        set_default_openai_key=lambda key: None,
+    ))
+    result = asyncio.run(run_professional_director(
+        script, output=tmp_path, avatar=b"PNG", ebook=None, model="offline",
+    ))
+    assert result["validation"]["status"] == "passed"
+    assert correction_calls == 2
+    assert seen.count(DirectionCorrection) == 2
+    phase04 = tmp_path / "agent_openai" / "phases" / "04_correction"
+    assert (phase04 / "attempt_1.json").is_file()
+    assert (phase04 / "attempt_2.json").is_file()
+    final = json.loads((phase04 / "output.json").read_text(encoding="utf-8"))
+    assert final["status"] == "passed"
+    assert [item["status"] for item in final["correction_attempts"]] == [
+        "blocked", "passed",
+    ]
+    assert "".join(
+        beat["text"]
+        for block in final["proposed_plan"]["blocks"]
+        for beat in block["beats"]
+    ) == script
