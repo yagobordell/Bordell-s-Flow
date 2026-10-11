@@ -19,7 +19,8 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($env:YOUTUBE_ENABLED)) {
         $youtubeValue = $env:YOUTUBE_ENABLED
     }
-    $uvArgs = @("run", "--locked", "--extra", "dev")
+    # Agents SDK is installed as a uv runtime overlay; Casero logic is untouched.
+    $uvArgs = @("run", "--locked", "--with", "openai-agents>=0.22,<0.24", "--extra", "dev")
     if ($youtubeValue -match '^(?i:true|1|yes|on)$') {
         $uvArgs += @("--extra", "youtube")
     }
