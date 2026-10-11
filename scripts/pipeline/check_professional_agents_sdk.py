@@ -121,7 +121,59 @@ def check() -> None:
     )
     assert good.final_output.blocks[0].block_id == 1
     scripted.assert_complete()
-    print("SDK real: strict schemas, tools, JSON failure hooks and retry OK")
+
+    joint_json = json.dumps({
+        "blocks": [{
+            "block_id": 1,
+            "beats": [{
+                "beat_id": "1A",
+                "end_anchor": "Final.",
+                "occurrence": 1,
+                "beat_type": "return",
+                "visual_type": "avatar",
+                "prompt": None,
+                "video_prompt": None,
+                "reference": False,
+                "audio": True,
+                "image_prompts": None,
+                "generation_mode": None,
+                "editor_notes": [],
+                "cta_group_id": None,
+                "cta_reference_sources": None,
+            }],
+        }],
+    })
+    direction_model = ScriptedModel([[assistant_message(joint_json)]])
+    joint_agent = Agent(
+        name="SDK single call beats AND visuals offline",
+        model=direction_model, output_type=WholeVideoDirection,
+    )
+    joint_result = Runner.run_sync(
+        joint_agent, "Plan both beats and visuals together",
+        max_turns=1, run_config=RunConfig(tracing_disabled=True),
+    )
+    assert joint_result.final_output.blocks[0].beats[0].end_anchor == "Final."
+    assert joint_result.final_output.blocks[0].beats[0].visual_type == "avatar"
+    direction_model.assert_complete()
+
+    correction_model = ScriptedModel([
+        [assistant_message(json.dumps({
+            "replaced_groups": [], "visual_patches": [],
+        }))],
+    ])
+    correction_agent = joint_agent.clone(
+        model=correction_model, output_type=DirectionCorrection,
+    )
+    correction_result = Runner.run_sync(
+        correction_agent, "No changes needed",
+        max_turns=1, run_config=RunConfig(tracing_disabled=True),
+    )
+    assert correction_result.final_output.replaced_groups == []
+    correction_model.assert_complete()
+    print(
+        "SDK real: strict joint beat+visual JSON and correction schemas, "
+        "failure hooks and retry OK"
+    )
 
 
 if __name__ == "__main__":
