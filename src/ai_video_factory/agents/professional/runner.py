@@ -186,7 +186,7 @@ async def run_professional_director(
         raise ValueError("Unsafe agent checkpoint directory.")
     root.mkdir(parents=True, exist_ok=True)
     session = SQLiteSession("professional-" + uuid4().hex, str(root / "conversation.db"))
-    workspace = ProfessionalPlanWorkspace(script=script)
+    workspace = ProfessionalPlanWorkspace(script=script, ebook_available=ebook is not None)
     tools = build_agents_sdk_tools(workspace)
     base = Agent(name="Bordell Professional Director", model=model)
     phases: list[dict[str, Any]] = []
@@ -216,11 +216,11 @@ async def run_professional_director(
         phase: str, input_data: str | list[dict[str, Any]],
         *, output_type: Any = str, use_tools: bool = False,
     ) -> Any:
-        enabled_tools = (
-            tools[:1] if phase == "01_groups" else
-            tools[2:] if phase in {"03_evaluation", "04_correction", "05_delivery"}
-            else []
-        ) if use_tools else []
+        # Group anchors and whole-video plans are validated by Python AFTER
+        # one structured model response. Avoid extra tool round trips for B1.1.
+        enabled_tools = tools[2:] if use_tools and phase in {
+            "03_evaluation", "04_correction", "05_delivery"
+        } else []
         # No model write tool for the immense complete video plan: the
         # controller validates the single typed final output after each pass.
         actor = base.clone(
@@ -234,7 +234,7 @@ async def run_professional_director(
             output_type=output_type,
             tools=enabled_tools,
             model_settings=ModelSettings(
-                max_tokens=16000 if phase == "01_groups" else 50000,
+                max_tokens=8192 if phase == "01_groups" else 50000,
                 parallel_tool_calls=False,
             ),
         )
@@ -264,7 +264,8 @@ async def run_professional_director(
                         0, {"type": "input_text", "text": repair},
                     )
                 result = await Runner.run(
-                    actor, retry_prompt, session=session, max_turns=18, hooks=hooks,
+                    actor, retry_prompt, session=session,
+                    max_turns=1 if phase == "01_groups" else 18, hooks=hooks,
                 )
             except ModelBehaviorError as exc:
                 elapsed = perf_counter() - started
@@ -331,7 +332,7 @@ async def run_professional_director(
                 "Repara ÚNICAMENTE los anclajes B1.1 rechazados por Python. "
                 + json.dumps(check, ensure_ascii=False) + "\n" + input_script
             ),
-            output_type=GroupProposal, use_tools=True,
+            output_type=GroupProposal,
         )
         b11 = B11Output(
             pipeline_stage="B1.1", narrative_core=proposal.narrative_core,
@@ -367,6 +368,28 @@ async def run_professional_director(
     # 2. Full video, not a request per group. Input includes the original
     # avatar image and actual cover when present.
     phase2 = _image_input(script, avatar, ebook)
+    if ebook is None:
+        print(
+            "  [OpenAI] No hay portada de ebook configurada: "
+            "CTA de ebook desactivado; sin cta_group_id ni referencias al ebook.",
+            flush=True,
+        )
+        phase2[0]["content"].insert(0, {
+            "type": "input_text",
+            "text": (
+                "RUN CAPABILITY GATE: An authentic ebook cover is NOT provided. "
+                "This run CANNOT create ebook CTA beats. "
+                "For EVERY beat, set cta_group_id=null and "
+                "cta_reference_sources=null. "
+                "Do not invent an ebook promotion, book cover, offer, price, "
+                "QR overlay or ebook-related asset. "
+                "If narration mentions a call to action, preserve the literal "
+                "narration and illustrate it as ordinary non-ebook material. "
+                "If the actual text explicitly promotes an ebook, the operator "
+                "must configure a real ebook cover in a separate run; do not "
+                "fabricate a replacement."
+            ),
+        })
     phase2[0]["content"].append({
         "type": "input_text",
         "text": "Materialized B1.1 groups and narrative_core (authoritative):\n"
@@ -386,11 +409,8 @@ async def run_professional_director(
         }
     if plan.narrative_core.model_dump() != core:
         raise ValueError("Professional planning changed the B1.1 narrative core.")
-    if ebook is None and any(
-        beat.cta_group_id is not None
-        for block in plan.blocks for beat in block.beats
-    ):
-        raise ValueError("An ebook CTA requires an authentic ebook cover.")
+    # Missing cover is a deterministic, repairable plan validation error.
+    # Never throw away the paid phase-2 output before saving its checkpoint.
     _save(root / "plan_initial.json", {
         "plan": workspace.candidate, "validation": workspace.report,
     })
