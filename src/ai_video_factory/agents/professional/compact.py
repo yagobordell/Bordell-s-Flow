@@ -150,6 +150,17 @@ def _source_segments(
             })
             break
         end = position + match.end()
+        # A concatenated source can match even when the model splits a word:
+        # "Ca" + "ll now." must never become two valid narrative beats.
+        if (end < len(source) and end > position
+                and source[end - 1].isalnum() and source[end].isalnum()):
+            issues.append({
+                "rule_id": "CUT_INSIDE_WORD", "severity": "error",
+                "beat_ids": [beat.beat_id], "block_id": block_id,
+                "message": "A beat cannot end inside a source word.",
+                "source_start": end,
+            })
+            break
         while end < len(source) and source[end].isspace():
             end += 1
         resolved.append(source[position:end])
