@@ -63,8 +63,12 @@ The grid organizes the continuity of generated assets across those decisions.
 
 Grid membership is expressed as logical asset labels such as `A1`, `A2`, `A3`.
 The letter identifies the continuity grid; the index identifies the asset's
-position inside that grid. Only continuities with at least two generated assets
-become grids. A single generated asset stays outside any grid.
+position inside that grid. Write the prefix `A1. `, `A2. `... directly on
+each generated still description, video starting-frame prompt or
+avatar_media support-image prompt. The orchestrator uses the prefix to
+connect assets across all groups and carriers, independently of adjacency.
+Only continuities with at least two generated assets become grids.
+A single generated asset stays outside any grid.
 
 The following contracts describe how to encode an already-chosen carrier.
 They preserve existing source, audio, reference, image, grid and CTA limits.
@@ -83,7 +87,7 @@ Absolute carrier and audio contracts
 
 - avatar: reuse ONLY the original speaking avatar, prompt=null, video_prompt=null, reference=false, audio=true. Do not generate alternative speaking start images.
 - avatar_media: show the ORIGINAL speaking avatar alongside one generated supporting still; prompt nonempty, video_prompt=null, audio=true. Its image prompt describes the SUPPORT image only.
-- media_image: full-screen generated B-roll stills. Set prompt=null, video_prompt=null, audio=false, image_prompts to 1–4 nonempty self-contained still descriptions. For narration of 70 or more stripped characters, assign 2–4 distinct stills (CTA exemption preserves its single asset). Every still belongs to the SAME beat and receives equal STT-frame duration. Choose generation_mode=grid for a meaningful consecutive still-image continuity run (one still per beat is valid when other contiguous beats share the run); otherwise independent. All other visual carriers use image_prompts=null.
+- media_image: full-screen generated B-roll stills. Set prompt=null, video_prompt=null, audio=false, image_prompts to 1–4 nonempty self-contained still descriptions. For narration of 70 or more stripped characters, assign 2–4 distinct stills (CTA exemption preserves its single asset). Every still belongs to the SAME beat and receives equal STT-frame duration. For the new mixed-carrier grids, prefix each actual generated image prompt with A1., A2., etc., and omit generation_mode; the legacy field is still accepted on old plans. All other visual carriers use image_prompts=null.
 - media_video: full-screen generated B-roll clip, prompt for one photographable starting frame, nonempty video_prompt for subsequent motion, ALWAYS audio=false.
 
 Only avatar and avatar_media speak. Generated media_image and media_video are unsynchronized coverage with voice-over. Never depict anyone speaking to camera, delivering narration, silently lip-syncing or acting as a replacement direct-to-camera host in generated B-roll. Generated presenter B-roll is allowed when the narrator is truly the depicted participant in the story; then use reference=true to preserve their identity BUT locate the scene in a clearly different room or physical location from the avatar reference. Never generate a new image of the narrator in the original reference room, regardless of angle, gesture or crop. A narrator identity reference is not a room/setup reference. Do not assign another person's actions to the presenter. Otherwise reference=false.

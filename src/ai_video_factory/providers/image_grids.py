@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 _NUMBERED = re.compile(r"^([1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
+_ALPHA_NUMBERED = re.compile(r"^([A-Z]+)([1-9][0-9]*)\.\s+(.+)$", re.DOTALL)
 _SHAPES = {
     2: (2, 2), 3: (2, 2), 4: (2, 2),
     5: (3, 2), 6: (3, 2),
@@ -43,11 +44,13 @@ def _grid_prompt(
     voice_over: list[str] = []
     for number, panel in enumerate(panels, 1):
         description = panel["description"].strip()
+        alpha = _ALPHA_NUMBERED.match(description.lstrip()) if visual_style == "profesional" else None
         numbered = _NUMBERED.match(description.lstrip())
-        if numbered is None:
+        if alpha is not None:
+            descriptions.append(f"{alpha.group(1)}{alpha.group(2)}. {alpha.group(3)}")
+        elif numbered is None:
             descriptions.append(f"{number}. {description}")
         elif visual_style == "profesional":
-            # A backward filler can precede the numbered sequence in the grid.
             descriptions.append(f"{number}. {numbered.group(2)}")
         else:
             descriptions.append(description)
@@ -77,6 +80,10 @@ def _grid_prompt(
         )
     )
     if visual_style == "profesional":
+        if any(p["visual_type"] == "avatar_media" for p in panels) and panel_aspect == "16:9":
+            prompt += ("\n\nFor every avatar_media supporting-image panel, keep the important "
+                       "scene content centred inside the panel's central 8:9 region, "
+                       "since that support image will be cropped to the presenter layout.")
         prompt += (
             "\n\nRespect EACH panel's own requested shot scale, camera viewpoint, "
             "crop and visual focus. For continuous numbered steps, preserve "
@@ -156,9 +163,25 @@ def _professional_grid_chunks(
         )
 
     grouping = solve(0)
-    if grouping is None:
+    if grouping is not None:
+        return [[asset for i in group for asset in units[i]] for group in grouping]
+    # A long still beat may otherwise make the entire mixed-carrier grid
+    # unpartitionable. Preserve order, allowing an individual subshot split.
+    from functools import lru_cache as _cache
+    @_cache(None)
+    def split(index: int) -> tuple[tuple[int, int], ...] | None:
+        if index == len(run):
+            return ()
+        for size in (4, 3, 2):
+            if index + size <= len(run):
+                tail = split(index + size)
+                if tail is not None:
+                    return ((index, index + size),) + tail
+        return None
+    parts = split(0)
+    if parts is None:
         raise GridPlanError("Cannot split numbered continuity into 2–4-panel grids")
-    return [[asset for i in group for asset in units[i]] for group in grouping]
+    return [run[start:end] for start, end in parts]
 
 
 def plan_image_jobs(
@@ -243,9 +266,31 @@ def plan_image_jobs(
                     finish()
         finish()
 
+    # New Professional numbering: one letter per scene, across groups and
+    # carrier changes. The model numbers generated assets rather than beats.
+    alpha_runs: dict[str, list[dict[str, Any]]] = {}
+    if visual_style == "profesional":
+        for source in described:
+            matched = _ALPHA_NUMBERED.match(source["description"].strip())
+            if matched is not None:
+                letter, number = matched.group(1), int(matched.group(2))
+                assets = alpha_runs.setdefault(letter, [])
+                if number != len(assets) + 1:
+                    raise GridPlanError(
+                        f"Invalid grid {letter}: expected {letter}{len(assets) + 1}, got {letter}{number}"
+                    )
+                assets.append(source)
+        for letter, assets in alpha_runs.items():
+            if not 2 <= len(assets) <= 18:
+                raise GridPlanError(f"Grid {letter} requires 2–18 images")
+            runs.append(assets)
+
     grid_runs: list[list[dict[str, Any]]] = []
     standalone_numbered: set[tuple[int, str]] = set()
     for run in runs:
+        if _ALPHA_NUMBERED.match(run[0]["description"].strip()):
+            grid_runs.append(run)
+            continue
         avatar_media_count = sum(
             asset["visual_type"] == "avatar_media" for asset in run
         )
@@ -260,6 +305,7 @@ def plan_image_jobs(
     forced_independent = {
         key(asset) for asset in described
         if asset.get("generation") == "independent"
+        and not _ALPHA_NUMBERED.match(asset["description"].strip())
     }
     standalone_keys = standalone_numbered | forced_independent
     described_by_key = {key(asset): asset for asset in described}
@@ -286,7 +332,8 @@ def plan_image_jobs(
             )
             first = positions[key(run[0])]
             last = positions[key(run[-1])]
-            allow_fillers = len(chunks) == 1
+            alpha_grid = _ALPHA_NUMBERED.match(logical_run[0]["description"].strip())
+            allow_fillers = len(chunks) == 1 and alpha_grid is None
             forward = sorted(
                 (
                     asset_key for asset_key in available
@@ -362,9 +409,11 @@ def plan_image_jobs(
             anchor = run[0]
             grids.append({
                 "continuity_chain_id": (
+                    f"grid:{alpha_grid.group(1)}" if alpha_grid else
                     f"{logical_run[0]['block_id']}:"
                     f"{logical_run[0].get('asset_id', logical_run[0]['beat_id'])}"
                 ),
+                **({"grid_id": alpha_grid.group(1)} if alpha_grid else {}),
                 "continuity_index": chain_index,
                 **({
                     "continuity_previous_asset_id": chunks[chain_index - 1][0].get(
@@ -387,6 +436,11 @@ def plan_image_jobs(
                     "panel_width": panel_width, "panel_height": panel_height,
                     "width": columns * panel_width,
                     "height": rows * panel_height,
+                    **({"grid_asset_labels": [
+                        f"{_ALPHA_NUMBERED.match(asset['description'].strip()).group(1)}"
+                        f"{_ALPHA_NUMBERED.match(asset['description'].strip()).group(2)}"
+                        for asset in run
+                    ]} if alpha_grid else {}),
                     "numbered_beat_ids": [asset["beat_id"] for asset in run],
                     "numbered_asset_ids": [
                         asset.get("asset_id", asset["beat_id"]) for asset in run

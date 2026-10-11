@@ -50,7 +50,7 @@ on-screen presence; when presenter footage conceals narrated events,
 return the relevant scene to the screen. Preserve the voice-over unchanged.
 
 Use `visual_patches` where the source interval and beat identity remain
-correct; use `replaced_groups` only where source cuts/IDs or group-level
+correct; use `replaced_groups` only where source cuts/IDs or source-level
 annotations truly need revision, and carry the revised cut and visual
 choice together. Preserve actor identity, object state, sequence continuity,
 precise reveals, authorised overlay notes and protected CTA assets.
@@ -63,15 +63,12 @@ continuing scene into the same numbered grid when shared conditioning is
 useful. Preserve `media_video` for movement and do not substitute stills
 for actions merely to simplify the grid.
 
-When editor notes are at fault, replace the containing group annotation
-with a BeatNote whose `instruction` is a **single direct string ordering
-an actual edit** and whose trigger points to the correct words where
-necessary. Remove notes that only request inspection, verification,
-source checking, screen/brand visibility or general visual advice.
-Do not move those checks into another editor note; improve the visual
-prompts or report a genuine missing asset as appropriate. Keep the
-existing group-level array schema until a separate code contract change.
-
+When an editor note is at fault, replace the affected beat's
+`editor_notes` with a **plain imperative string ordering a concrete
+postproduction addition**. Empty the string when no edit is needed.
+Remove instructions that merely ask for inspection, verification, checking
+source assets, evaluating brand visibility or general visual advice.
+Keep beat IDs and original narration unchanged.\n
 Review the edited sequence after correction: each moving event must unfold,
 static information must be inspectable, and the human storyteller must
 remain present at narratively useful moments. Editorial balance is judged

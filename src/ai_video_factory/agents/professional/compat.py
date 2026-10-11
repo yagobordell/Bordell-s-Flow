@@ -12,6 +12,7 @@ from typing import Any
 from ai_video_factory.agents.professional.validation import validate_plan
 
 _PREFIX = re.compile(r"^\s*(?:[1-9]|1[0-8])\.\s+", re.DOTALL)
+_ALPHA = re.compile(r"^[A-Z]+[1-9][0-9]*\.\s+")
 
 
 def project_professional_plan(
@@ -62,7 +63,7 @@ def project_professional_plan(
                 cleaned = [_PREFIX.sub("", prompt).strip() for prompt in prompts]
                 numbered = []
                 for image_prompt in cleaned:
-                    if mode == "grid":
+                    if mode == "grid" and not _ALPHA.match(image_prompt):
                         grid_asset_no += 1
                         # Real 18-asset runs are checked by Python before
                         # this projection; asset numbering spans beat IDs.
@@ -80,7 +81,7 @@ def project_professional_plan(
                             "subshot_index": index,
                             "subshot_count": len(numbered),
                             "prompt": prompt,
-                            "generation": mode,
+                            "generation": "grid" if _ALPHA.match(prompt) else mode,
                         }
                         for index, prompt in enumerate(numbered, start=1)
                     ]

@@ -25,6 +25,7 @@ class BeatBase(StrictModel):
     beat_id: str
     text: str = Field(min_length=1)
     beat_type: BeatType
+    editor_notes: str = ""
 
 
 class AvatarBeat(BeatBase):
@@ -39,7 +40,7 @@ class AvatarMediaBeat(BeatBase):
 class ImageBeat(BeatBase):
     visual_type: Literal["media_image"]
     image_prompts: list[str] = Field(min_length=1, max_length=4)
-    generation_mode: Literal["grid", "independent"]
+    generation_mode: Literal["grid", "independent"] | None = None
 
 
 class VideoBeat(BeatBase):
@@ -73,7 +74,7 @@ class SparseGroup(StrictModel):
     block_id: int
     beats: list[SparseBeat] = Field(min_length=1)
     # Lists are declared once per group, not on every beat.
-    editor_notes: list[BeatNote]
+    editor_notes: list[BeatNote] = Field(default_factory=list)  # legacy group notes
     presenter_references: list[str]
     cta: list[CTAAssignment]
 
@@ -85,19 +86,22 @@ class SparseDirection(StrictModel):
 class AvatarPatch(StrictModel):
     beat_id: str
     visual_type: Literal["avatar"]
+    editor_notes: str | None = None
 
 
 class AvatarMediaPatch(StrictModel):
     beat_id: str
     visual_type: Literal["avatar_media"]
     prompt: str = Field(min_length=1)
+    editor_notes: str | None = None
 
 
 class ImagePatch(StrictModel):
     beat_id: str
     visual_type: Literal["media_image"]
     image_prompts: list[str] = Field(min_length=1, max_length=4)
-    generation_mode: Literal["grid", "independent"]
+    generation_mode: Literal["grid", "independent"] | None = None
+    editor_notes: str | None = None
 
 
 class VideoPatch(StrictModel):
@@ -105,6 +109,7 @@ class VideoPatch(StrictModel):
     visual_type: Literal["media_video"]
     prompt: str = Field(min_length=1)
     video_prompt: str = Field(min_length=1)
+    editor_notes: str | None = None
 
 
 SparseVisualPatch = AvatarPatch | AvatarMediaPatch | ImagePatch | VideoPatch
@@ -294,7 +299,7 @@ def materialize_sparse_direction(
                 "audio": kind in ("avatar", "avatar_media"),
                 "image_prompts": getattr(beat, "image_prompts", None),
                 "generation_mode": getattr(beat, "generation_mode", None),
-                "editor_notes": notes.get(beat.beat_id, []),
+                "editor_notes": beat.editor_notes if beat.editor_notes else notes.get(beat.beat_id, ""),
                 "cta_group_id": owner.cta_group_id if owner else None,
                 "cta_reference_sources": sources,
             }
@@ -385,6 +390,7 @@ def apply_sparse_correction(
                 "text": beat.text,
                 "beat_type": beat.beat_type,
                 "visual_type": patch.visual_type,
+                "editor_notes": beat.editor_notes if patch.editor_notes is None else patch.editor_notes,
             }
             if patch.visual_type in {"avatar_media", "media_video"}:
                 values["prompt"] = patch.prompt
@@ -392,7 +398,8 @@ def apply_sparse_correction(
                 values["video_prompt"] = patch.video_prompt
             if patch.visual_type == "media_image":
                 values["image_prompts"] = patch.image_prompts
-                values["generation_mode"] = patch.generation_mode
+                if patch.generation_mode is not None:
+                    values["generation_mode"] = patch.generation_mode
             beat_type = {
                 "avatar": AvatarBeat, "avatar_media": AvatarMediaBeat,
                 "media_image": ImageBeat, "media_video": VideoBeat,

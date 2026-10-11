@@ -74,19 +74,24 @@ connected scene begins on one beat and its final generated reference frame
 appears several beats later, all of those generated assets may belong to the
 same numbered grid whenever shared visual conditioning is beneficial.
 
-Use editor notes solely to command **specific additions in postproduction**.
-The `instruction` is a plain imperative string; it is not a request to
-check branding, inspect an image, confirm visibility or validate source
-assets. The group-level note envelope still follows the current strict
-schema, and actual edits are timed by source anchors. Do not invent a
-scalar JSON `editor_notes` field in the current SDK contract.
+Use beat-level `editor_notes` as **one plain string** of concrete,
+imperative postproduction directions. An empty string means no separate edit.
+Describe actual additions, not checks, image-quality reviews or visibility
+instructions. The editor aligns the instruction to the narration span of its
+own beat; the separate authenticated CTA QR and website overlays remain
+code-owned.
 
 
 Grid labelling follows an orchestrator-readable convention. Each logical grid
 receives a letter identifier in first appearance order across the full video:
 `A`, `B`, `C`, and so on (continuing to `AA`, `AB` after `Z` if ever needed).
-Each generated asset inside that grid receives a sequential label using that
-letter plus an index: `A1`, `A2`, `A3`..., then `B1`, `B2`, `B3`.... A grid
+Prefix the actual image-generation prompt for **each generated asset**
+with the grid letter and sequential index followed by a period and space:
+`A1. `, `A2. `, `A3. `..., then `B1. `, `B2. `, `B3. `.
+Apply this to `media_image.image_prompts`, `media_video.prompt`
+(starting frame) and `avatar_media.prompt` (support still).
+This prefix is the orchestrator's grid identity; never substitute
+`generation_mode` for the asset identifier. A grid
 exists only when at least **two** generated assets belong to the same scene
 continuity. A solitary generated asset remains independent and ungridded.
 

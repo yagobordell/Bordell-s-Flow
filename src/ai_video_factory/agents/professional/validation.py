@@ -26,6 +26,7 @@ AVATAR_MAX_PERCENT = 45
 VISUAL_TYPES = frozenset(("avatar", "avatar_media", "media_image", "media_video"))
 BEAT_TYPES = frozenset(BeatType.__args__)
 NUMBERED_PROMPT = re.compile(r"^\s*(?:[1-9]|1[0-8])\.\s+", re.DOTALL)
+ALPHA_GRID = re.compile(r"^([A-Z]+)([1-9][0-9]*)\.\s+(.+)$", re.DOTALL)
 
 
 def _issue(rule_id: str, message: str, *, severity: str = "error",
@@ -106,9 +107,11 @@ def _editor_note_issues(
     beat: dict[str, Any], block_id: int, beat_id: str,
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
-    notes = beat.get("editor_notes", [])
+    notes = beat.get("editor_notes", "")
+    if isinstance(notes, str):
+        return []  # Beat-owned directive, aligned to its narration interval.
     if not isinstance(notes, list):
-        return [_issue("EDITOR_NOTES_SCHEMA", "editor_notes must be a list.",
+        return [_issue("EDITOR_NOTES_SCHEMA", "editor_notes must be a string.",
                        block_id=block_id, beat_ids=[beat_id])]
     text = beat.get("text", "")
     for index, note in enumerate(notes):
@@ -477,7 +480,8 @@ def validate_plan(
             if (kind == "media_image"
                     and beat.get("generation_mode") == "grid"
                     and beat.get("cta_group_id") is None
-                    and isinstance(beat.get("image_prompts"), list)):
+                    and isinstance(beat.get("image_prompts"), list)
+                    and not any(ALPHA_GRID.match(p.strip()) for p in beat["image_prompts"])):
                 grid_assets.extend([beat_id] * len(beat["image_prompts"]))
             else:
                 finish_grid_run()
@@ -538,6 +542,64 @@ def validate_plan(
             "CTA_PROTECTED", "Protected CTA beats were deleted or renamed.",
             beat_ids=sorted(missing_protected),
         ))
+    # Numbered letter grids are global across beat carrier and B1.1 group.
+    # Legacy still-only generation_mode runs remain supported separately.
+    alphabetic: dict[str, list[tuple[int, str]]] = {}
+    used_labels: set[str] = set()
+    next_grid = 0
+
+    def expected_letter(index: int) -> str:
+        result = ""
+        while True:
+            index, digit = divmod(index, 26)
+            result = chr(65 + digit) + result
+            if not index:
+                return result
+            index -= 1
+
+    for block in blocks:
+        for beat in block.get("beats", []):
+            if not isinstance(beat, dict):
+                continue
+            beat_id = beat.get("beat_id", "")
+            kind = beat.get("visual_type")
+            if kind == "media_image":
+                prompts = beat.get("image_prompts", [])
+            elif kind in {"media_video", "avatar_media"}:
+                prompts = [beat.get("prompt")]
+            else:
+                prompts = []
+            for prompt in prompts if isinstance(prompts, list) else []:
+                match = ALPHA_GRID.match(prompt.strip()) if isinstance(prompt, str) else None
+                if match is None:
+                    continue
+                letter, pos = match.group(1), int(match.group(2))
+                label = f"{letter}{pos}"
+                if label in used_labels:
+                    issues.append(_issue("GRID_LABEL_DUPLICATE", f"Duplicate grid asset {label}.",
+                                         beat_ids=[beat_id]))
+                used_labels.add(label)
+                if letter not in alphabetic:
+                    expected = expected_letter(next_grid)
+                    if letter != expected:
+                        issues.append(_issue("GRID_LETTER_ORDER", f"Expected grid {expected}, got {letter}.",
+                                             beat_ids=[beat_id]))
+                    alphabetic[letter] = []
+                    next_grid += 1
+                expected_pos = len(alphabetic[letter]) + 1
+                if pos != expected_pos:
+                    issues.append(_issue("GRID_ASSET_ORDER", f"Expected {letter}{expected_pos}, got {label}.",
+                                         beat_ids=[beat_id]))
+                alphabetic[letter].append((pos, beat_id))
+                if beat.get("cta_group_id") is not None:
+                    issues.append(_issue("CTA_GRID_PROTECTED", "Protected CTA asset cannot join a numbered grid.",
+                                         beat_ids=[beat_id]))
+    for letter, assets in alphabetic.items():
+        if not 2 <= len(assets) <= 18:
+            issues.append(_issue("GRID_SEQUENCE_SIZE",
+                                 f"Grid {letter} must contain 2–18 generated assets.",
+                                 beat_ids=[asset[1] for asset in assets]))
+
     total_beats = len(records)
     avatar_pct = avatar_count / total_beats * 100 if total_beats else 0.0
     if total_beats == 0:

@@ -70,7 +70,7 @@ For each moment, verify these positive editorial outcomes:
    informative stable details. Inspect the actual visual experience across
    beats and group boundaries, rather than relying on carrier counts.
 7. Only deliberately added postproduction elements receive editor notes.
-   Inspect each group-level `editor_notes[].instruction` as an actual
+   Inspect each beat-level `editor_notes` string as an actual
    imperative edit operation: a specific addition, content and placement
    where needed, with a valid trigger for timed effects. Flag notes that
    merely check generated imagery, request a review, assert visibility,

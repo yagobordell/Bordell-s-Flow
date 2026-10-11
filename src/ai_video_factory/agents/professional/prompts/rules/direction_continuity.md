@@ -82,7 +82,7 @@ asset and image-generation preparation; physical scene content is a visual
 direction responsibility. Treat designed on-screen typography or graphics
 as separate postproduction operations **only when the edit deliberately
 adds them**. For such operations, supply a concise source-anchored
-`editor_notes[].instruction` string that tells the editor exactly what
+`editor_notes` string on the relevant beat that tells the editor exactly what
 element to add and where or when to add it. Do not generate notes whose
 job is to check the presence of logos, judge image correctness, demand
 source verification or restate the desired composition. If the original

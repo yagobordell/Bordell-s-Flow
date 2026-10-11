@@ -309,7 +309,23 @@ def crop_grid_assets(
             seen.add(key)
             # Preserve the full photographic interior even if GPT's panel
             # ratio differs slightly from the requested geometry.
-            result = image.crop(box).resize(
+            source_panel = image.crop(box)
+            if panel["visual_type"] == "avatar_media" and (
+                panel_width, panel_height
+            ) != (768, 864):
+                # Support stills have an 8:9 compositor slot even when their
+                # continuity grid mixes wide video frames and static inserts.
+                width, height = source_panel.size
+                central_width = min(width, round(height * 8 / 9))
+                central_height = min(height, round(width * 9 / 8))
+                if central_width < width:
+                    offset = (width - central_width) // 2
+                    source_panel = source_panel.crop((offset, 0, offset + central_width, height))
+                elif central_height < height:
+                    offset = (height - central_height) // 2
+                    source_panel = source_panel.crop((0, offset, width, offset + central_height))
+                target_size = (768, 864)
+            result = source_panel.resize(
                 target_size, resample=Image.Resampling.LANCZOS
             )
             buffer = BytesIO()

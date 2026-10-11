@@ -71,10 +71,9 @@ the whole original script, using these editorial judgments:
 5. **Integrate rhythm, presenter returns and postproduction.** Choose cuts
    where a new source-supported visual contribution warrants them. Allow
    the audience time to follow movement, read static evidence and reconnect
-   with the speaker. Add only **actual editorial overlays or effects** in
-   group-level `editor_notes`; each `instruction` is a direct action string
-   with its appropriate source trigger. Do not place scene-checking,
-   brand-identity verification or visual-quality reminders in notes.
+   with the speaker. Write `editor_notes` as one direct postproduction-command
+   string **on the appropriate beat**. Use the empty string when no addition
+   is needed. Never include checking, verification or visibility reminders.
    Examine the resulting sequence for coherent picture choices and
    intelligible human connection.
 
@@ -145,24 +144,26 @@ of proposed visual changes, NOT as actual elapsed seconds or an initial
 precomputed pacing target. Apply the above criteria to the source here;
 later use the map to examine the *result* of these choices.
 
-Return a strict SparseDirection containing every original B1.1 group and
-the complete ordered beats. Each beat MUST include beat_id, exact original
-text, beat_type and visual_type. Carrier-specific fields ONLY:
-- avatar: no prompt, audio or reference flags
-- avatar_media: prompt describing supporting still
-- media_image: image_prompts and generation_mode
-- media_video: prompt and video_prompt
-Never output end_anchor, occurrence, null prompt fields or empty metadata on
-each beat. Put editor_notes, presenter_references and cta annotations ONCE
-in the containing group; use empty lists there when not applicable.
-`editor_notes` currently remains a group-level list of BeatNote objects
-because the Python schema requires it. Each `instruction` must be exactly
-a string of actionable edit direction, not a check or a description of
-what the visual should already show. `media_image` must retain the required
-`generation_mode` transport field; the application, not the model, adds
-numbering to its eligible contiguous grid prompts. Keep every related
-video starting frame and still prompt visually consistent across the
-larger scene, including beyond a presenter interlude.
+Return a strict SparseDirection covering the complete source script.
+Each beat provides `beat_id`, unchanged `text`, `beat_type`, `visual_type`,
+and beat-owned `editor_notes` as one imperative string (or empty string).
+Carrier-specific fields:
+- `avatar`: no image prompt;
+- `avatar_media`: `prompt` describing only its supporting still;
+- `media_image`: `image_prompts` with 1–4 independent or numbered stills;
+- `media_video`: starting-frame `prompt` and motion `video_prompt`.
+
+For every logical grid of two or more generated assets, put `A1. `, `A2. `...
+or `B1. `, `B2. `... directly at the start of each relevant prompt,
+including video starting frames and avatar_media supporting stills. A grid
+may cross beats, carriers and narrative groups; plain avatar beats do not
+interrupt its numbering. Use new letters in order of first appearance
+throughout the video, continue with `AA` after `Z` when needed, and never
+create a single-asset grid. Grid membership is encoded by these prompt
+prefixes, not by `generation_mode`. Standalone assets have no grid prefix.
+Presenter identity references and CTA metadata remain in group annotations.
+Do not output legacy null carrier fields, end_anchor or occurrence.
+
 The director chooses source cuts and visuals jointly in this same response.
 
 The concatenated beats must preserve every original word and punctuation

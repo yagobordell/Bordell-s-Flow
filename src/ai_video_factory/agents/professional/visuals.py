@@ -35,7 +35,7 @@ class VisualChoice(StrictModel):
     audio: bool
     image_prompts: list[str] | None
     generation_mode: Literal["grid", "independent"] | None
-    editor_notes: list[VisualEditorNote]
+    editor_notes: str | list[VisualEditorNote]
     cta_group_id: int | None
     cta_reference_sources: list[Literal["presenter", "ebook"]] | None
 

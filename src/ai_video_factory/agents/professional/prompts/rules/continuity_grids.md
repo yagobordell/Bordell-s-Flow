@@ -81,7 +81,12 @@ Logical grids are named in order of first appearance across the whole video.
 The first grid uses the letter `A`, the second `B`, the third `C`, and so on.
 If the alphabet is exhausted, continue in spreadsheet style (`AA`, `AB`, ...).
 Every generated asset in a grid receives that grid letter plus a running
-position index: `A1`, `A2`, `A3` ...; `B1`, `B2`, `B3` ...; etc.
+position index as a **prefix on its actual generated-image prompt**:
+`A1. description`, `A2. description`, `A3. description` ...;
+`B1. description`, `B2. description`, `B3. description` ... .
+The orchestrator reads these prefixes from `media_image.image_prompts`,
+`media_video.prompt` and `avatar_media.prompt`; the carrier remains chosen
+according to the scene, and no separate grid flag is necessary.
 
 The label belongs to the generated asset, not to the beat. Therefore:
 
