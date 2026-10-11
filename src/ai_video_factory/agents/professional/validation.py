@@ -6,12 +6,11 @@ change the Casero path or send paid inference requests. Semantic creative review
 """
 from __future__ import annotations
 
-import copy
 import re
 from hashlib import sha256
 from typing import Any
 
-from ai_video_factory.bots.contracts import BeatType, BlockMeta, ProfessionalVisualBeat
+from ai_video_factory.bots.contracts import BeatType, BlockMeta
 from ai_video_factory.bots.workflow import materialize_blocks
 
 BEAT_MAX_CHARACTERS = 100
