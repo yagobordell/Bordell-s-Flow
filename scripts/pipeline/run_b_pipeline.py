@@ -2903,10 +2903,6 @@ async def main() -> None:
     previous_b12: tuple[B12Output, ...] | None = None
     previous_partial_b12: dict[int, B12Output] = {}
     previous_partial_b2: dict[int, B2Output | ProfessionalB2Output] = {}
-    if visual_style == "casero" and args.from_stage == "B1.1":
-        ensure_avatar_cta_motion(
-            avatar_file, getattr(args, "cta_motion", None),
-        )
     if args.from_stage == "B1.1":
         previous_output = output_root / script_file.stem
         if previous_output.exists() and has_pending_b2_video(previous_output):
@@ -2950,6 +2946,10 @@ async def main() -> None:
             )
         if visual_style in {"casero", "profesional"}:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
+            if visual_style == "casero":
+                ensure_avatar_cta_motion(
+                    avatar_file, getattr(args, "cta_motion", None),
+                )
             cover_selected = (
                 visual_style == "casero"
                 or bool(getattr(args, "ebook_cover", None))
