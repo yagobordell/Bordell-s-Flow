@@ -347,6 +347,9 @@ async def run_professional_director(
             i["message"] for i in group_validation["issues"][:5]
         ), flush=True)
     if group_validation["status"] != "passed":
+        _save(_phase_file(root, "01_groups"), {
+            "status": "blocked", "validation": group_validation,
+        })
         raise ValueError("B1.1 no pudo delimitar el guion; ver 01_groups.")
     core = answer.narrative_core.model_dump(mode="json")
     workspace.expected_narrative_core = copy.deepcopy(core)
@@ -395,6 +398,10 @@ async def run_professional_director(
             x["message"] for x in cuts_validation["issues"][:5]
         ), flush=True)
     if cuts_validation["status"] != "passed" or cuts is None:
+        _save(_phase_file(root, "02_planning"), {
+            "phase": "02_planning", "status": "blocked",
+            "subphase": "beats", "validation": cuts_validation,
+        })
         raise ValueError(
             "No se han podido validar todos los beats ANTES de generar visuales. "
             "Los fallos y límites están guardados en agent_openai/phases/02_beats."
@@ -475,6 +482,11 @@ async def run_professional_director(
             "status": "blocked",
             "output": visuals.model_dump(mode="json"),
             "mismatched_blocks": mismatched_visual_blocks(source_beats, visuals),
+        })
+        _save(_phase_file(root, "02_planning"), {
+            "phase": "02_planning", "status": "blocked",
+            "subphase": "visuals", "mismatched_blocks":
+                mismatched_visual_blocks(source_beats, visuals),
         })
         raise ValueError(
             "Visual alignment remains invalid; see 02_visuals/output.json."
