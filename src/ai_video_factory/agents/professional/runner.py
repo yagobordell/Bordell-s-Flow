@@ -224,7 +224,7 @@ def _b12_checkpoints(output: Path, blocks: list[dict[str, Any]],
 
 async def run_professional_director(
     script: str, *, output: Path, avatar: bytes, ebook: bytes | None,
-    model: str, memory_root: Path | None = None, max_corrections: int = 1,
+    model: str, memory_root: Path | None = None, max_corrections: int = 3,
     api_key: str | None = None,
 ) -> dict[str, Any]:
     """Full-script Professional pipeline, gate all downstream work on Python."""
@@ -540,93 +540,123 @@ async def run_professional_director(
     ]
     correction_attempts: list[dict[str, Any]] = []
     remaining_editorial: list[dict[str, Any]] = []
-    if current["status"] == "blocked" or editable_findings:
+    outstanding_editorial = editable_findings
+    if current["status"] == "blocked" or outstanding_editorial:
         if max_corrections < 1:
             raise ValueError("Whole-video direction is blocked; correction disabled.")
-        correction = await invoke(
-            "04_correction",
-            "Return ONE coherent correction covering ALL remaining structural "
-            "and editorial issues. Use replaced_groups for a narrative recut: "
-            "each entire replaced group MUST include BOTH newly chosen beat "
-            "anchors AND all corresponding visual choices, as one inseparable "
-            "audiovisual decision. Use visual_patches for existing beats whose "
-            "boundaries remain unchanged. Preserve untouched blocks.\n"
-            + json.dumps({
-                "narrative_core": core,
-                "original_groups": materialized_groups,
-                "combined_audiovisual_direction": joint_direction.model_dump(mode="json"),
-                "blocking_python_issues": current["issues"],
-                "editorial_findings": [
-                    item.model_dump(mode="json") for item in editable_findings
-                ],
-                "ebook_cover_available": ebook is not None,
-            }, ensure_ascii=False),
-            DirectionCorrection,
-        )
-        try:
-            corrected_direction = apply_direction_correction(
-                joint_direction, correction,
+        # Iterative corrections remain ONE global audiovisual phase: every
+        # revision is model-directed, not an automatic Python rhythm rewrite.
+        # Abort on no progress rather than spend on identical failed attempts.
+        for correction_number in range(1, max_corrections + 1):
+            before = current
+            correction = await invoke(
+                "04_correction",
+                "Return ONE coherent correction covering ALL remaining structural "
+                "and editorial issues. EVERY previously failing source span MUST "
+                "be split at exact, meaningful verbatim anchors so each revised "
+                "beat is <=100 stripped characters AND <=40 words. Do NOT "
+                "merge an overlong sentence into one beat, duplicate source "
+                "narration, change the narration, or create a phantom beat. "
+                "Verify EACH new anchor exists after the previous one. "
+                "Use replaced_groups for narrative recuts: each entire "
+                "replaced group MUST include BOTH new beat anchors AND all "
+                "corresponding visual choices. Use visual_patches only for "
+                "unchanged boundaries. Preserve untouched blocks and protected "
+                "CTA material. Return empty lists only when no edits are needed.\n"
+                + json.dumps({
+                    "narrative_core": core,
+                    "original_groups": materialized_groups,
+                    "combined_audiovisual_direction": joint_direction.model_dump(mode="json"),
+                    "blocking_python_issues": current["issues"],
+                    "editorial_findings": [
+                        item.model_dump(mode="json") for item in outstanding_editorial
+                    ],
+                    "ebook_cover_available": ebook is not None,
+                }, ensure_ascii=False),
+                DirectionCorrection,
             )
-            checked = check_direction(corrected_direction)
-        except (ValueError, TypeError) as exc:
-            checked = {
-                "status": "blocked",
-                "issues": [{
-                    "rule_id": "INVALID_DIRECTION_CORRECTION",
-                    "message": str(exc),
-                }],
-                "validation": {
+            try:
+                corrected_direction = apply_direction_correction(
+                    joint_direction, correction,
+                )
+                checked = check_direction(corrected_direction)
+            except (ValueError, TypeError) as exc:
+                checked = {
                     "status": "blocked",
                     "issues": [{
                         "rule_id": "INVALID_DIRECTION_CORRECTION",
                         "message": str(exc),
                     }],
-                },
-                "plan": None,
-                "boundaries": current["boundaries"],
-            }
-            corrected_direction = joint_direction
-        modified = {beat.beat_id for beat in correction.visual_patches}
-        modified.update(
-            beat.beat_id for group in correction.replaced_groups for beat in group.beats
-        )
-        replaced_ids = {group.block_id for group in correction.replaced_groups}
-        original_beat_groups = {
-            beat.beat_id: group.block_id
-            for group in joint_direction.blocks for beat in group.beats
-        }
-        remaining_editorial = [
-            {"rule_id": "EDITORIAL_ISSUE_UNADDRESSED",
-             "message": item.problem, "beat_id": item.beat_id}
-            for item in editable_findings
-            if item.beat_id not in modified
-            and original_beat_groups.get(item.beat_id) not in replaced_ids
-            and not (item.beat_id is None and (modified or replaced_ids))
-        ]
-        if remaining_editorial:
-            checked["status"] = "blocked"
-            checked["validation"]["status"] = "blocked"
-            if checked["validation"]["issues"] is not checked["issues"]:
-                checked["validation"]["issues"].extend(remaining_editorial)
-            checked["issues"].extend(remaining_editorial)
-        _save(_phase_file(root, "04_correction", "attempt_1.json"), {
-            "output": correction.model_dump(mode="json"),
-            "revised_direction": corrected_direction.model_dump(mode="json"),
-            "validation": _compact_report(checked["validation"]),
-            "boundary_validation": checked["boundaries"],
-        })
-        _save(root / "correction_1.json", {
-            "direction": corrected_direction.model_dump(mode="json"),
-            "plan": checked["plan"],
-            "validation": _compact_report(checked["validation"]),
-        })
-        correction_attempts.append({
-            "attempt": 1, "status": checked["status"],
-            "issues": checked["issues"],
-        })
-        joint_direction = corrected_direction
-        current = checked
+                    "validation": {
+                        "status": "blocked",
+                        "issues": [{
+                            "rule_id": "INVALID_DIRECTION_CORRECTION",
+                            "message": str(exc),
+                        }],
+                    },
+                    "plan": None,
+                    "boundaries": current["boundaries"],
+                }
+                corrected_direction = joint_direction
 
+            modified = {beat.beat_id for beat in correction.visual_patches}
+            modified.update(
+                beat.beat_id for group in correction.replaced_groups
+                for beat in group.beats
+            )
+            replaced_ids = {group.block_id for group in correction.replaced_groups}
+            original_beat_groups = {
+                beat.beat_id: group.block_id
+                for group in joint_direction.blocks for beat in group.beats
+            }
+            outstanding_editorial = [
+                item for item in outstanding_editorial
+                if item.beat_id not in modified
+                and original_beat_groups.get(item.beat_id) not in replaced_ids
+                and not (item.beat_id is None and (modified or replaced_ids))
+            ]
+            remaining_editorial = [
+                {"rule_id": "EDITORIAL_ISSUE_UNADDRESSED",
+                 "message": item.problem, "beat_id": item.beat_id}
+                for item in outstanding_editorial
+            ]
+            if remaining_editorial:
+                checked["status"] = "blocked"
+                checked["validation"]["status"] = "blocked"
+                if checked["validation"]["issues"] is not checked["issues"]:
+                    checked["validation"]["issues"].extend(remaining_editorial)
+                checked["issues"].extend(remaining_editorial)
+
+            _save(_phase_file(
+                root, "04_correction", f"attempt_{correction_number}.json",
+            ), {
+                "output": correction.model_dump(mode="json"),
+                "revised_direction": corrected_direction.model_dump(mode="json"),
+                "validation": _compact_report(checked["validation"]),
+                "boundary_validation": checked["boundaries"],
+            })
+            _save(root / f"correction_{correction_number}.json", {
+                "direction": corrected_direction.model_dump(mode="json"),
+                "plan": checked["plan"],
+                "validation": _compact_report(checked["validation"]),
+            })
+            correction_attempts.append({
+                "attempt": correction_number, "status": checked["status"],
+                "issues": checked["issues"],
+            })
+            previous_count = len(before["issues"])
+            new_count = len(checked["issues"])
+            if checked["status"] == "passed" or (
+                checked["status"] == "passed_with_warnings"
+            ):
+                joint_direction = corrected_direction
+                current = checked
+                break
+            if new_count >= previous_count:
+                # Keep the better previous revision and stop spending tokens.
+                break
+            joint_direction = corrected_direction
+            current = checked
     _save(_phase_file(root, "04_correction"), {
         "phase": "04_correction", "status": current["status"],
         "correction_attempts": correction_attempts,
