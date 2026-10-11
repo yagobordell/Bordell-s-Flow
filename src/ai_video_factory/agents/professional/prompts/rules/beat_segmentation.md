@@ -204,10 +204,13 @@ These examples test text fidelity only. They do not prescribe where beat boundar
 ## Original B1.2 semantic algorithm, adapted for a whole-script call
 
 The following source steps are reproduced verbatim. For our global response,
-apply them to EVERY B1.1 group in the same call and return ONLY exclusive
-character CUT POSITIONS relative to that group's exact source text,
-rather than retyping beat text. All cut positions must be ascending,
-last cut exactly len(group.text). The beat_type belongs to each ending cut.
+apply them to EVERY B1.1 group in the same call and return ONLY short exact end_anchor phrases copied from each source beat's
+last substantive words, plus a 1-based occurrence relative to the previous
+beat's end, rather than retyping beat text. Python resolves each end_anchor
+inside its source group, assigns separator whitespace to the previous beat,
+and derives exact contiguous text slices. For EVERY group, the final
+end_anchor must correspond to the last substantive words in group.text.
+The beat_type belongs to each beat's ending anchor.
 
 4. Read S from beginning to end using narrative_core and block metadata only as context.
 5. Identify governing semantically complete and independently representable impacts in S. Apply the intro-specific quicker cadence when type=intro. Before marking internal boundaries, detect compact enumerations, anaphoric runs, repeated negatives and parallel short clauses that jointly form one rhetorical message; treat these as provisional cohesion spans unless a true staged event, result, speaker turn, time/place reset or visual reset occurs inside them.
