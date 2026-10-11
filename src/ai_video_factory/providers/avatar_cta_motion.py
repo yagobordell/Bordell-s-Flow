@@ -58,6 +58,21 @@ def probe_manual_motion(file: Path) -> float:
         ) from exc
 
 
+def _replace_json(path: Path, record: dict[str, object]) -> None:
+    if path.is_symlink() or path.is_junction():
+        raise SystemExit(f"Metadatos CTA inseguros: {path}")
+    temp = path.with_name(path.name + ".part")
+    if temp.exists() or temp.is_symlink() or temp.is_junction():
+        raise SystemExit(f"Metadatos CTA pendientes de reconciliar: {temp}")
+    try:
+        with temp.open("x", encoding="utf-8") as stream:
+            json.dump(record, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 def motion_source(directory: Path) -> dict[str, object]:
     path = directory / "motion_source.json"
     if path.is_symlink() or path.is_junction():
@@ -77,7 +92,39 @@ def motion_source(directory: Path) -> dict[str, object]:
         probe_manual_motion(file)
         digest = _sha256(file)
         if record.get("sha256") != digest:
-            raise SystemExit("Motion manual cambiado: revisar SHA-256 antes de continuar")
+            if (
+                (directory / "motion_manual_state.json").exists()
+                or (directory / "completed.json").exists()
+            ):
+                raise SystemExit(
+                    "Motion manual cambiado después de preparar el CTA. "
+                    "Reconciliar el CTA antes de continuar."
+                )
+            # The clip can be corrected while onboarding is unfinished.
+            # This is important when the first candidate was too short for
+            # the actual, subsequently generated CTA narration.
+            print(
+                f"Motion manual actualizado antes de completar el CTA: {file}. "
+                "Revalidando el nuevo MP4 sin regenerar voz, imagen ni A2V."
+            )
+            record = {**record, "sha256": digest}
+            _replace_json(path, record)
+        identity_path = directory / "identity.json"
+        if identity_path.is_file() and not (directory / "motion_manual_state.json").exists():
+            if (directory / "completed.json").exists():
+                return record
+            if identity_path.is_symlink() or identity_path.is_junction():
+                raise SystemExit("Identidad CTA no segura")
+            try:
+                identity = json.loads(identity_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise SystemExit("Identidad CTA ilegible") from exc
+            if not isinstance(identity, dict) or "manual_motion_sha256" not in identity:
+                raise SystemExit("Identidad CTA manual inválida")
+            if identity["manual_motion_sha256"] != digest:
+                _replace_json(
+                    identity_path, {**identity, "manual_motion_sha256": digest},
+                )
     return record
 
 
