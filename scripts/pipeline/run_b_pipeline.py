@@ -86,7 +86,10 @@ from ai_video_factory.providers.avatar_library import (
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
-from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
+from ai_video_factory.providers.ebook_covers import (
+    ensure_ebook_covers,
+    resolve_professional_ebook_covers,
+)
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
 from ai_video_factory.providers.openai_batch_images import (
@@ -182,7 +185,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--ebook-cover", action="append", metavar="NOMBRE",
-        help="Modo casero: portada PNG en data/ sin extension; repetir para portada secundaria.",
+        help=(
+            "Portada PNG del ebook en data/ sin extensión. En Profesional se "
+            "pregunta si el guion promociona un ebook y falta la selección; "
+            "en Casero se pueden indicar dos portadas."
+        ),
     )
     parser.add_argument(
         "--qr-url",
@@ -2948,16 +2955,17 @@ async def main() -> None:
             )
         if visual_style in {"casero", "profesional"}:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
-            cover_selected = (
-                visual_style == "casero"
-                or bool(getattr(args, "ebook_cover", None))
-                or (avatar_file.parent / "meta" / "ebook_covers.json").is_file()
+            data_root = (
+                args.avatars_dir if managed_target is not None
+                else args.avatars_dir.parent
             )
-            if cover_selected:
-                data_root = (
-                    args.avatars_dir if managed_target is not None
-                    else args.avatars_dir.parent
+            if visual_style == "profesional":
+                covers = resolve_professional_ebook_covers(
+                    avatar_file, script=script, data_dir=data_root,
+                    names=getattr(args, "ebook_cover", None),
                 )
+            else:
+                # The original Casero cover selection is unchanged.
                 covers = ensure_ebook_covers(
                     avatar_file, data_dir=data_root,
                     names=getattr(args, "ebook_cover", None),
@@ -3034,19 +3042,13 @@ async def main() -> None:
                 avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
             )
         _clear_outputs_from(output, args.from_stage)
-        if (
-            visual_style == "profesional"
-            and (
-                bool(getattr(args, "ebook_cover", None))
-                or (avatar_file.parent / "meta" / "ebook_covers.json").is_file()
-            )
-        ):
+        if visual_style == "profesional":
             data_root = (
                 args.avatars_dir if managed_target is not None
                 else args.avatars_dir.parent
             )
-            covers = ensure_ebook_covers(
-                avatar_file, data_dir=data_root,
+            covers = resolve_professional_ebook_covers(
+                avatar_file, script=script, data_dir=data_root,
                 names=getattr(args, "ebook_cover", None),
             )
 
