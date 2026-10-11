@@ -560,23 +560,28 @@ def select_visual_style(selected: str | None, *, interactive: bool | None = None
         print("Introduce 1 o 2, o q para cancelar.")
 
 
-def select_casero_subtitles(requested: bool | None) -> bool:
+def select_casero_subtitles(
+    requested: bool | None, *, default: bool = False,
+) -> bool:
     """Choose per-video subtitles, never a persistent avatar setting."""
     if requested is not None:
         return requested
     if not sys.stdin.isatty():
-        return False
+        return default
+    option = "[S/n]" if default else "[s/N]"
     while True:
         try:
             answer = input(
-                "¿Subtítulos caseros blancos con sombra (sin CTA)? [s/N]: "
+                f"¿Subtítulos blancos con sombra, una línea, sin CTA? {option}: "
             ).strip().lower()
         except (EOFError, KeyboardInterrupt) as exc:
             raise SystemExit("Selección de subtítulos cancelada.") from exc
         if answer in {"s", "si", "sí", "y", "yes"}:
             return True
-        if answer in {"", "n", "no"}:
+        if answer in {"n", "no"}:
             return False
+        if answer == "":
+            return default
         print("Responde s o n.")
 
 
@@ -1891,16 +1896,24 @@ async def _run_videos_only(
         raise SystemExit("--generate-video requires a saved B2 plan and run report")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     saved_style = report.get("run", {}).get("visual_style", "casero")
-    if subtitles is not None:
-        if saved_style != "casero":
-            raise SystemExit("--subtitles is only available in casero")
-        existing_video = report["run"].get("video_generation", {})
+    if saved_style != "casero" and subtitles is not None:
+        raise SystemExit("--subtitles is only available in casero")
+    if saved_style == "casero":
         previous_choice = bool(report["run"].get("casero_subtitles", False))
-        if (isinstance(existing_video, dict)
-                and existing_video.get("status") == "completed"
-                and subtitles != previous_choice):
-            raise SystemExit("A completed video cannot change subtitle selection; create a new run")
-        report["run"]["casero_subtitles"] = subtitles
+        existing_video = report["run"].get("video_generation", {})
+        completed = (
+            isinstance(existing_video, dict)
+            and existing_video.get("status") == "completed"
+        )
+        if completed and subtitles is not None and subtitles != previous_choice:
+            raise SystemExit(
+                "Cannot change subtitles on a completed run; create a new run"
+            )
+        # Video-only may be the first rendering step after a completed B2 preview.
+        chosen = previous_choice if completed else select_casero_subtitles(
+            subtitles, default=previous_choice,
+        )
+        report["run"]["casero_subtitles"] = chosen
     if report.get("run", {}).get("script_sha256") != hashlib.sha256(
         source.read_bytes()
     ).hexdigest():
