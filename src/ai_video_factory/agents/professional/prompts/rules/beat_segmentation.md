@@ -8,8 +8,8 @@ physical action, still/video prompt, scene continuity and editor notes.
 There is NEVER a separate segmentation-only model call. Old references to
 current_block, worker, serialized text and per-block execution describe
 the inherited EDITORIAL TESTS only, not the present input/output format.
-Python derives exact source text from the returned anchors after receiving
-the WHOLE joint plan.
+Python verifies the model's source text and restores exact original source
+whitespace after receiving the WHOLE joint plan.
 The original semantic tests, hard limits and audience cadence
 take full precedence over generic guidance elsewhere.
 
