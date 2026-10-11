@@ -311,9 +311,9 @@ def _publish_stage(
 
 
 def _publish_final_file(
-    target: Path, script_name: str, source: tuple[Path, str]
+    target: Path, script_name: str, source: tuple[Path, str], *, suffix: str = "mp4",
 ) -> None:
-    name = f"{script_name}.mp4"
+    name = f"{script_name}.{suffix}"
     destination = target / name
     asset, sha = source
     if destination.is_symlink():
@@ -373,6 +373,9 @@ def public_report(
     video = run.get("video_generation")
     if isinstance(video, dict) and stages.get("video") == "completed":
         video["file"] = f"{script_name}.mp4"
+        subtitles = video.get("subtitles")
+        if isinstance(subtitles, dict) and subtitles.get("enabled") is True:
+            subtitles["srt_file"] = f"{script_name}.srt"
     # Do not expose an internal relative path as though it existed here.
     for key, stage in (
         ("audio_generation", "audio"), ("video_preview", "preview"),
@@ -412,5 +415,9 @@ def sync_managed_media(
     video = _final_video(work, run, statuses)
     if video is not None:
         _publish_final_file(target, script_name, video)
+        subtitles = run["video_generation"].get("subtitles")
+        if isinstance(subtitles, dict) and subtitles.get("enabled") is True:
+            srt = _source(work, subtitles.get("srt_file"), subtitles.get("srt_sha256"))
+            _publish_final_file(target, script_name, srt, suffix="srt")
         statuses["video"] = "completed"
     return statuses

@@ -789,6 +789,7 @@ def generate_b2_ltx_video(
     check_a2v_worker: Callable[[], None] | None = None,
     check_i2v_worker: Callable[[], None] | None = None,
     casero_cta_dir: Path | None = None,
+    subtitles_enabled: bool = False,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -1016,6 +1017,10 @@ def generate_b2_ltx_video(
 
     if manifest.get("status") == "completed":
         _verified_asset(output, manifest.get("file"), manifest.get("sha256"))
+        if plan.get("visual_style") == "casero":
+            saved = manifest.get("subtitles", {})
+            if bool(saved.get("enabled", False)) != subtitles_enabled:
+                raise B2VideoError("Saved casero subtitle preference differs from completed video")
         if plan.get("visual_style") == "profesional" and plan.get("ebook_cta_groups"):
             website = (
                 manifest.get("professional_ebook_qr", {})
@@ -1051,6 +1056,13 @@ def generate_b2_ltx_video(
         result.update(inserted)
         result["duration_seconds"] += inserted["cta_insertion"]["cta_duration_seconds"]
         result["audio_source"] = "verified_original_pcm_with_per_avatar_casero_cta"
+    if subtitles_enabled:
+        if plan.get("visual_style") != "casero":
+            raise B2VideoError("Optional subtitles are exclusive to casero")
+        from ai_video_factory.compositor.casero_subtitles import burn_casero_subtitles
+        result.update(burn_casero_subtitles(output, run_dir, result, audio))
+    elif plan.get("visual_style") == "casero":
+        result["subtitles"] = {"enabled": False}
     manifest.update(result)
     manifest["status"] = "completed"
     _save_json(manifest_path, manifest)
