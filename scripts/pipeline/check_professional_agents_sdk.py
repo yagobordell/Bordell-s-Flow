@@ -25,7 +25,9 @@ from agents import (
 from agents.agent_output import AgentOutputSchema
 from agents.testing import ScriptedModel, assistant_message
 
-from ai_video_factory.agents.professional.runner import GroupProposal, PlannedVideo
+from ai_video_factory.agents.professional.beats import WholeScriptCuts
+from ai_video_factory.agents.professional.runner import CreativeReview, GroupProposal
+from ai_video_factory.agents.professional.visuals import VisualCorrection, WholeVideoVisuals
 from ai_video_factory.agents.professional.tools import (
     ProfessionalPlanWorkspace,
     build_agents_sdk_tools,
@@ -34,7 +36,10 @@ from ai_video_factory.bots.contracts import B11Output
 
 
 def check() -> None:
-    for output_type in (GroupProposal, B11Output, PlannedVideo):
+    for output_type in (
+        GroupProposal, B11Output, WholeScriptCuts, WholeVideoVisuals,
+        CreativeReview, VisualCorrection,
+    ):
         schema = AgentOutputSchema(output_type)
         assert schema.is_strict_json_schema()
         body = schema.json_schema()
@@ -53,8 +58,8 @@ def check() -> None:
         tools=[check_source],
         model_settings=ModelSettings(max_tokens=16000, parallel_tool_calls=False),
     )
-    clone = agent.clone(output_type=PlannedVideo)
-    assert clone.output_type is PlannedVideo
+    clone = agent.clone(output_type=WholeScriptCuts)
+    assert clone.output_type is WholeScriptCuts
     assert clone.model == agent.model
     assert issubclass(ModelBehaviorError, Exception)
     assert callable(getattr(RunHooks(), "on_llm_end", None))
