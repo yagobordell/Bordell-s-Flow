@@ -81,7 +81,7 @@ def test_single_image_beat_has_no_extra_asset_fields():
 
 
 def test_prompt_loader_includes_unabridged_screen_rule_every_editing_phase():
-    for phase in ("02_visuals", "03_evaluation", "04_correction"):
+    for phase in ("02_planning", "03_evaluation", "04_correction"):
         instructions = load_phase_instructions(phase)
         assert "(For context: ...)" in instructions
         assert "content shown within the screen or document" in instructions
@@ -89,6 +89,11 @@ def test_prompt_loader_includes_unabridged_screen_rule_every_editing_phase():
     assert "ONE professional editor/director" in load_phase_instructions(
         "01_groups"
     )
+    integrated = load_phase_instructions("02_planning")
+    assert "rules/beat_segmentation.md" in integrated
+    assert "rules/direction_continuity.md" in integrated
+    assert "rules/professional_cta.md" in integrated
+    assert "ONE global beat + visual direction" in integrated
     assert "actual finalized start PNGs" in load_post_generation_motion_instructions()
 
 
