@@ -25,10 +25,18 @@ from ai_video_factory.agents.professional.tools import (
 from ai_video_factory.bots.contracts import (
     B11Output,
     BeatType,
+    BlockMeta,
     NarrativeCore,
     StrictModel,
     VisualType,
 )
+
+
+class GroupProposal(StrictModel):
+    """Success-only B1.1 response: no redundant stage or error/null branches."""
+
+    narrative_core: NarrativeCore
+    blocks: list[BlockMeta] = Field(min_length=1)
 
 
 class EditorialTrigger(StrictModel):
@@ -301,27 +309,19 @@ async def run_professional_director(
     groups_ok = False
     check: dict[str, Any] = {"status": "blocked", "issues": []}
     for attempt in range(max_corrections + 1):
-        b11 = await execute(
+        proposal = await execute(
             "01_groups", input_script if attempt == 0 else (
                 "Repara ÚNICAMENTE los anclajes B1.1 rechazados por Python. "
                 + json.dumps(check, ensure_ascii=False) + "\n" + input_script
             ),
-            output_type=B11Output, use_tools=True,
+            output_type=GroupProposal, use_tools=True,
         )
-        if not isinstance(b11, B11Output) or b11.error is not None:
-            check = {"status": "blocked", "issues": [{
-                "rule_id": "B11_MODEL_ERROR",
-                "message": (
-                    b11.error.message if isinstance(b11, B11Output) and b11.error
-                    else "Unexpected grouping output type"
-                ),
-            }]}
-            _save(root / f"groups_attempt_{attempt + 1}.json", {
-                "validation": check,
-            })
-            continue
+        b11 = B11Output(
+            pipeline_stage="B1.1", narrative_core=proposal.narrative_core,
+            blocks=proposal.blocks, error=None,
+        )
         check = workspace.submit_groups([
-            x.model_dump(mode="json") for x in b11.blocks or []
+            x.model_dump(mode="json") for x in proposal.blocks
         ])
         _save(root / f"groups_attempt_{attempt + 1}.json", {
             "output": b11.model_dump(mode="json"), "validation": check,
