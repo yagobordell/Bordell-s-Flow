@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.compositor.casero_subtitles import (
+    burn_casero_subtitles,
     _captions,
     _shift_around_cta,
     _subtitle_files,
@@ -126,3 +127,60 @@ def test_existing_cta_keeps_automatic_source(
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Legacy CTA prompted"))
     stored = avatar_cta_motion.ensure_avatar_cta_motion(avatar, interactive=True)
     assert stored["mode"] == "automatic"
+
+
+def test_subtitle_render_uses_only_narration_stt_and_never_cta_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import casero_subtitles as subtitles
+
+    output = tmp_path / "out"
+    run = output / "video" / "runs" / "test"
+    run.mkdir(parents=True)
+    original = output / "base.mp4"
+    original.write_bytes(b"verified unsubtitled video")
+    audio_sha = "a" * 64
+    transcript = output / "stt.json"
+    transcript.write_text(json.dumps({
+        "source_audio_sha256": audio_sha,
+        "words": [
+            {"word": "before.", "start": 0.1, "end": 0.6},
+            {"word": "after.", "start": 2.0, "end": 2.6},
+        ],
+    }), encoding="utf-8")
+    audio = {
+        "sha256": "b" * 64,
+        "block_start_seconds": [0.0],
+        "blocks": [{"sha256": audio_sha, "stt": {
+            "file": "stt.json", "sha256": hashlib.sha256(transcript.read_bytes()).hexdigest(),
+        }}],
+    }
+    video = {
+        "file": "base.mp4", "sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
+        "cta_insertion": {"video_cut_seconds": 1.0, "cta_duration_seconds": 6.0},
+    }
+    calls: list[list[str]] = []
+
+    def fake_ffmpeg(command: list[str], **kwargs):
+        calls.append(command)
+        Path(command[-1]).write_bytes(b"burned after CTA insertion")
+        assert kwargs["cwd"] == run
+        assert "ass=subtitles.ass" in command
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(subtitles.subprocess, "run", fake_ffmpeg)
+    result = burn_casero_subtitles(output, run, video, audio)
+    assert result["subtitles"]["enabled"] is True
+    assert result["subtitles"]["caption_count"] == 2
+    content = (run / "subtitles.srt").read_text(encoding="utf-8")
+    assert "00:00:00,100 --> 00:00:00,600" in content
+    assert "00:00:08,000 --> 00:00:08,600" in content
+    assert "00:00:01,000 -->" not in content
+    assert len(calls) == 1
+
+    # Cached local render must not encode again.
+    monkeypatch.setattr(
+        subtitles.subprocess, "run",
+        lambda *_args, **_kwargs: pytest.fail("Re-encoded valid subtitle cache"),
+    )
+    assert burn_casero_subtitles(output, run, video, audio) == result
