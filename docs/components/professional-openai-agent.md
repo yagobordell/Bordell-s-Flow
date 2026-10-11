@@ -71,13 +71,17 @@ rhythm scheduler is introduced. No SDK Session is used to accumulate repeated
 script/plan/tool payloads across phases.
 
 Before making any paid request, Python checks the source for an explicit
-spoken ebook promotion tied to a QR scan. If an authentic cover is missing
-for that protected CTA, the run fails **before any OpenAI request**, with
-`PREFLIGHT_EBOOK_COVER_REQUIRED`. Configure `--ebook-cover` or the
-avatar's saved cover asset and rerun. Non-ebook videos remain usable
-without a cover. In all cases an unreferenced, invented ebook CTA is blocked
-by deterministic validation; editorial correction cannot silently replace
-the real user's promotion with a fictitious asset.
+spoken ebook promotion tied to a QR scan. **When its cover is not yet saved,
+an interactive run asks for the real PNG name from data/ (with or without
+.png)**, validates the PNG and saves an SHA-verified copy for subsequent runs.
+An existing saved cover is reused without prompting. Scripts with no ebook
+promotion do not prompt for a cover. Unattended runs must specify
+`--ebook-cover NOMBRE` on first use; they fail with a clear CLI message
+rather than an OpenAI request or a Python traceback. The internal director
+retains `PREFLIGHT_EBOOK_COVER_REQUIRED` as a guard for callers that bypass
+the human-facing CLI. In all cases an unreferenced, invented ebook CTA is
+blocked by deterministic validation; editorial correction cannot silently
+replace the real user's promotion with a fictitious asset.
 
 The deterministic validation includes a frozen B1.1 narrative_core comparison.
 No candidate plan is considered green until source tiling, narration length,
