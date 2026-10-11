@@ -48,6 +48,7 @@ def project_professional_plan(
         visuals: list[dict[str, Any]] = []
         voice: list[dict[str, Any]] = []
         editorial: list[dict[str, Any]] = []
+        grid_asset_no = 0
         for beat in block["beats"]:
             entry = {
                 key: copy.deepcopy(beat[key]) for key in (
@@ -59,13 +60,19 @@ def project_professional_plan(
                 prompts = beat["image_prompts"]
                 mode = beat.get("generation_mode", "independent")
                 cleaned = [_PREFIX.sub("", prompt).strip() for prompt in prompts]
+                numbered = []
+                for image_prompt in cleaned:
+                    if mode == "grid":
+                        grid_asset_no += 1
+                        # Real 18-asset runs are checked by Python before
+                        # this projection; asset numbering spans beat IDs.
+                        numbered.append(f"{grid_asset_no}. {image_prompt}")
+                    else:
+                        grid_asset_no = 0
+                        numbered.append(image_prompt)
                 if len(cleaned) == 1:
-                    entry["prompt"] = prompts[0]
+                    entry["prompt"] = numbered[0]
                 else:
-                    numbered = [
-                        f"{index}. {prompt}" if mode == "grid" else prompt
-                        for index, prompt in enumerate(cleaned, start=1)
-                    ]
                     entry["prompt"] = numbered[0]
                     entry["visual_subshots"] = [
                         {
@@ -78,6 +85,7 @@ def project_professional_plan(
                         for index, prompt in enumerate(numbered, start=1)
                     ]
             else:
+                grid_asset_no = 0
                 entry["prompt"] = beat.get("prompt")
             out = copy.deepcopy(entry)
             if "cta_group_id" in beat:
