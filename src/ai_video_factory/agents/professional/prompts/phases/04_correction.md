@@ -1,25 +1,25 @@
 # Phase 4 — focused fixes without destroying a good plan
 
 Evaluate the Python blocking errors and your own global editorial review
-against the COMPLETE immutable original script, given as source_beats.
+against the COMPLETE immutable original script, given as source groups
+and the combined original audiovisual direction.
 This is the SAME professional director correcting the whole video, NOT
 an independent worker invoked per group.
 
-Return ONE strict VisualCorrection JSON with these required fields:
-- resegmented_blocks: normally []; if a genuinely wrong narrative beat
-  boundary requires changing, supply corrected, source-verbatim B1.2 end
-  anchors and taxonomy for the affected group ONLY; preserve the complete
-  original proven B1.2 semantic rhythm, atomicity and <=100 chars/40 words.
-- replanned_blocks: normally []; for EACH resegmented group, return EVERY
-  new visual decision in that group, with updated beat IDs and complete
-  story-faithful prompts. Only such groups may appear here.
-- visual_patches: ONLY changed existing beat IDs and their complete visual
-  choices; omit ALL untouched beats. Never repeat the whole video if only a
-  few beats need repair. A patched beat preserves its immutable source text,
-  B1.2 beat_type and group identity by construction.
+Return ONE strict DirectionCorrection object covering ALL actual issues:
+- replaced_groups: complete integrated DirectedGroup objects ONLY for groups
+  whose narrative boundaries, beat IDs, anchor source phrases or beat types
+  need revision. Each new beat contains its source cut AND complete new
+  visual carrier, prompts, continuity/grid and editor notes TOGETHER.
+- visual_patches: changed VisualChoice objects ONLY for existing beat IDs
+  whose original text boundaries remain intact. Python preserves those
+  beats' exact source anchors and narration. Never repeat untouched beats.
+Both arrays are mandatory even when empty.
 
-Return empty arrays when Python has no blocking problems and your global
-editorial diagnosis finds nothing important. Do not invent corrections.
+When you receive actual errors, correct ALL of them coherently in this
+single full-video correction response. No extra narrative-only or
+visual-only planning passes. Return empty arrays only when no change is
+actually warranted.
 
 Narrative boundaries are chosen by YOU based on the original B1.2 rules;
 Python cannot rewrite them for you. Once proposed, Python materializes the
