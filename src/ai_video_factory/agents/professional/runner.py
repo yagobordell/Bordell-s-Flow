@@ -173,7 +173,7 @@ def _b12_checkpoints(output: Path, blocks: list[dict[str, Any]],
 
 async def run_professional_director(
     script: str, *, output: Path, avatar: bytes, ebook: bytes | None,
-    model: str, memory_root: Path | None = None, max_corrections: int = 3,
+    model: str, memory_root: Path | None = None, max_corrections: int = 1,
     api_key: str | None = None,
 ) -> dict[str, Any]:
     """Full-script Professional pipeline, gate all downstream work on Python."""
