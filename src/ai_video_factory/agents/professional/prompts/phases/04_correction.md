@@ -7,7 +7,7 @@ This is the SAME professional director correcting the whole video, NOT
 an independent worker invoked per group.
 
 Return ONE strict SparseCorrection object covering ALL actual issues:
-- replaced_groups: complete integrated DirectedGroup objects ONLY for groups
+- replaced_groups: complete integrated SparseGroup objects ONLY for groups
   whose text boundaries, beat IDs, or beat types need revision, or whose
   source annotations must change. Each replacement includes exact source
   text AND complete visual carrier decisions for that group.
