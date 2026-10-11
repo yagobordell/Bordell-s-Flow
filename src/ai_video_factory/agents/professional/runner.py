@@ -31,6 +31,7 @@ from ai_video_factory.agents.professional.visuals import (
     WholeVideoVisuals,
     apply_correction,
     assemble_plan,
+    canonicalize_visual_order,
     merge_alignment_repair,
     mismatched_visual_blocks,
 )
@@ -406,7 +407,9 @@ async def run_professional_director(
     # 02b: complete-video visual planning; source beat IDs and text are
     # immutable and not repeated in the model's structured visual output.
     catalog = _visual_input(source_beats, core, avatar, ebook)
-    visuals = await invoke("02_visuals", catalog, WholeVideoVisuals)
+    visuals = canonicalize_visual_order(
+        source_beats, await invoke("02_visuals", catalog, WholeVideoVisuals),
+    )
     _save(_phase_file(root, "02_visuals", "attempt_1.json"), {
         "output": visuals.model_dump(mode="json"),
         "mismatched_blocks": mismatched_visual_blocks(source_beats, visuals),
@@ -437,8 +440,11 @@ async def run_professional_director(
             "02_visuals", repair_input, VisualAlignmentRepair,
         )
         try:
-            visuals = merge_alignment_repair(
-                source_beats, visuals, corrected_visuals, mismatched,
+            visuals = canonicalize_visual_order(
+                source_beats,
+                merge_alignment_repair(
+                    source_beats, visuals, corrected_visuals, mismatched,
+                ),
             )
         except ValueError as exc:
             _save(_phase_file(root, "02_visuals",
