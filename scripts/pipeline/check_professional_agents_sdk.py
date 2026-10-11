@@ -27,11 +27,11 @@ from agents.testing import ScriptedModel, assistant_message
 
 from ai_video_factory.agents.professional.beats import WholeScriptCuts
 from ai_video_factory.agents.professional.runner import CreativeReview, GroupProposal
-from ai_video_factory.agents.professional.visuals import VisualCorrection, WholeVideoVisuals
 from ai_video_factory.agents.professional.tools import (
     ProfessionalPlanWorkspace,
     build_agents_sdk_tools,
 )
+from ai_video_factory.agents.professional.visuals import VisualCorrection, WholeVideoVisuals
 from ai_video_factory.bots.contracts import B11Output
 
 
