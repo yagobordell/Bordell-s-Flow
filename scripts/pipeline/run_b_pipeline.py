@@ -2726,7 +2726,7 @@ async def main() -> None:
             text = script_file.read_text(encoding="utf-8")
             path = await propose_feedback(
                 argument=args.feedback_gpt, output=output, script=text,
-                model=settings.openai_model,
+                model=settings.openai_model, api_key=settings.openai_api_key,
             )
             print(f"  Feedback proposal ready for review: {path}")
             print(f"  Apply: --approve-gpt-feedback {path}")
@@ -3366,6 +3366,7 @@ async def main() -> None:
                 ebook=covers.files[0].read_bytes() if covers is not None else None,
                 model=settings.openai_model,
                 memory_root=args.avatars_dir / "_professional_gpt_memory",
+                api_key=settings.openai_api_key,
             )
             director_blocks = directed["projection"]["b2_merged"]["blocks"]
             b11 = directed["b11"]
