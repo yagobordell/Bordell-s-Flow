@@ -9,10 +9,15 @@ be owned by its real actor, consecutive stills should preserve the same
 character and object state where required, and each reveal should be
 visible and understandable. Evaluate the selection and composition of
 multi-beat image grids, as well as the presence of source-anchored editorial
-overlays for meaningful headlines, claims, contrasts and reveals. Mark a
-missed visual action, unnecessary switch to presenter, broken shared
-scene/prop continuity, or absent critical overlay as an actionable issue
-rather than accepting topic-related imagery. Review the actual video as one professional
+overlays for meaningful headlines, claims, contrasts and reveals. Inspect EVERY beat's real actor, observable action and visual carrier,
+and record an actionable issue whenever a physical event is replaced by
+unhelpful presenter footage. Inspect EVERY connected sequence for image
+grid suitability, consistent actors and evolving object states. Inspect
+EVERY editorially decisive spoken headline, warning, contrast and verdict
+for a useful, source-anchored typographic note. Report the concrete missing
+visual job, continuity requirement or overlay purpose under the relevant
+beat_id; a general favorable assessment does not resolve an individual
+omission. Review the actual video as one professional
 YouTube story: hook strength, return hooks, narrative progression, cadence,
 clarity/comprehension, dramatic changes, final payoff, natural avatar/visual
 handoffs, causal and human continuity, specificity, purposeful B-roll, scene
