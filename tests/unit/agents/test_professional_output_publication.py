@@ -30,25 +30,22 @@ def test_stopped_professional_agent_exposes_all_phase_outputs(tmp_path):
     b12 = work / "B1.2" / "block_1" / "output.json"
     b12.parent.mkdir(parents=True)
     b12.write_text('{"pipeline_stage":"B1.2"}', encoding="utf-8")
-    try:
-        sync_managed_outputs(work, script_folder)
-        for stage in stage_names:
-            path = (
-                script_folder / "outputs" / "agent_openai"
-                / "phases" / stage / "output.json"
-            )
-            assert json.loads(path.read_text(encoding="utf-8")) == {
-                "phase": stage, "status": "passed",
-            }
-        assert (script_folder / "outputs" / "B1.1" / "output.json").is_file()
-        assert (script_folder / "outputs" / "B1.2" / "block_1"
-                / "output.json").is_file()
-        # A repeated managed sync is safe and retains the source checkpoints.
-        sync_managed_outputs(work, script_folder)
-        assert b11.is_file()
-        assert b12.is_file()
-    finally:
-        pass
+    sync_managed_outputs(work, script_folder)
+    for stage in stage_names:
+        path = (
+            script_folder / "outputs" / "agent_openai"
+            / "phases" / stage / "output.json"
+        )
+        assert json.loads(path.read_text(encoding="utf-8")) == {
+            "phase": stage, "status": "passed",
+        }
+    assert (script_folder / "outputs" / "B1.1" / "output.json").is_file()
+    assert (script_folder / "outputs" / "B1.2" / "block_1"
+            / "output.json").is_file()
+    # A repeated managed sync is safe and retains the source checkpoints.
+    sync_managed_outputs(work, script_folder)
+    assert b11.is_file()
+    assert b12.is_file()
 
 
 def test_symlinked_agent_artifacts_are_never_exposed(tmp_path):
