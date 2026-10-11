@@ -11,6 +11,7 @@ import json
 import math
 import shutil
 import subprocess
+import time
 import wave
 from collections import Counter
 from collections.abc import Callable
@@ -954,6 +955,7 @@ def generate_b2_ltx_video(
             "waiting for a Salad worker/result",
             flush=True,
         )
+        wait_started = time.perf_counter()
         response = executor.execute(
             job.request,
             metadata={
@@ -961,6 +963,7 @@ def generate_b2_ltx_video(
                 "run_id": digest,
             },
         )
+        wait_seconds = time.perf_counter() - wait_started
         print(
             f"  LTX {job.kind.upper()} job={job.request.job_id}: "
             "inference completed; verifying MP4",
@@ -970,9 +973,20 @@ def generate_b2_ltx_video(
         if part.is_symlink():
             raise B2VideoError("Refusing linked temporary LTX clip")
         part.unlink(missing_ok=True)
+        transfer_times: dict[str, float] = {
+            "wait_for_result": round(wait_seconds, 3),
+        }
         try:
+            download_started = time.perf_counter()
             executor.download_output(response, part)
+            transfer_times["mp4_download"] = round(
+                time.perf_counter() - download_started, 3,
+            )
+            verification_started = time.perf_counter()
             _probe_video(part, job)
+            transfer_times["mp4_verification"] = round(
+                time.perf_counter() - verification_started, 3,
+            )
             if job.kind == "a2v":
                 sidecar = job.request.sidecar_outputs["metadata"]
                 meta = run_dir / "clips" / f"{job.request.job_id}.metadata.json"
@@ -1011,6 +1025,7 @@ def generate_b2_ltx_video(
             sha256=sha256_file(clip),
             duration_seconds=job.duration_seconds,
             replayed=response.replayed,
+            transfer_timings_seconds=transfer_times,
         )
         _save_json(manifest_path, manifest)
 
