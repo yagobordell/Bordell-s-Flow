@@ -5,10 +5,13 @@ import pytest
 
 from ai_video_factory.agents.professional.compat import project_professional_plan
 from ai_video_factory.agents.professional.prompt_loader import (
-    load_phase_instructions, load_post_generation_motion_instructions,
+    load_phase_instructions,
+    load_post_generation_motion_instructions,
 )
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai_batch_images import described_beats
+
+
 def sample():
     parts = ["Una idea concreta. ", "Otra idea clara. ", "Una tercera prueba. ", "Y cerramos."]
     script = "".join(parts)
