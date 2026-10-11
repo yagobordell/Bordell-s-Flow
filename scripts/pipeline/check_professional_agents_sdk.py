@@ -25,9 +25,9 @@ from agents import (
 from agents.agent_output import AgentOutputSchema
 from agents.testing import ScriptedModel, assistant_message
 
-from ai_video_factory.agents.professional.direction import (
-    DirectionCorrection,
-    WholeVideoDirection,
+from ai_video_factory.agents.professional.compact import (
+    SparseCorrection as DirectionCorrection,
+    SparseDirection as WholeVideoDirection,
 )
 from ai_video_factory.agents.professional.runner import CreativeReview, GroupProposal
 from ai_video_factory.agents.professional.tools import (
@@ -127,20 +127,13 @@ def check() -> None:
             "block_id": 1,
             "beats": [{
                 "beat_id": "1A",
-                "end_anchor": "Final.",
-                "occurrence": 1,
+                "text": "Final.",
                 "beat_type": "return",
                 "visual_type": "avatar",
-                "prompt": None,
-                "video_prompt": None,
-                "reference": False,
-                "audio": True,
-                "image_prompts": None,
-                "generation_mode": None,
-                "editor_notes": [],
-                "cta_group_id": None,
-                "cta_reference_sources": None,
             }],
+            "editor_notes": [],
+            "presenter_references": [],
+            "cta": [],
         }],
     })
     direction_model = ScriptedModel([[assistant_message(joint_json)]])
@@ -152,7 +145,7 @@ def check() -> None:
         joint_agent, "Plan both beats and visuals together",
         max_turns=1, run_config=RunConfig(tracing_disabled=True),
     )
-    assert joint_result.final_output.blocks[0].beats[0].end_anchor == "Final."
+    assert joint_result.final_output.blocks[0].beats[0].text == "Final."
     assert joint_result.final_output.blocks[0].beats[0].visual_type == "avatar"
     direction_model.assert_complete()
 
