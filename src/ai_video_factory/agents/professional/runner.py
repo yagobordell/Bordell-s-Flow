@@ -474,6 +474,7 @@ async def run_professional_director(
     # 04: visual PATCHES, not a full replanning of every beat. A true
     # narrative recut must explicitly replace its group's cuts and visuals.
     changed_review = review.issues
+    correction_attempts: list[dict[str, Any]] = []
     correction_feedback: list[dict[str, Any]] = []
     for index in range(max_corrections):
         report = workspace.validate_plan()
@@ -502,6 +503,13 @@ async def run_professional_director(
             list(prev_by_id.values()) if not affected
             else [b for k, b in prev_by_id.items() if k in affected]
         )
+        correction_attempts.append({
+            "attempt": index + 1,
+            "blocking_issues_before": report.get("issues", []),
+            "editorial_findings": [
+                f.model_dump(mode="json") for f in changed_review
+            ],
+        })
         response = await invoke(
             "04_correction",
             "Apply exact, limited changes to this WHOLE-video plan, from "
@@ -577,6 +585,13 @@ async def run_professional_director(
                    "blocks": source_beats})
         correction_feedback = outcome.get("issues", [])
         changed_review = []
+
+    _save(_phase_file(root, "04_correction"), {
+        "status": workspace.validate_plan()["status"],
+        "correction_attempts": correction_attempts,
+        "resulting_validation": _compact_report(workspace.validate_plan()),
+        "skipped_model_calls_when_no_issues": not correction_attempts,
+    })
 
     # 05: Python-only release. A green result is never asserted by the LLM.
     final_report = workspace.validate_plan()
