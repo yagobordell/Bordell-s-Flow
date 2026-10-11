@@ -121,7 +121,7 @@ def test_orphan_single_grid_asset_is_invalid_but_same_image_can_be_independent()
 
 
 def test_positive_direction_rules_and_carriers_are_visible_to_model():
-    content = load_phase_instructions("02_visuals")
+    content = load_phase_instructions("02_planning")
     assert "rules/direction_continuity.md" in content
     assert "SAME participants" in content
     assert "grid" in content
@@ -129,12 +129,12 @@ def test_positive_direction_rules_and_carriers_are_visible_to_model():
     assert "prompt=null" in content
     assert "postproduction" in content
     assert "source-anchored" in content
-    beat_prompt = load_phase_instructions("02_beats")
-    assert "Atomic-event test" in beat_prompt
-    assert "Rhythmic-cohesion test" in beat_prompt
-    assert "Correct segmentation:" not in beat_prompt
-    assert "Source:" not in beat_prompt
-    assert "For example," not in beat_prompt
+    assert "Atomic-event test" in content
+    assert "Rhythmic-cohesion test" in content
+    assert "Correct segmentation:" not in content
+    assert "Source:" not in content
+    assert "For example," not in content
+    assert "ONE global beat + visual direction" in content
 
 
 def test_real_spoken_ebook_and_qr_beats_cannot_be_silently_unprotected():
