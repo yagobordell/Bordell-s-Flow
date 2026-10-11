@@ -2,7 +2,7 @@
 
 Numbering and logical continuity
 
-Use consecutive local 1., 2., ... up to 18. ONLY for a genuine narrative/visual continuity sequence of 2–18 generated assets inside one block. Never number unrelated assets or reused avatar. A B2.1 second image counts as an additional generated asset inside its original beat. The runtime packs logical runs into physical grids of at most FOUR cells and conditions each later grid on its predecessor. This physical split does not break the story's continuity. Respect CTA boundaries and natural scene changes. Do not demand a grid when independent scenes work better. Avatar_media may only join grids of the same panel format; do not mix it into a full-frame B-roll grid.
+Choose a logical multi-beat or within-beat continuous run of 2–18 generated still assets inside one narrative block, using generation_mode=grid on EACH contributing media_image beat. A beat with exactly one still can join its adjacent still-image beats in the same continuity run. PYTHON assigns the consecutive 1., 2., ... numbering across the ENTIRE run when projecting the accepted plan; the model supplies clean unnumbered scene prompts. A second still within one beat counts as an additional generated asset in the same chronological chain. The runtime packs logical runs into physical grids of at most FOUR cells and conditions each later grid on its predecessor. This physical split does not break the story's continuity. Respect CTA boundaries and natural scene changes. Do not demand a grid when independent scenes work better. Avatar_media may only join grids of the same panel format; do not mix it into a full-frame B-roll grid.
 
 ## New approved subshot contract
 
