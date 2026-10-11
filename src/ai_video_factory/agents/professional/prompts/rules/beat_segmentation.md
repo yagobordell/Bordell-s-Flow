@@ -1,11 +1,15 @@
 # B1.2 complete semantic segmentation standard — inherited from the functioning bots
 
 This is the ORIGINAL B1.2 editorial algorithm and calibration, not a new
-rhythm quota. It applies to the ENTIRE script in ONE global segmentation
-request, respecting the exact B1.1 materialized group boundaries. Any
-old reference to "current block", "worker", JSON-fenced output, or B1.2
-error transport is adapted only in the INPUT/OUTPUT interface: we send every
-group's offset range in one request, and Python reconstructs the exact text.
+rhythm quota. It applies to the ENTIRE script AS PART OF THE SAME single global
+audiovisual planning request that also chooses the visual realization
+of every beat. Narrative boundaries are decided together with carrier,
+physical action, still/video prompt, scene continuity and editor notes.
+There is NEVER a separate segmentation-only model call. Old references to
+current_block, worker, serialized text and per-block execution describe
+the inherited EDITORIAL TESTS only, not the present input/output format.
+Python derives exact source text from the returned anchors after receiving
+the WHOLE joint plan.
 The original semantic tests, hard limits and audience cadence
 take full precedence over generic guidance elsewhere.
 
@@ -133,16 +137,18 @@ Whitespace ownership inside the supplied block is deterministic:
 Whitespace never forms a beat by itself unless the source explicitly gives that whitespace a narrative function; ordinary separator whitespace does not.
 Source anomalies, repeated words and nonstandard punctuation are original immutable data. Preserve every character exactly, without repair or interpolation.
 
-## Original B1.2 semantic algorithm, adapted for a whole-script call
+## Original B1.2 semantic algorithm, applied jointly with visual direction
 
 The following source steps are reproduced verbatim. For our global response,
-apply them to EVERY B1.1 group in the same call and return ONLY short exact end_anchor phrases copied from each source beat's
-last substantive words, plus a 1-based occurrence relative to the previous
-beat's end, rather than retyping beat text. Python resolves each end_anchor
-inside its source group, assigns separator whitespace to the previous beat,
-and derives exact contiguous text slices. For EVERY group, the final
-end_anchor must correspond to the last substantive words in group.text.
-The beat_type belongs to each beat's ending anchor.
+apply them to EVERY B1.1 group WHILE choosing the physical visual
+realization of each beat in the very same response. For each DirectedBeat
+return an exact source end_anchor and 1-based occurrence AFTER the previous
+beat end, its beat_type, beat_id, visual_type, still/video prompts,
+generation_mode, authentic CTA references and editor_notes together.
+Python resolves source anchors within each group, attaches original
+separator whitespace to the preceding beat, and derives exact text slices.
+The final anchor of a group ends at its final original substantive words.
+No beat can be delivered without its proposed visuals in the SAME object.
 
 4. Read S from beginning to end using narrative_core and block metadata only as context.
 5. Identify governing semantically complete and independently representable impacts in S. Apply the intro-specific quicker cadence when type=intro. Before marking internal boundaries, detect compact enumerations, anaphoric runs, repeated negatives and parallel short clauses that jointly form one rhetorical message; treat these as provisional cohesion spans unless a true staged event, result, speaker turn, time/place reset or visual reset occurs inside them.
