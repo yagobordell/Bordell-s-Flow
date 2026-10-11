@@ -2862,6 +2862,12 @@ async def main() -> None:
         visual_style = ensure_avatar_style(
             avatar_file, getattr(args, "visual_style", None), select_visual_style
         )
+        if visual_style == "casero" and args.from_stage == "B1.1":
+            # Managed avatar already has its final meta/ directory. Preflight
+            # the manual MP4 before voice activation or any paid CTA work.
+            ensure_avatar_cta_motion(
+                avatar_file, getattr(args, "cta_motion", None),
+            )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
@@ -2962,7 +2968,7 @@ async def main() -> None:
             )
         if visual_style in {"casero", "profesional"}:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
-            if visual_style == "casero":
+            if visual_style == "casero" and managed_target is None:
                 ensure_avatar_cta_motion(
                     avatar_file, getattr(args, "cta_motion", None),
                 )
