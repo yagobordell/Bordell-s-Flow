@@ -22,6 +22,7 @@ from ai_video_factory.bots.cta import CTAEbook
 from ai_video_factory.bots.cta_motion_copy import CTAMotionCopy
 from ai_video_factory.compositor.cta_motion import build_motion
 from ai_video_factory.config import settings
+from ai_video_factory.providers.avatar_cta_motion import motion_source, probe_manual_motion
 from ai_video_factory.providers.ai33_speech import (
     AI33SpeechClient,
     audio_url_of,
@@ -272,6 +273,29 @@ def _motion(directory: Path, cover: Path, qr_path: Path, qr_url: str,
     })
 
 
+def _adopt_manual_motion(directory: Path, half: float) -> None:
+    """Record verified source once TTS fixes the required duration."""
+    source = motion_source(directory)
+    if source["mode"] != "manual":
+        raise CaseroCTAError("Manual CTA motion source is not configured")
+    path = directory / "motion_manual.mp4"
+    duration = probe_manual_motion(path)
+    needed = half + 1.5
+    if duration + 0.015 < needed:
+        raise CaseroCTAError(
+            f"El motion_manual.mp4 dura {duration:.2f}s; necesita al menos "
+            f"{needed:.2f}s (mitad CTA + 1.5s)."
+        )
+    checkpoint = directory / "motion_manual_state.json"
+    expected = {"status": "completed", "duration_seconds": needed,
+                "motion": {"file": path.name, "sha256": _sha(path)}}
+    if checkpoint.is_file():
+        if _read(checkpoint) != expected:
+            raise CaseroCTAError("El motion manual difiere de su checkpoint")
+        return
+    _save(checkpoint, expected)
+
+
 async def _motion_text(
     directory: Path, spoken_cta: str, cover: Path, provider: Any, model: str,
     on_api_response: Callable[[str, int | None, object], None] | None,
@@ -369,6 +393,8 @@ async def prepare_casero_cta(
     if directory.is_symlink() or directory.parent.is_symlink():
         raise CaseroCTAError("Unsafe CTA cache directory")
     directory.mkdir(parents=True, exist_ok=True)
+    configured_motion = motion_source(directory)
+    manual_motion = configured_motion["mode"] == "manual"
     identity_path = directory / "identity.json"
     identity = {
         "schema_version": "casero-cta-v1", "avatar_sha256": _sha(avatar),
@@ -376,6 +402,8 @@ async def prepare_casero_cta(
         "voice_id": voice_id, "voice_provider": voice_provider,
         "qr_url": qr_url,
     }
+    if manual_motion:
+        identity["manual_motion_sha256"] = configured_motion["sha256"]
     if identity_path.exists():
         saved_identity = _read(identity_path)
         if {**saved_identity, "voice_provider": saved_identity.get(
@@ -436,7 +464,7 @@ async def prepare_casero_cta(
 
     cached_motion_text = (directory / "motion_copy.json").is_file()
     motion_started = perf_counter()
-    motion_copy_task = asyncio.create_task(_motion_text(
+    motion_copy_task = None if manual_motion else asyncio.create_task(_motion_text(
         directory, text, covers.files[0], provider, model, on_api_response,
     ))
     if cached_final:
@@ -445,13 +473,17 @@ async def prepare_casero_cta(
         tts = _read(directory / "tts_state.json")
         _require(directory, tts, "master")
         _require(directory, tts, "first_half")
-        copy = await asyncio.shield(motion_copy_task)
-        if not cached_motion_text and on_call_duration is not None:
-            on_call_duration("CTA Motion", None, perf_counter() - motion_started)
-        await asyncio.to_thread(
-            _motion, directory, covers.files[0], qr_path, qr_url,
-            float(tts["half_seconds"]), copy,
-        )
+        if manual_motion:
+            await asyncio.to_thread(_adopt_manual_motion, directory, float(tts["half_seconds"]))
+        else:
+            assert motion_copy_task is not None
+            copy = await asyncio.shield(motion_copy_task)
+            if not cached_motion_text and on_call_duration is not None:
+                on_call_duration("CTA Motion", None, perf_counter() - motion_started)
+            await asyncio.to_thread(
+                _motion, directory, covers.files[0], qr_path, qr_url,
+                float(tts["half_seconds"]), copy,
+            )
         from ai_video_factory.workflows.casero_cta_video import upgrade_cached_cta
         upgraded = await asyncio.to_thread(upgrade_cached_cta, directory)
         return {"status": "completed", "directory": str(directory),
@@ -466,21 +498,26 @@ async def prepare_casero_cta(
     image_task = asyncio.create_task(asyncio.to_thread(
         _image, directory, covers, avatar, on_image_usage,
     ))
-    outcomes = await asyncio.gather(
-        tts_task, image_task, motion_copy_task, return_exceptions=True,
-    )
+    tasks = [tts_task, image_task]
+    if motion_copy_task is not None:
+        tasks.append(motion_copy_task)
+    outcomes = await asyncio.gather(*tasks, return_exceptions=True)
     for outcome in outcomes:
         if isinstance(outcome, BaseException):
             raise outcome
-    tts, _, copy = outcomes
-    if not cached_motion_text and on_call_duration is not None:
+    tts = outcomes[0]
+    if not manual_motion and not cached_motion_text and on_call_duration is not None:
         on_call_duration("CTA Motion", None, perf_counter() - motion_started)
-    finishing = await asyncio.gather(
-        asyncio.to_thread(_stt, directory),
+    motion_job = (
+        asyncio.to_thread(_adopt_manual_motion, directory, float(tts["half_seconds"]))
+        if manual_motion else
         asyncio.to_thread(
             _motion, directory, covers.files[0], qr_path, qr_url,
-            float(tts["half_seconds"]), copy,
-        ),
+            float(tts["half_seconds"]), outcomes[2],
+        )
+    )
+    finishing = await asyncio.gather(
+        asyncio.to_thread(_stt, directory), motion_job,
         return_exceptions=True,
     )
     for outcome in finishing:
