@@ -81,13 +81,13 @@ def test_single_image_beat_has_no_extra_asset_fields():
 
 
 def test_prompt_loader_includes_unabridged_screen_rule_every_editing_phase():
-    for phase in ("02_planning", "03_evaluation", "04_correction"):
+    for phase in ("02_visuals", "03_evaluation", "04_correction"):
         instructions = load_phase_instructions(phase)
         assert "(For context: ...)" in instructions
         assert "content shown within the screen or document" in instructions
         assert "B2.1" in instructions
-    assert "same logical agent" in load_phase_instructions("01_groups").lower() or (
-        "ONE creative editor/director" in load_phase_instructions("01_groups")
+    assert "ONE professional editor/director" in load_phase_instructions(
+        "01_groups"
     )
     assert "actual finalized start PNGs" in load_post_generation_motion_instructions()
 
