@@ -300,6 +300,7 @@ def validate_plan(
     *,
     protected_cta_beats: dict[str, dict[str, Any]] | None = None,
     ebook_available: bool = True,
+    expected_narrative_core: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Check a whole-video candidate. No paid work or changes to existing pipeline.
 
@@ -327,6 +328,13 @@ def validate_plan(
         "central_question", "final_answer",
     }:
         issues.append(_issue("NARRATIVE_CORE", "Plan must contain the B1.1 narrative core."))
+    elif (expected_narrative_core is not None
+          and plan["narrative_core"] != expected_narrative_core):
+        issues.append(_issue(
+            "NARRATIVE_CORE_CHANGED",
+            "The complete-video plan changed the approved B1.1 narrative_core. "
+            "Restore the exact approved central_question/final_answer.",
+        ))
 
     records: list[dict[str, Any]] = []
     all_ids: set[str] = set()
