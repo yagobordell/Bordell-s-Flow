@@ -360,6 +360,7 @@ async def run_professional_director(
     if b11.narrative_core is None:
         raise ValueError("B1.1 narrative core was not returned.")
     core = b11.narrative_core.model_dump(mode="json")
+    workspace.expected_narrative_core = copy.deepcopy(core)
     _save(root / "groups.json", {
         "source_sha256": source_hash, "narrative_core": core,
         "blocks": check["groups"],
@@ -393,8 +394,13 @@ async def run_professional_director(
     phase2[0]["content"].append({
         "type": "input_text",
         "text": "Materialized B1.1 groups and narrative_core (authoritative):\n"
-        + json.dumps({"narrative_core": core, "groups": check["groups"]},
-                     ensure_ascii=False),
+        + json.dumps({
+            "narrative_core": core,
+            "groups": [
+                {key: value for key, value in group.items() if key != "text"}
+                for group in check["groups"]
+            ],
+        }, ensure_ascii=False),
     })
     plan = await execute("02_planning", phase2, output_type=PlannedVideo)
     workspace.submit_plan_revision(_wire_plan(plan))
@@ -407,8 +413,8 @@ async def run_professional_director(
             for beat in block["beats"]
             if beat.get("cta_group_id") is not None
         }
-    if plan.narrative_core.model_dump() != core:
-        raise ValueError("Professional planning changed the B1.1 narrative core.")
+    # A changed narrative core is now a Python validation issue, so phase 4
+    # can repair it before the delivery gate instead of wasting phase 2.
     # Missing cover is a deterministic, repairable plan validation error.
     # Never throw away the paid phase-2 output before saving its checkpoint.
     _save(root / "plan_initial.json", {
