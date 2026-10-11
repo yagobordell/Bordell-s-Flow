@@ -1,5 +1,11 @@
-# Phase 5 — Green-only delivery
+# Phase 5 — deterministic delivery (no model call)
 
-Request a fresh validate_current_plan on the exact final candidate. Deliver ONLY if Python returns passed or passed_with_warnings (zero blocking errors); do not bypass an error with a written justification. The controller, not you, performs the final projection and publication gate.
+Once whole-video B1.2 cut materialization, B2/B2.1 visual
+validation, CTA checks, image grid planning and editor anchors are all
+green, the Python controller saves outputs, final plan, rhythm review,
+usage accounting and corresponding legacy B-stage output.json files.
+The controller does NOT invoke the LLM to assert its own correctness.
 
-The final output distinguishes a Professional visual_plan (with subshot assets), a strict-compatible merged B2 view for voice, and editor_plan notes for Haiku. Keep the exact source SHA, validated narrative groups, rhythm report and provenance of the versioned rule files. TTS/STT, image generation, motion adaptation and final render occur afterwards. Never claim success of unrun media tasks.
+All script wording remains literally identical to the authoritative script.
+The postproduction TTS/STT, images, motion and video pipeline runs ONLY
+after this delivery gate, never during a --stop openai-agent test.
