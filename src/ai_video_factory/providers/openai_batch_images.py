@@ -284,7 +284,7 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 subshots = beat.get("visual_subshots")
                 if subshots is not None:
                     if beat.get("visual_type") != "media_image" or (
-                        not isinstance(subshots, list) or len(subshots) != 2
+                        not isinstance(subshots, list) or not (2 <= len(subshots) <= 4)
                     ):
                         raise ImageGenerationError(
                             f"Invalid B2.1 visual_subshots for {beat_id}"
@@ -293,7 +293,7 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
                         if (
                             not isinstance(item, dict)
                             or item.get("subshot_index") != expected_index
-                            or item.get("subshot_count") != 2
+                            or item.get("subshot_count") != len(subshots)
                             or item.get("asset_id") != f"{beat_id}__{expected_index}"
                             or item.get("generation") not in {"grid", "independent"}
                         ):
@@ -307,7 +307,7 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
                             description=item.get("prompt"),
                             asset_id=item["asset_id"],
                             subshot_index=expected_index,
-                            subshot_count=2,
+                            subshot_count=len(subshots),
                             generation=item["generation"],
                         )
                     continue
