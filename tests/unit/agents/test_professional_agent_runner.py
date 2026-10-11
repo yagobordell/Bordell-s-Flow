@@ -1,6 +1,7 @@
 """Offline end-to-end SDK orchestration tests: no paid requests."""
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -55,8 +56,7 @@ def fixture_source():
     return script, blocks, core, beats
 
 
-@pytest.mark.asyncio
-async def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch):
+def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch):
     script, blocks, core, beats = fixture_source()
     invocations = []
 
@@ -90,9 +90,9 @@ async def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monke
         function_tool=lambda function: function,
     )
     monkeypatch.setitem(sys.modules, "agents", fake_agents)
-    result = await run_professional_director(
+    result = asyncio.run(run_professional_director(
         script, output=tmp_path, avatar=b"PNG", ebook=None, model="test-model",
-    )
+    ))
     assert len(invocations) == 4  # stages 1,2,3,5; no correction needed
     assert len({id(item[1]) for item in invocations}) == 1
     assert all("Professional Director" in item[0].name for item in invocations)
