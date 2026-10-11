@@ -1,5 +1,13 @@
 # Professional carrier / speaking authority
 
+For OpenAI SparseDirection responses, the rules below describe the final
+Python-produced B2 carrier, NOT a request to emit nullable legacy fields.
+The model emits only carrier-specific beat fields and exact beat.text.
+Python derives audio=true for avatar/avatar_media, audio=false otherwise,
+and references from group-level presenter_references and CTA annotations.
+Do not output prompt=null, video_prompt=null, image_prompts=null,
+end_anchor or occurrence on any model beat.
+
 The following sections are carried verbatim from the current Professional B2 source file. They remain authoritative unless contradicted by the current Python contracts.
 
 Absolute carrier and audio contracts
