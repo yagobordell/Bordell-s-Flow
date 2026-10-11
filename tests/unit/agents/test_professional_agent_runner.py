@@ -88,6 +88,7 @@ def test_real_five_phase_controller_uses_one_agent_session(tmp_path, monkeypatch
     fake_agents = SimpleNamespace(
         Agent=FakeAgent, Runner=FakeRunner, SQLiteSession=FakeSession,
         function_tool=lambda function: function,
+        set_default_openai_key=lambda key: None,
     )
     monkeypatch.setitem(sys.modules, "agents", fake_agents)
     result = asyncio.run(run_professional_director(
