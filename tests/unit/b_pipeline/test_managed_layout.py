@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -443,6 +444,96 @@ def test_partial_run_exposes_bot_outputs_before_final_video(
     assert (target / "outputs" / "B3" / "group_1" / "input.json").is_file()
     assert (target / "outputs" / "B3" / "group_1" / "output.json").is_file()
     assert not (target / "manifest.json").exists()
+
+
+def test_managed_outputs_retries_transient_windows_rename_and_preserves_old_snapshot(
+    managed_complete: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory import managed_layout
+
+    work, _script, target = managed_complete
+    sync_managed_outputs(work, target)
+    old = (target / "outputs" / "B2" / "block_1" / "output.json").read_bytes()
+    new = b'{"stage":"B2","revision":2}'
+    (work / "B2" / "block_1" / "output.json").write_bytes(new)
+
+    original_rename = Path.rename
+    failures = 0
+    sleeps: list[float] = []
+
+    def flaky_rename(source: Path, destination: Path) -> Path:
+        nonlocal failures
+        if (
+            source.name.startswith(".outputs-")
+            and not source.name.startswith(".outputs-backup-")
+            and destination.name == "outputs"
+            and failures < 2
+        ):
+            failures += 1
+            # The previous published partial snapshot must not be destroyed.
+            backup = list(target.glob(".outputs-backup-*.partial"))
+            assert len(backup) == 1
+            assert (backup[0] / "B2" / "block_1" / "output.json").read_bytes() == old
+            raise PermissionError(13, "Transient Windows indexer lock")
+        return original_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", flaky_rename)
+    monkeypatch.setattr(managed_layout.time, "sleep", sleeps.append)
+    sync_managed_outputs(work, target)
+
+    assert failures == 2
+    assert sleeps == [0.1, 0.25]
+    assert (target / "outputs" / "B2" / "block_1" / "output.json").read_bytes() == new
+    assert not list(target.glob(".outputs-backup-*.partial"))
+    assert not list(target.glob(".outputs-*.partial"))
+
+
+def test_managed_outputs_restores_old_snapshot_if_windows_rename_never_recovers(
+    managed_complete: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory import managed_layout
+
+    work, _script, target = managed_complete
+    sync_managed_outputs(work, target)
+    old = (target / "outputs" / "B1.2" / "block_1" / "output.json").read_bytes()
+    (work / "B1.2" / "block_1" / "output.json").write_bytes(b"replacement")
+
+    original_rename = Path.rename
+
+    def blocked_rename(source: Path, destination: Path) -> Path:
+        if (
+            source.name.startswith(".outputs-")
+            and not source.name.startswith(".outputs-backup-")
+            and destination.name == "outputs"
+        ):
+            raise PermissionError(13, "Windows folder in use")
+        return original_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", blocked_rename)
+    monkeypatch.setattr(managed_layout.time, "sleep", lambda _seconds: None)
+    with pytest.raises(PermissionError, match="Windows folder in use"):
+        sync_managed_outputs(work, target)
+
+    assert (target / "outputs" / "B1.2" / "block_1" / "output.json").read_bytes() == old
+    assert not list(target.glob(".outputs-backup-*.partial"))
+    assert not list(target.glob(".outputs-*.partial"))
+    # A later sync can recover without returning to audio/images/LTX.
+    monkeypatch.setattr(Path, "rename", original_rename)
+    sync_managed_outputs(work, target)
+    assert (target / "outputs" / "B1.2" / "block_1" / "output.json").read_bytes() == b"replacement"
+
+
+def test_completed_video_publishes_after_recovering_missing_outputs_directory(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, script, target = managed_complete
+    sync_managed_outputs(work, target)
+    # Mirrors the previous Windows implementation: outputs was deleted before
+    # the staged directory rename failed.
+    shutil.rmtree(target / "outputs")
+    assert publish_managed_run(work, script, target) == target
+    assert (target / "test01.mp4").read_bytes() == b"final MP4 bytes"
+    assert (target / "manifest.json").is_file()
 
 
 def test_published_folder_has_exact_requested_layout_and_is_idempotent(
