@@ -153,8 +153,13 @@ async def run_professional_director(
     """
     try:
         from agents import (
-            Agent, ModelBehaviorError, ModelSettings, RunHooks, Runner,
-            SQLiteSession, set_default_openai_key,
+            Agent,
+            ModelBehaviorError,
+            ModelSettings,
+            RunHooks,
+            Runner,
+            SQLiteSession,
+            set_default_openai_key,
         )
     except ImportError as exc:
         raise RuntimeError(
