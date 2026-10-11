@@ -24,7 +24,10 @@ from ai_video_factory.agents.professional.direction import (
     apply_direction_correction,
     materialize_direction,
 )
-from ai_video_factory.agents.professional.preflight import validate_source_assets
+from ai_video_factory.agents.professional.preflight import (
+    requires_ebook_cover,
+    validate_source_assets,
+)
 from ai_video_factory.agents.professional.prompt_loader import load_phase_instructions
 from ai_video_factory.agents.professional.tools import ProfessionalPlanWorkspace
 from ai_video_factory.bots.contracts import (
@@ -397,10 +400,6 @@ async def run_professional_director(
     # phase, not only AFTER correction. A correct CTA cannot be silently
     # relabeled, rearranged or visually replaced during later review.
     if ebook is not None and current["plan"] is not None:
-        from ai_video_factory.agents.professional.preflight import (
-            requires_ebook_cover,
-        )
-
         if requires_ebook_cover(script):
             protected = {
                 beat["beat_id"]: copy.deepcopy(beat)
