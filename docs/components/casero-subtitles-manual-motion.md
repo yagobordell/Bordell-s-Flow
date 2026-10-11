@@ -72,7 +72,7 @@ de un CTA ya generado hace falta una migración/reconciliación explícita de ca
 
 1. Inicia el alta del avatar casero con el PNG y TXT ya colocados
    según el layout habitual. Por ejemplo:
-   ` .\\run.ps1 video01 enzo --style casero `
+   `.\run.ps1 video01 enzo --style casero`
 2. Elige **motion graphic manual** cuando se muestre la pregunta.
    El programa crea y muestra la ruta
    `data/Enzo/meta/cta/motion_manual.mp4` (sustituye `Enzo` por
@@ -82,14 +82,16 @@ de un CTA ya generado hace falta una migración/reconciliación explícita de ca
    `motion_manual.mp4`. Desde otra ventana PowerShell puedes usar:
 
    ```powershell
-   Copy-Item "C:\\Videos\\mi_motion.mp4" "data\\enzo\\meta\\cta\\motion_manual.mp4"
+   Copy-Item "C:\Videos\mi_motion.mp4" "data\enzo\meta\cta\motion_manual.mp4"
    ```
 
 4. Vuelve al terminal de Video Factory y pulsa **Enter**.
+   Si lo prefieres, puedes copiar el MP4 antes y ejecutar el primer alta
+   con `--cta-motion manual` sin preguntas interactivas.
    Se valida con FFprobe (códec, resolución, FPS, ausencia de audio,
    duración) y se registra su SHA-256. Un archivo inválido debe
-   corregirse antes de continuar; no se llama a ninguna API mientras
-   falta o no supera la validación.
+   corregirse antes de continuar; la generación del CTA se detiene
+   antes de lanzar llamadas de pago si falta o no supera la validación.
 5. El archivo es exclusivamente la **segunda mitad visual del CTA**,
    seguida de 1,5 segundos de cola. No sustituye la primera mitad
    A2V del avatar ni la locución. Por tanto, prepara dentro del propio
