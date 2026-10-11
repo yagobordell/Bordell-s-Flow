@@ -70,13 +70,14 @@ and cuts; no target beats-per-minute, minimum shot duration or hidden automatic
 rhythm scheduler is introduced. No SDK Session is used to accumulate repeated
 script/plan/tool payloads across phases.
 
-Before making any paid request, the CLI announces whether a real ebook cover
-is available. With no cover, `cta_group_id` and ebook references are prohibited
-for all beats, including when the model guesses a promotional CTA. Python reports
-`CTA_COVER_UNAVAILABLE` as a correctable validation issue rather than
-throwing away the full paid phase-two result. This does not replace genuine
-ebook promotion: to produce an authentic ebook CTA, configure `--ebook-cover`
-or the avatar's saved ebook cover metadata before running.
+Before making any paid request, Python checks the source for an explicit
+spoken ebook promotion tied to a QR scan. If an authentic cover is missing
+for that protected CTA, the run fails **before any OpenAI request**, with
+`PREFLIGHT_EBOOK_COVER_REQUIRED`. Configure `--ebook-cover` or the
+avatar's saved cover asset and rerun. Non-ebook videos remain usable
+without a cover. In all cases an unreferenced, invented ebook CTA is blocked
+by deterministic validation; editorial correction cannot silently replace
+the real user's promotion with a fictitious asset.
 
 The deterministic validation includes a frozen B1.1 narrative_core comparison.
 No candidate plan is considered green until source tiling, narration length,
@@ -87,21 +88,24 @@ legacy B2 and image-grid preflights pass.
 
 - `agent_openai/usage.json`: tokens, cached tokens, requests and wall time per
   SDK call, including structured JSON failures.
-- `B1.1/output.json`: B1.1-compatible output, written as soon as group anchors
-  are validated. Also stored in `agent_openai/phases/01_groups/output.json`.
-- `B1.2/block_N/output.json` and `B1.2/merged_output.json`: ORIGINAL-SOURCE
-  B1.2 beat output per group and merged, written as soon as every beat boundary
-  is validated, before any paid model request for visuals. The global cut
-  decisions and diagnostics are saved in `agent_openai/phases/02_beats/`.
-- `B2/candidate_output.json`: candidate audiovisual plan even if it fails
-  later validations. `B2/block_N/output.json` and `B2/merged_output.json`
-  are written only after the strict B2 and grid preflight passes.
-- `agent_openai/phases/02_visuals/output.json`, `03_evaluation/output.json`,
-  `04_correction/output.json`, `05_delivery/output.json`: complete staged
-  outputs and validation reports. Failed correction attempts are saved by number.
-  A phase-04 no-op is recorded even when no new model call was needed.
-- `B2.1/review_output.json`: archived global editorial B2.1-style review in
-  its NEW contract; it does not masquerade as a legacy B21Output response.
+- `agent_openai/phases/01_groups/output.json`: complete phase 1 grouping,
+  exact anchor validation and B1.1-compatible metadata.
+- `agent_openai/phases/02_planning/output.json`: complete phase 2 planning
+  and validation. Its subfolders `beats/` and `visuals/` hold the two
+  global model passes, exact source cuts, first visual plan and diagnostics.
+  These are **one logical editorial phase**, not separate independent bots.
+- `agent_openai/phases/03_evaluation/output.json`: one complete-video
+  editorial assessment and Python validation report.
+- `agent_openai/phases/04_correction/output.json`: all targeted correction
+  attempts and deterministic before/after results; no-op if nothing needs
+  correction.
+- `agent_openai/phases/05_delivery/output.json`: authoritative validated
+  production-ready plan and final gate, or concrete blocking issues.
+- `_pipeline_compat/B1.1/`, `_pipeline_compat/B1.2/`,
+  `_pipeline_compat/B2/` and `_pipeline_compat/B2.1/` contain ONLY
+  internally required legacy bridge artifacts and remain isolated from
+  the five editorial phase outputs. The agent still writes its internal
+  work-stage files where the downstream pipeline expects them.
 - `agent_openai/groups.json`, `beats.json`, `plan_initial.json`,
   `review.json`, `correction_N.json`, `approved_plan.json`: audit checkpoints
   on the real source and all accepted creative revisions.
@@ -112,12 +116,11 @@ legacy B2 and image-grid preflights pass.
 **Checkpoints survive even when a later phase fails**: a bad visual generation
 cannot delete an already validated B1.1/B1.2 result. Each logical phase
 has an `output.json`, and B1.1/B1.2/B2 retain their familiar legacy
-paths. The managed run synchronizer also copies the FULL `agent_openai/`
-directory, including evaluation and failed/corrected attempts, into the
-user-visible `data/<avatar>/<script>/outputs/agent_openai/` on stopped
-runs. Completed video publications package the same phase artifacts
-under `outputs/agent_openai/`, alongside the old bot stages. Casero's
-old file copying remains unchanged. There is no persistent SDK
+paths. The managed run synchronizer copies the five phase outputs
+into `data/<avatar>/<script>/outputs/agent_openai/phases/`, including
+failed and corrected attempts. Legacy B-stage payloads are visible only
+under `outputs/_pipeline_compat/`. Completed publications preserve the
+same structure. Casero's established output structure remains unchanged. There is no persistent SDK
 conversation database: avoiding redundant whole-video history prevents
 unnecessary repeated-context token consumption.
 
