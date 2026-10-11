@@ -11,6 +11,7 @@ import sys
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from time import perf_counter
 from typing import Literal
 from uuid import uuid4
@@ -273,9 +274,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stop",
         dest="stop_stage",
-        choices=_STAGES,
+        choices=(*_STAGES, "openai-agent"),
         default=None,
-        help="Stop after this planning stage, without starting TTS or image generation.",
+        help="Stop after a stage; Profesional: --stop openai-agent ends after its five phases.",
     )
     parser.add_argument(
         "--skip-images",
@@ -413,7 +414,7 @@ def parse_args() -> argparse.Namespace:
         or args.voice_id is not None or args.voice_audio is not None or args.default_voice
     ):
         parser.error("--images-only uses the saved avatar; omit --avatar and --qr-url.")
-    if args.stop_stage is not None and (
+    if args.stop_stage is not None and args.stop_stage != "openai-agent" and (
         _STAGES.index(args.stop_stage) < _STAGES.index(args.from_stage)
     ):
         parser.error("--stop must be the same as or later than --from.")
@@ -2793,6 +2794,16 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if visual_style == "profesional":
+        if args.from_stage != "B1.1":
+            raise SystemExit(
+                "The new Professional director starts from B1.1 only. "
+                "Use --images-only or --resume-audio on saved outputs."
+            )
+        if args.stop_stage not in (None, "openai-agent"):
+            raise SystemExit("Profesional uses --stop openai-agent, not legacy B stages.")
+    elif args.stop_stage == "openai-agent":
+        raise SystemExit("--stop openai-agent is available only for Profesional.")
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
         raise SystemExit("--replace-professional-voice is available only in Profesional")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
@@ -2835,7 +2846,7 @@ async def main() -> None:
     resume_expected_calls: dict[str, int | None] | None = None
     stop_stage = getattr(args, "stop_stage", None)
     stop_index = (
-        _STAGES.index(stop_stage)
+        _STAGES.index("B2.1" if stop_stage == "openai-agent" else stop_stage)
         if stop_stage is not None
         else _STAGES.index("B2.1" if visual_style == "profesional" else "B2")
     )
@@ -3297,8 +3308,70 @@ async def main() -> None:
                             raise RuntimeError("Duplicate CTA beat in saved checkpoint")
                         prior_cta_overrides[beat.beat_id] = beat
 
-        result = await run_b_pipeline(
-            script,
+        if visual_style == "profesional":
+            from ai_video_factory.agents.professional.runner import run_professional_director
+
+            directed = await run_professional_director(
+                script, output=output, avatar=avatar_bytes,
+                ebook=covers.files[0].read_bytes() if covers is not None else None,
+                model=settings.openai_model,
+            )
+            director_blocks = directed["projection"]["b2_merged"]["blocks"]
+            b11 = directed["b11"]
+            if b11.narrative_core is None:
+                raise RuntimeError("Professional director has no narrative core.")
+            b12 = tuple(
+                B12Output.model_validate({
+                    "pipeline_stage": "B1.2", "block_id": block["block_id"],
+                    "beats": [
+                        {key: beat[key] for key in ("beat_id", "text", "beat_type")}
+                        for beat in block["beats"]
+                    ],
+                    "error": None,
+                })
+                for block in director_blocks
+            )
+            b2 = tuple(
+                ProfessionalB2Output.model_validate({
+                    "pipeline_stage": "B2", "narrative_core": b11.narrative_core,
+                    "blocks": [block], "error": None,
+                })
+                for block in director_blocks
+            )
+            result = SimpleNamespace(
+                b11=b11, b12=b12, b2=b2,
+                cta_groups=tuple(tuple(group) for group in (
+                    directed["projection"]["visual_plan"]["ebook_cta_groups"]
+                )),
+                b2_correction_counts={},
+                visual_plan=lambda: json.loads(json.dumps(
+                    directed["projection"]["visual_plan"]
+                )),
+            )
+            artifacts.output("B1.1", None, b11.model_dump(mode="json"))
+            for block, b12_item, b2_item in zip(
+                director_blocks, b12, b2, strict=True
+            ):
+                artifacts.output("B1.2", block["block_id"], b12_item.model_dump(mode="json"))
+                artifacts.output("B2", block["block_id"], b2_item.model_dump(mode="json"))
+            _write(output / "B1.2" / "merged_output.json", {
+                "narrative_core": b11.narrative_core.model_dump(mode="json"),
+                "blocks": director_blocks,
+            })
+            _write(output / "B2" / "merged_output.json",
+                   directed["projection"]["b2_merged"])
+            _write(output / "agent_openai" / "editor_plan.json",
+                   directed["projection"]["editor_plan"])
+            run_metadata["openai_agent"] = {
+                "status": "completed",
+                "usage": directed["usage"],
+                "avatar_percentage": directed["validation"]["summary"]["avatar_percentage"],
+            }
+            planned_blocks = len(director_blocks)
+            print("  [OpenAI] Cinco fases completadas y validadas.", flush=True)
+        else:
+            result = await run_b_pipeline(
+                script,
             provider=provider,
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
@@ -3340,7 +3413,7 @@ async def main() -> None:
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
             on_stage_complete=stage_complete,
-        )
+            )
         if cta_task is not None:
             prepared_cta = await asyncio.shield(cta_task)
             run_metadata["cta_cache_dir"] = prepared_cta["directory"]
@@ -3446,6 +3519,11 @@ async def main() -> None:
                     retry_block_id = _continuity_retry_block_id(image_error)
                     if retry_block_id is None:
                         raise
+                    if visual_style == "profesional":
+                        raise RuntimeError(
+                            "The Professional director image plan failed downstream grid "
+                            "validation; rerun the agent after correcting its inputs."
+                        ) from image_error
                     if result.b2_correction_counts.get(retry_block_id, 0) >= 2:
                         raise RuntimeError(
                             f"B2 block {retry_block_id} exhausted its two validation "
