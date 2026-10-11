@@ -47,6 +47,58 @@ class WholeVideoVisuals(StrictModel):
     blocks: list[VisualGroup] = Field(min_length=1)
 
 
+class VisualAlignmentRepair(StrictModel):
+    """Small replacement for ALL mismatched group visual entries in ONE call."""
+
+    blocks: list[VisualGroup] = Field(min_length=1)
+
+
+def mismatched_visual_blocks(
+    source_beats: list[dict[str, Any]],
+    visuals: WholeVideoVisuals,
+) -> list[int]:
+    """Identify incomplete or misordered group choices without touching rhythm."""
+    available = {b.block_id: b for b in visuals.blocks}
+    duplicates = len(available) != len(visuals.blocks)
+    known_ids = {s["block_id"] for s in source_beats}
+    if duplicates or set(available) - known_ids:
+        return sorted(known_ids)
+    return [
+        source["block_id"]
+        for source in source_beats
+        if source["block_id"] not in available
+        or [b.beat_id for b in available[source["block_id"]].beats]
+        != [b["beat_id"] for b in source["beats"]]
+    ]
+
+
+def merge_alignment_repair(
+    source_beats: list[dict[str, Any]],
+    initial: WholeVideoVisuals,
+    repaired: VisualAlignmentRepair,
+    affected: list[int],
+) -> WholeVideoVisuals:
+    """Replace ONLY requested source groups, verify no hallucinated group IDs."""
+    required = set(affected)
+    returned = {block.block_id for block in repaired.blocks}
+    if len(returned) != len(repaired.blocks) or returned != required:
+        raise ValueError(
+            "Visual correction must return each mismatched group exactly once."
+        )
+    all_choices = {
+        group.block_id: group
+        for group in initial.blocks
+        if group.block_id not in required
+    }
+    all_choices.update({group.block_id: group for group in repaired.blocks})
+    result = WholeVideoVisuals(blocks=[
+        all_choices[source["block_id"]] for source in source_beats
+    ])
+    if mismatched_visual_blocks(source_beats, result):
+        raise ValueError("Visual alignment still does not match canonical beat IDs.")
+    return result
+
+
 class VisualCorrection(StrictModel):
     """Only the changes, not a complete expensive reserialization of the video.
 
