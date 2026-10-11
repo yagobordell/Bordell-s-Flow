@@ -1,6 +1,6 @@
-"""One logical Professional Agents SDK director, cut-first and source-safe.
+"""One logical Professional Agents SDK director: narrative AND visual planning together.
 
-B1.1 groups -> global B1.2 semantic cuts -> global audiovisual plan ->
+B1.1 groups -> ONE joint whole-video beat AND visual plan ->
 whole-video editorial review -> targeted corrections -> deterministic delivery.
 No per-group model calls, fixed rhythm quotas, or repeated SDK chat-history
 injection. Preserve each accepted output in legacy B-stage folders and
@@ -18,24 +18,15 @@ from typing import Any
 
 from pydantic import Field
 
-from ai_video_factory.agents.professional.beats import (
-    WholeScriptCuts,
-    combine_cut_corrections,
-    validate_and_materialize_cuts,
+from ai_video_factory.agents.professional.direction import (
+    DirectionCorrection,
+    WholeVideoDirection,
+    apply_direction_correction,
+    materialize_direction,
 )
 from ai_video_factory.agents.professional.preflight import validate_source_assets
 from ai_video_factory.agents.professional.prompt_loader import load_phase_instructions
 from ai_video_factory.agents.professional.tools import ProfessionalPlanWorkspace
-from ai_video_factory.agents.professional.visuals import (
-    VisualAlignmentRepair,
-    VisualCorrection,
-    WholeVideoVisuals,
-    apply_correction,
-    assemble_plan,
-    canonicalize_visual_order,
-    merge_alignment_repair,
-    mismatched_visual_blocks,
-)
 from ai_video_factory.bots.contracts import (
     B11Output,
     B12Output,
@@ -77,60 +68,65 @@ def _save(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _phase_file(root: Path, stage: str, name: str = "output.json") -> Path:
-    """Five user-facing phases; two internal planning passes share phase 02."""
-    if stage == "02_beats":
-        return root / "phases" / "02_planning" / "beats" / name
-    if stage == "02_visuals":
-        return root / "phases" / "02_planning" / "visuals" / name
+    """Exactly five canonical public phases."""
     return root / "phases" / stage / name
 
 
-def _visual_input(
-    blocks: list[dict[str, Any]], core: dict[str, Any],
+def _direction_input(
+    groups: list[dict[str, Any]], core: dict[str, Any],
     avatar: bytes, ebook: bytes | None,
 ) -> list[dict[str, Any]]:
-    """One exact source copy: concatenated beat text, plus actual reference images."""
+    """One complete-script beat+visual decision, with real reference assets."""
     content: list[dict[str, Any]] = [{
         "type": "input_text",
         "text": (
-            "COMPLETE IMMUTABLE ORIGINAL SCRIPT AS VERBATIM ORDERED BEAT TEXTS. "
-            "These texts concatenate to the authoritative complete script. "
-            "Create a visual for EACH beat ID; do not retype narration.\n"
+            "ONE COMPLETE AUDIOVISUAL PLAN: decide each narrative beat boundary "
+            "AND that SAME beat's visual carrier, scene continuity, still/video "
+            "prompts and source-anchored editor notes TOGETHER, in one response. "
+            "Read ALL B1.1 groups first. Every group text is an exact original "
+            "script slice; the full sequence is the immutable narration. "
+            "Return one DirectedBeat per complete visual-narrative impact, "
+            "with its exact final source phrase as end_anchor and a 1-based "
+            "occurrence after the prior beat. Include beat_type, beat_id, "
+            "visual_type, prompts, grids, editor notes and all required fields "
+            "in EACH DirectedBeat. Do not type beat.text: Python derives it "
+            "from the anchors after receiving your ENTIRE audiovisual plan. "
+            "Choose boundaries with the visual staging jointly, following "
+            "the original complete B1.2 and B2 editorial rules, no arbitrary "
+            "pacing quotas. All beats must be <=100 stripped characters and "
+            "<=40 words.\n"
             + json.dumps({
-                "narrative_core": core,
-                "source_beats": blocks,
+                "narrative_core": core, "groups": groups,
                 "ebook_cover_available": ebook is not None,
             }, ensure_ascii=False)
         ),
     }, {
         "type": "input_text",
         "text": (
-            "Authentic talking-presenter identity reference. "
-            "Do not recreate the original narrator's room for generated B-roll."
+            "Authentic presenter identity reference. Generated B-roll must "
+            "depict the actor of the narration, not default to this avatar."
         ),
     }, {
         "type": "input_image",
         "image_url": "data:image/png;base64," + base64.b64encode(avatar).decode("ascii"),
     }]
-    if ebook is None:
-        content.insert(0, {
-            "type": "input_text",
-            "text": (
-                "CAPABILITY GATE: NO AUTHENTIC EBOOK COVER PROVIDED. "
-                "All CTA metadata fields MUST be null. "
-                "Do not invent a book cover, ebook CTA or protected ebook asset; "
-                "preserve the script's actual narration."
-            ),
-        })
-    else:
+    if ebook is not None:
         content.extend([{
             "type": "input_text",
-            "text": "Authentic ebook cover, valid only for actual spoken ebook promotion.",
+            "text": "Authentic protected ebook cover for the actual spoken promotion.",
         }, {
             "type": "input_image",
             "image_url": "data:image/png;base64,"
             + base64.b64encode(ebook).decode("ascii"),
         }])
+    else:
+        content.insert(0, {
+            "type": "input_text",
+            "text": (
+                "No ebook cover configured; invent no ebook offer, QR or cover. "
+                "Preserve original narration exactly."
+            ),
+        })
     return [{"role": "user", "content": content}]
 
 
@@ -236,9 +232,8 @@ async def run_professional_director(
             tools=[],
         )
         for attempt in range(corrections + 1):
-            logical_phase = "02_planning" if stage in {"02_beats", "02_visuals"} else stage
-            subphase = stage.removeprefix("02_") if logical_phase == "02_planning" else None
-            label = logical_phase + (f" / {subphase}" if subphase else "")
+            logical_phase = stage
+            label = stage
             print(f"\n  [OpenAI] Fase {label}, intento {attempt + 1}/{corrections + 1}",
                   flush=True)
             start = perf_counter()
@@ -262,7 +257,7 @@ async def run_professional_director(
                 )
             except ModelBehaviorError:
                 entry = {
-                    "phase": logical_phase, "subphase": subphase, "status": "invalid_json",
+                    "phase": logical_phase, "status": "invalid_json",
                     "attempt": attempt + 1,
                     "elapsed_seconds": round(perf_counter() - start, 3),
                     "calls": meter.calls,
@@ -282,7 +277,7 @@ async def run_professional_director(
                 continue
             except Exception as exc:
                 entry = {
-                    "phase": logical_phase, "subphase": subphase, "status": "failed",
+                    "phase": logical_phase, "status": "failed",
                     "attempt": attempt + 1, "error": type(exc).__name__,
                     "calls": meter.calls,
                     "input_tokens": sum(x["input_tokens"] for x in meter.calls),
@@ -296,7 +291,7 @@ async def run_professional_director(
                     "agent_openai/usage.json. Nada enviado a generación."
                 ) from None
             metrics = {
-                "phase": logical_phase, "subphase": subphase,
+                "phase": logical_phase,
                 "status": "passed", "attempt": attempt + 1,
                 "seconds": round(perf_counter() - start, 3),
                 "requests": result.context_wrapper.usage.requests,
@@ -368,385 +363,225 @@ async def run_professional_director(
     })
     _save(output / "B1.1" / "output.json", b11.model_dump(mode="json"))
 
-    # 02a: ONE global B1.2 call before any visual prompting. Return only
-    # short verbatim end anchors and beat types; Python reconstructs beat text.
-    cuts_validation: dict[str, Any] = {}
-    cuts: WholeScriptCuts | None = None
-    for index in range(max_corrections + 1):
-        previous = (
-            "\n\nPreviously rejected beat cuts (correct the issues, keep "
-            "all valid narrative boundaries):\n"
-            + json.dumps({
-                "issues": cuts_validation.get("issues", []),
-                "previous_cuts": cuts.model_dump(mode="json") if cuts else None,
-            }, ensure_ascii=False)
-        ) if index else ""
-        cuts = await invoke(
-            "02_beats",
-            "ORIGINAL SCRIPT, AS EXACT CONSECUTIVE MATERIALIZED GROUP TEXTS. "
-            "Read ALL groups before choosing any cuts; the concatenation is "
-            "the original script verbatim. Source anchors are per group.\n"
-            + json.dumps({
-                "narrative_core": core, "groups": materialized_groups,
-            }, ensure_ascii=False) + previous,
-            WholeScriptCuts,
-        )
-        cuts_validation = validate_and_materialize_cuts(materialized_groups, cuts)
-        _save(_phase_file(root, "02_beats", f"attempt_{index + 1}.json"), {
-            "proposed_cuts": cuts.model_dump(mode="json"),
-            "validation": cuts_validation,
-        })
-        if cuts_validation["status"] == "passed":
-            break
-        print("  [02_beats] Límites rechazados: " + "; ".join(
-            x["message"] for x in cuts_validation["issues"][:5]
-        ), flush=True)
-    if cuts_validation["status"] != "passed" or cuts is None:
-        _save(_phase_file(root, "02_planning"), {
-            "phase": "02_planning", "status": "blocked",
-            "subphase": "beats", "validation": cuts_validation,
-        })
-        raise ValueError(
-            "No se han podido validar todos los beats ANTES de generar visuales. "
-            "Los fallos y límites están guardados en "
-            "agent_openai/phases/02_planning/beats."
-        )
-
-    source_beats = cuts_validation["blocks"]
-    _save(_phase_file(root, "02_beats"), {
-        "cuts": cuts.model_dump(mode="json"),
-        "output": source_beats, "validation": cuts_validation,
-    })
-    _save(root / "beats.json", {
-        "source_sha256": source_sha, "narrative_core": core,
-        "blocks": source_beats,
-    })
-    _b12_checkpoints(output, source_beats, core)
-
-    # 02b: complete-video visual planning; source beat IDs and text are
-    # immutable and not repeated in the model's structured visual output.
-    catalog = _visual_input(source_beats, core, avatar, ebook)
-    visuals = canonicalize_visual_order(
-        source_beats, await invoke("02_visuals", catalog, WholeVideoVisuals),
+    # 02: ONE global model request returns BOTH beats and their visual plans.
+    # Source text remains the original Python-materialized B1.1 groups.
+    joint_direction = await invoke(
+        "02_planning",
+        _direction_input(materialized_groups, core, avatar, ebook),
+        WholeVideoDirection,
     )
-    _save(_phase_file(root, "02_visuals", "attempt_1.json"), {
-        "output": visuals.model_dump(mode="json"),
-        "mismatched_blocks": mismatched_visual_blocks(source_beats, visuals),
-    })
-    for index in range(2):
-        mismatched = mismatched_visual_blocks(source_beats, visuals)
-        if not mismatched:
-            break
-        repair_input = copy.deepcopy(catalog)
-        repair_input[0]["content"].insert(0, {
-            "type": "input_text",
-            "text": (
-                "Your prior visual response omitted, duplicated or misordered "
-                "the following B1.2 groups. Return exactly these complete "
-                "VisualGroup decisions, with unchanged exact beat IDs, in "
-                "ONE response covering ALL affected groups. Do not redraw "
-                "anything else or modify any source narration. "
-                + json.dumps({
-                    "affected_block_ids": mismatched,
-                    "prior_visual_groups": [
-                        block.model_dump(mode="json")
-                        for block in visuals.blocks
-                    ],
-                }, ensure_ascii=False)
-            ),
-        })
-        corrected_visuals = await invoke(
-            "02_visuals", repair_input, VisualAlignmentRepair,
-        )
-        try:
-            visuals = canonicalize_visual_order(
-                source_beats,
-                merge_alignment_repair(
-                    source_beats, visuals, corrected_visuals, mismatched,
-                ),
-            )
-        except ValueError as exc:
-            _save(_phase_file(root, "02_visuals",
-                              f"repair_{index + 1}.json"), {
-                "status": "blocked", "error": str(exc),
-                "output": corrected_visuals.model_dump(mode="json"),
-            })
-            if index == 1:
-                raise RuntimeError(
-                    "Global visual correction still does not align with "
-                    "the validated B1.2 beats. See "
-                    "02_planning/visuals/repair_2.json."
-                ) from None
-            continue
-        _save(_phase_file(root, "02_visuals",
-                          f"repair_{index + 1}.json"), {
-            "status": "passed",
-            "output": corrected_visuals.model_dump(mode="json"),
-        })
-    if mismatched_visual_blocks(source_beats, visuals):
-        _save(_phase_file(root, "02_visuals"), {
-            "status": "blocked",
-            "output": visuals.model_dump(mode="json"),
-            "mismatched_blocks": mismatched_visual_blocks(source_beats, visuals),
-        })
-        _save(_phase_file(root, "02_planning"), {
-            "phase": "02_planning", "status": "blocked",
-            "subphase": "visuals", "mismatched_blocks":
-                mismatched_visual_blocks(source_beats, visuals),
-        })
-        raise ValueError(
-            "Visual alignment remains invalid; see "
-            "02_planning/visuals/output.json."
-        )
-    candidate = assemble_plan(
-        narrative_core=core, source_beats=source_beats, visuals=visuals,
-    )
-    workspace.submit_plan_revision(candidate)
-    if workspace.report is not None and workspace.report["status"] != "blocked":
-        workspace.protected_cta_beats = {
-            beat["beat_id"]: copy.deepcopy(beat)
-            for group in candidate["blocks"]
-            for beat in group["beats"]
-            if beat.get("cta_group_id") is not None
-        }
-    _save(_phase_file(root, "02_visuals"), {
-        "output": candidate, "validation": workspace.report,
-    })
-    _save(root / "plan_initial.json", {
-        "plan": candidate, "validation": workspace.report,
-    })
-    _save(output / "B2" / "candidate_output.json", {
-        "output": candidate, "validation": workspace.report,
-    })
+    def check_direction(direction: WholeVideoDirection) -> dict[str, Any]:
+        material = materialize_direction(materialized_groups, direction, core)
+        if material["plan"] is not None:
+            report = workspace.submit_plan_revision(material["plan"])
+            material["validation"] = report
+            material["status"] = report["status"]
+            material["issues"].extend(report.get("issues", []))
+        else:
+            material["validation"] = {
+                "status": "blocked",
+                "issues": material["issues"],
+            }
+        return material
+
+    current = check_direction(joint_direction)
+    initial_report = _compact_report(current["validation"])
     _save(_phase_file(root, "02_planning"), {
         "schema_version": "professional-phase-output-v1",
-        "phase": "02_planning",
-        "beat_validation": cuts_validation,
-        "visual_plan": candidate,
-        "visual_validation": workspace.report,
-        "subphases": ["beats", "visuals"],
+        "phase": "02_planning", "status": current["status"],
+        "output": joint_direction.model_dump(mode="json"),
+        "materialized_plan": current["plan"],
+        "boundary_validation": current["boundaries"],
+        "validation": initial_report,
     })
+    _save(root / "plan_initial.json", {
+        "direction": joint_direction.model_dump(mode="json"),
+        "plan": current["plan"], "boundary_validation": current["boundaries"],
+        "validation": initial_report,
+    })
+    if current["plan"] is not None:
+        _save(output / "B2" / "candidate_output.json", {
+            "output": current["plan"], "validation": current["validation"],
+        })
 
-    # 03: ONE global creative review, one existing Python deterministic report.
-    # No tools, no SDK session history, no repeated enormous tool outputs.
+    # 03: evaluate the single, already-made complete audiovisual proposal.
+    # Even an invalid cut still has its visual decision and can be repaired.
     review = await invoke(
         "03_evaluation",
-        "Review the COMPLETE original script in the validated beat texts "
-        "below and the accompanying visual choices. Evaluate real YouTube "
-        "narrative rhythm, momentum, specificity and physical feasibility. "
-        "Python deterministic failures are authoritative; do NOT invent "
-        "new rhythm quotas. Return concrete, actionable editorial findings.\n"
+        "Evaluate this ONE complete audiovisual proposal for YouTube "
+        "storytelling, real actor action, narrative cadence, continuous grids, "
+        "source-faithful notes and concrete Python errors. Both cuts and "
+        "visual choices were proposed TOGETHER. Return precise concerns "
+        "that can be resolved by targeted corrections, never a replacement "
+        "rhythm quota.\n"
         + json.dumps({
-            "plan": workspace.candidate,
-            "python_validation": _compact_report(workspace.validate_plan()),
+            "narrative_core": core,
+            "original_groups": materialized_groups,
+            "combined_audiovisual_direction": joint_direction.model_dump(mode="json"),
+            "python_issues": current["issues"],
+            "python_validation": _compact_report(current["validation"]),
         }, ensure_ascii=False),
         CreativeReview,
     )
     _save(_phase_file(root, "03_evaluation"), {
         "output": review.model_dump(mode="json"),
-        "validation": _compact_report(workspace.validate_plan()),
+        "validation": _compact_report(current["validation"]),
     })
     _save(root / "review.json", {
         "assessment": review.model_dump(mode="json"),
-        "validation": _compact_report(workspace.validate_plan()),
+        "validation": _compact_report(current["validation"]),
     })
     _save(output / "B2.1" / "review_output.json", {
         "schema_version": "professional-editorial-review-v1",
         "review": review.model_dump(mode="json"),
     })
 
-    # 04: visual PATCHES, not a full replanning of every beat. A true
-    # narrative recut must explicitly replace its group's cuts and visuals.
+    # 04: one global correction proposal. A revised narrative block ALWAYS
+    # carries its revised visuals in the same objects and model response.
     immutable_cta_ids = {
-        beat["beat_id"]
-        for group in (workspace.candidate or {}).get("blocks", [])
-        for beat in group["beats"]
-        if beat.get("cta_group_id") is not None
+        beat.beat_id for group in joint_direction.blocks
+        for beat in group.beats if beat.cta_group_id is not None
     }
-    # An editorial note about a protected ebook segment cannot authorise
-    # removing or rewriting that segment. Preserve it as an auditable review
-    # finding, but do not spend further calls on an impossible correction.
-    read_only_review = [
-        finding for finding in review.issues
-        if finding.beat_id in immutable_cta_ids
+    readonly_findings = [
+        item for item in review.issues if item.beat_id in immutable_cta_ids
     ]
-    changed_review = [
-        finding for finding in review.issues
-        if finding.beat_id not in immutable_cta_ids
+    editable_findings = [
+        item for item in review.issues if item.beat_id not in immutable_cta_ids
     ]
     correction_attempts: list[dict[str, Any]] = []
-    correction_feedback: list[dict[str, Any]] = []
-    for index in range(max_corrections):
-        report = workspace.validate_plan()
-        if report["status"] != "blocked" and not changed_review:
-            break
-        if workspace.candidate is None:
-            raise RuntimeError("Lost canonical plan before correction.")
-        prev_by_id = {
-            b["beat_id"]: b for group in workspace.candidate["blocks"]
-            for b in group["beats"]
-        }
-        affected = {
-            beat_id for i in report.get("issues", [])
-            for beat_id in i.get("beat_ids", [])
-        }
-        affected.update(i.beat_id for i in changed_review if i.beat_id)
-        # For global failures (avatar fraction, editorial rhythm, preflight)
-        # include the whole visual manifest as context, but do not ask the
-        # model to re-emit the full plan.
-        manifest = [{
-            "beat_id": b["beat_id"], "visual_type": b["visual_type"],
-            "block_id": g["block_id"], "image_count": len(b.get("image_prompts", []))
-            if isinstance(b.get("image_prompts"), list) else 1,
-        } for g in workspace.candidate["blocks"] for b in g["beats"]]
-        relevant = (
-            list(prev_by_id.values()) if not affected
-            else [b for k, b in prev_by_id.items() if k in affected]
-        )
-        correction_attempts.append({
-            "attempt": index + 1,
-            "blocking_issues_before": report.get("issues", []),
-            "editorial_findings": [
-                f.model_dump(mode="json") for f in changed_review
-            ],
-        })
-        response = await invoke(
+    remaining_editorial: list[dict[str, Any]] = []
+    if current["status"] == "blocked" or editable_findings:
+        if max_corrections < 1:
+            raise ValueError("Whole-video direction is blocked; correction disabled.")
+        correction = await invoke(
             "04_correction",
-            "Apply exact, limited changes to this WHOLE-video plan, from "
-            "the complete narration (source_beats), deterministic issues "
-            "and editorial review. NEVER fabricate beat text. "
-            "Return only visual_patches for existing beats. For a genuine "
-            "narrative resegmentation, return resegmented_blocks plus "
-            "full replanned visual entries ONLY for the resegmented group. "
-            "Unchanged beats and groups must NOT be emitted in the output.\n"
+            "Return ONE coherent correction covering ALL remaining structural "
+            "and editorial issues. Use replaced_groups for a narrative recut: "
+            "each entire replaced group MUST include BOTH newly chosen beat "
+            "anchors AND all corresponding visual choices, as one inseparable "
+            "audiovisual decision. Use visual_patches for existing beats whose "
+            "boundaries remain unchanged. Preserve untouched blocks.\n"
             + json.dumps({
-                "source_beats": source_beats,
-                "issues": report.get("issues", []),
+                "narrative_core": core,
+                "original_groups": materialized_groups,
+                "combined_audiovisual_direction": joint_direction.model_dump(mode="json"),
+                "blocking_python_issues": current["issues"],
                 "editorial_findings": [
-                    x.model_dump(mode="json") for x in changed_review
+                    item.model_dump(mode="json") for item in editable_findings
                 ],
-                "visual_manifest": manifest,
-                "relevant_visual_choices": relevant,
                 "ebook_cover_available": ebook is not None,
-                "previous_rejected_correction": correction_feedback,
             }, ensure_ascii=False),
-            VisualCorrection,
+            DirectionCorrection,
         )
-        # A reported editorial problem must not be silently erased by an
-        # unrelated successful Python validation. Track requested repairs.
-        patched_ids = {item.beat_id for item in response.visual_patches}
-        resegmented_ids = {
-            beat["beat_id"]
-            for group in workspace.candidate["blocks"]
-            if group["block_id"] in {
-                part.block_id for part in response.resegmented_blocks
-            }
-            for beat in group["beats"]
-        }
-        delivered = patched_ids | resegmented_ids
-        if not delivered and changed_review:
-            feedback = {
-                "rule_id": "EDITORIAL_REVIEW_UNADDRESSED",
-                "message": (
-                    "The whole-video review found concrete problems, but "
-                    "the correction made no changes. Return targeted patches "
-                    "or explicit resegmentation rather than discarding review."
-                ),
-            }
-            correction_feedback = [feedback]
-            _save(_phase_file(root, "04_correction",
-                              f"attempt_{index + 1}.json"), {
-                "output": response.model_dump(mode="json"),
-                "validation": {"status": "blocked", "issues": [feedback]},
-            })
-            continue
-        proposed_cuts = combine_cut_corrections(cuts, response.resegmented_blocks)
-        new_beats = validate_and_materialize_cuts(materialized_groups, proposed_cuts)
-        if new_beats["status"] != "passed":
-            _save(_phase_file(root, "04_correction",
-                              f"attempt_{index + 1}.json"), {
-                "output": response.model_dump(mode="json"),
-                "validation": new_beats,
-            })
-            correction_feedback = new_beats["issues"]
-            changed_review = []
-            continue
         try:
-            updated_plan = apply_correction(
-                current_plan=workspace.candidate,
-                source_beats=new_beats["blocks"],
-                correction=response,
+            corrected_direction = apply_direction_correction(
+                joint_direction, correction,
             )
-        except ValueError as exc:
-            _save(_phase_file(root, "04_correction",
-                              f"attempt_{index + 1}.json"), {
-                "output": response.model_dump(mode="json"),
-                "validation": {"status": "blocked", "issues": [{
-                    "rule_id": "INVALID_CORRECTION",
+            checked = check_direction(corrected_direction)
+        except (ValueError, TypeError) as exc:
+            checked = {
+                "status": "blocked",
+                "issues": [{
+                    "rule_id": "INVALID_DIRECTION_CORRECTION",
                     "message": str(exc),
-                }]},
-            })
-            correction_feedback = [{
-                "rule_id": "INVALID_CORRECTION",
-                "message": str(exc),
-            }]
-            changed_review = []
-            continue
-        outcome = workspace.submit_plan_revision(updated_plan)
-        _save(_phase_file(root, "04_correction",
-                          f"attempt_{index + 1}.json"), {
-            "output": response.model_dump(mode="json"),
-            "plan": updated_plan, "validation": outcome,
-        })
-        _save(root / f"correction_{index + 1}.json", {
-            "plan": updated_plan, "validation": outcome,
-        })
-        # Whenever a structurally valid correction changes source cuts, all
-        # subsequent attempts must use those cuts, even if visual preflight
-        # remains blocked. Keep the B1.2 output files synchronized as well.
-        cuts = proposed_cuts
-        source_beats = new_beats["blocks"]
-        if response.resegmented_blocks:
-            _b12_checkpoints(output, source_beats, core)
-            _save(_phase_file(root, "02_beats", "final_after_correction.json"),
-                  {"cuts": cuts.model_dump(mode="json"),
-                   "blocks": source_beats})
-        correction_feedback = outcome.get("issues", [])
-        changed_review = [
-            issue for issue in changed_review
-            if issue.beat_id not in delivered
-            and not (issue.beat_id is None and delivered)
+                }],
+                "validation": {
+                    "status": "blocked",
+                    "issues": [{
+                        "rule_id": "INVALID_DIRECTION_CORRECTION",
+                        "message": str(exc),
+                    }],
+                },
+                "plan": None,
+                "boundaries": current["boundaries"],
+            }
+            corrected_direction = joint_direction
+        modified = {beat.beat_id for beat in correction.visual_patches}
+        modified.update(
+            beat.beat_id for group in correction.replaced_groups for beat in group.beats
+        )
+        replaced_ids = {group.block_id for group in correction.replaced_groups}
+        remaining_editorial = [
+            {"rule_id": "EDITORIAL_ISSUE_UNADDRESSED",
+             "message": item.problem, "beat_id": item.beat_id}
+            for item in editable_findings
+            if item.beat_id not in modified
+            and not (item.beat_id is None and (modified or replaced_ids))
         ]
+        if remaining_editorial:
+            checked["status"] = "blocked"
+            checked["issues"].extend(remaining_editorial)
+            checked["validation"]["status"] = "blocked"
+            checked["validation"]["issues"].extend(remaining_editorial)
+        _save(_phase_file(root, "04_correction", "attempt_1.json"), {
+            "output": correction.model_dump(mode="json"),
+            "revised_direction": corrected_direction.model_dump(mode="json"),
+            "validation": _compact_report(checked["validation"]),
+            "boundary_validation": checked["boundaries"],
+        })
+        _save(root / "correction_1.json", {
+            "direction": corrected_direction.model_dump(mode="json"),
+            "plan": checked["plan"],
+            "validation": _compact_report(checked["validation"]),
+        })
+        correction_attempts.append({
+            "attempt": 1, "status": checked["status"],
+            "issues": checked["issues"],
+        })
+        joint_direction = corrected_direction
+        current = checked
 
     _save(_phase_file(root, "04_correction"), {
-        "status": workspace.validate_plan()["status"],
+        "phase": "04_correction", "status": current["status"],
         "correction_attempts": correction_attempts,
-        "resulting_validation": _compact_report(workspace.validate_plan()),
-        "skipped_model_calls_when_no_issues": not correction_attempts,
+        "resulting_validation": _compact_report(current["validation"]),
         "protected_cta_editorial_findings": [
-            f.model_dump(mode="json") for f in read_only_review
+            item.model_dump(mode="json") for item in readonly_findings
         ],
+        "skipped_model_call_when_no_issues": not correction_attempts,
     })
 
-    # 05: Python-only release. A green result is never asserted by the LLM.
-    final_report = workspace.validate_plan()
-    if final_report["status"] == "blocked":
+    # 05: Python-only strict gate. Never publish an incomplete B1.2 output.
+    final_report = current["validation"]
+    if current["status"] == "blocked" or current["plan"] is None:
         _save(_phase_file(root, "05_delivery"), {
-            "status": "blocked", "validation": final_report,
+            "status": "blocked", "validation": _compact_report(final_report),
+            "original_full_audiovisual_plan": joint_direction.model_dump(mode="json"),
         })
-        _save(root / "blocked.json", {"validation": final_report})
-        codes = sorted(set(i["rule_id"] for i in final_report["issues"]))
+        _save(root / "blocked.json", {
+            "validation": _compact_report(final_report),
+        })
+        codes = sorted(set(
+            issue["rule_id"] for issue in current["issues"]
+        ))
         raise ValueError(
             "Professional director cannot deliver (" + ", ".join(codes)
             + "). Complete report: agent_openai/phases/05_delivery/output.json"
         )
 
+    # Both beats and visuals were planned TOGETHER, and both are valid.
+    # Only NOW save the legacy B1.2 bridge, never as a false standalone plan.
+    source_beats = current["boundaries"]["blocks"]
+    _b12_checkpoints(output, source_beats, core)
+    _save(root / "beats.json", {
+        "source_sha256": source_sha,
+        "narrative_core": core, "blocks": source_beats,
+    })
+    workspace.protected_cta_beats = {
+        beat["beat_id"]: copy.deepcopy(beat)
+        for group in current["plan"]["blocks"]
+        for beat in group["beats"] if beat.get("cta_group_id") is not None
+    }
+    final_report = workspace.validate_plan()
+    if final_report["status"] == "blocked":
+        _save(_phase_file(root, "05_delivery"), {
+            "status": "blocked", "validation": _compact_report(final_report),
+        })
+        raise ValueError("Professional director blocked at final protected CTA gate.")
     projection = workspace.deliver()
     final_plan = workspace.candidate
-    if final_plan is None:
-        raise RuntimeError("No canonical Professional plan to publish.")
-    if final_plan["narrative_core"] != core:
-        raise ValueError("Professional B1.1 narrative_core changed.")
+    if final_plan is None or final_plan["narrative_core"] != core:
+        raise ValueError("Professional planning changed the approved source core.")
     _save(root / "approved_plan.json", {
         "source_sha256": source_sha,
         "groups": materialized_groups, "plan": final_plan,
@@ -754,8 +589,7 @@ async def run_professional_director(
     })
     _save(root / "editor_plan.json", projection["editor_plan"])
     _save(_phase_file(root, "05_delivery"), {
-        "status": "passed",
-        "source_sha256": source_sha,
+        "status": "passed", "source_sha256": source_sha,
         "plan": final_plan, "validation": final_report,
     })
     _save(output / "B2" / "merged_output.json", projection["b2_merged"])
