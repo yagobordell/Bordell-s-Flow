@@ -299,6 +299,7 @@ def validate_plan(
     plan: dict[str, Any],
     *,
     protected_cta_beats: dict[str, dict[str, Any]] | None = None,
+    ebook_available: bool = True,
 ) -> dict[str, Any]:
     """Check a whole-video candidate. No paid work or changes to existing pipeline.
 
@@ -396,6 +397,15 @@ def validate_plan(
                 ))
             reconstructed += text
             protected = beat.get("cta_group_id") is not None
+            if protected and not ebook_available:
+                issues.append(_issue(
+                    "CTA_COVER_UNAVAILABLE",
+                    "No authentic ebook cover is configured. Remove ebook-specific "
+                    "CTA metadata and references; never fabricate a cover. "
+                    "If this is a real ebook promotion, configure its real cover "
+                    "before producing the video.",
+                    block_id=block_id, beat_ids=[beat_id],
+                ))
             issues.extend(_validate_visual(beat, block_id=block_id, protected=protected))
 
             if beat_id in protected_cta_beats:
