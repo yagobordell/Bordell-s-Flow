@@ -58,6 +58,21 @@ def test_cta_interval_is_always_empty_and_later_cues_are_shifted() -> None:
     assert not any(cue["start"] < 10 and cue["end"] > 2 for cue in cues)
 
 
+def test_stt_boundary_slightly_differs_from_snapped_cta_cut() -> None:
+    groups = _shift_around_cta(
+        [_word("intro.", 0.2, 0.8), _word("next.", 1.01, 1.5)],
+        {
+            "source_boundary_seconds": 1.01,
+            "video_cut_seconds": 1.02,
+            "cta_duration_seconds": 5.0,
+        },
+    )
+    assert len(groups[0]) == 1
+    assert len(groups[1]) == 1
+    assert groups[1][0]["start"] == pytest.approx(6.02)
+    assert groups[0][0]["end"] <= 1.02
+
+
 def test_subtitle_text_cannot_inject_ass_overrides() -> None:
     _, ass = _subtitle_files([{
         "start": 1.0, "end": 2.0,
