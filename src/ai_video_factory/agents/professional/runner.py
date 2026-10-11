@@ -651,6 +651,16 @@ async def run_professional_director(
             new_count = len(checked["issues"])
             if invalid_correction:
                 outstanding_editorial = previous_editorial
+                if previous_editorial and before["status"] != "blocked":
+                    before["status"] = "blocked"
+                    before["validation"]["status"] = "blocked"
+                    unresolved = [
+                        {"rule_id": "EDITORIAL_ISSUE_UNADDRESSED",
+                         "message": item.problem, "beat_id": item.beat_id}
+                        for item in previous_editorial
+                    ]
+                    before["issues"].extend(unresolved)
+                    before["validation"]["issues"].extend(unresolved)
                 break
             if checked["status"] == "passed" or (
                 checked["status"] == "passed_with_warnings"
