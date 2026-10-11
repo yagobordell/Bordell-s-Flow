@@ -20,6 +20,7 @@ from ai_video_factory.agents.professional.runner import (
     run_professional_director,
 )
 from ai_video_factory.agents.professional.visuals import (
+    VisualAlignmentRepair,
     VisualCorrection,
     WholeVideoVisuals,
 )
@@ -69,8 +70,10 @@ def _fixture():
 @pytest.mark.parametrize("fail_first_json", [False, True])
 @pytest.mark.parametrize("invented_ebook_cta", [False, True])
 @pytest.mark.parametrize("editorial_patch", [False, True])
+@pytest.mark.parametrize("missing_visual_beat", [False, True])
 def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
-    tmp_path, monkeypatch, fail_first_json, invented_ebook_cta, editorial_patch,
+    tmp_path, monkeypatch, fail_first_json, invented_ebook_cta,
+    editorial_patch, missing_visual_beat,
 ):
     script, groups, core, cuts, choices = _fixture()
     invocations = []
@@ -100,6 +103,18 @@ def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
                     selected[0]["cta_reference_sources"] = ["ebook"]
                     selected[0]["reference"] = True
                 answer = WholeVideoVisuals.model_validate({
+                    "blocks": [{
+                        "block_id": 1,
+                        "beats": selected[:-1] if missing_visual_beat else selected,
+                    }],
+                })
+            elif agent.output_type is VisualAlignmentRepair:
+                selected = copy.deepcopy(choices)
+                if invented_ebook_cta:
+                    selected[0]["cta_group_id"] = 1
+                    selected[0]["cta_reference_sources"] = ["ebook"]
+                    selected[0]["reference"] = True
+                answer = VisualAlignmentRepair.model_validate({
                     "blocks": [{"block_id": 1, "beats": selected}],
                 })
             elif agent.output_type is CreativeReview:
@@ -151,7 +166,10 @@ def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
         script, output=tmp_path, avatar=b"PNG", ebook=None, model="offline",
     ))
     assert outcome["validation"]["status"] == "passed"
-    expected = 4 + int(fail_first_json) + int(invented_ebook_cta or editorial_patch)
+    expected = (
+        4 + int(fail_first_json) + int(missing_visual_beat)
+        + int(invented_ebook_cta or editorial_patch)
+    )
     assert len(invocations) == expected
     assert not any(call[0].output_type is str for call in invocations)
     assert invocations[0][0].output_type is GroupProposal
@@ -169,6 +187,10 @@ def test_global_sdk_director_preserves_old_outputs_and_stops_before_media(
     assert (tmp_path / "agent_openai" / "phases" / "02_visuals" / "output.json").is_file()
     assert (tmp_path / "agent_openai" / "phases" / "03_evaluation" / "output.json").is_file()
     assert (tmp_path / "agent_openai" / "phases" / "05_delivery" / "output.json").is_file()
+    assert (tmp_path / "agent_openai" / "phases" / "04_correction" / "output.json").is_file()
+    if missing_visual_beat:
+        assert (tmp_path / "agent_openai" / "phases" / "02_visuals"
+                / "repair_1.json").is_file()
     assert (tmp_path / "B1.1" / "output.json").is_file()
     assert (tmp_path / "B1.2" / "block_1" / "output.json").is_file()
     assert (tmp_path / "B1.2" / "merged_output.json").is_file()
