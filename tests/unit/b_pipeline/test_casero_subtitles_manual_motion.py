@@ -353,3 +353,15 @@ def test_manual_motion_preflight_rejects_short_clip_before_paid_cta(
         avatar_cta_motion.ensure_avatar_cta_motion(avatar, "manual", interactive=False)
     assert not (folder / "motion_source.json").exists()
     assert not (folder / "identity.json").exists()
+
+
+def test_quick_adjacent_stt_words_cannot_create_overlapping_captions() -> None:
+    words = [
+        _word("Uno.", 0.10, 0.11),
+        _word("Dos.", 0.115, 0.12),
+        _word("Tres.", 0.125, 0.15),
+    ]
+    cues = _captions([words])
+    assert len(cues) == 3
+    assert all(left["end"] <= right["start"] for left, right in zip(cues, cues[1:]))
+    assert all(cue["end"] > cue["start"] for cue in cues)
