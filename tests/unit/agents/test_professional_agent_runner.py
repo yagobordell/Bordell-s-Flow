@@ -15,6 +15,7 @@ from ai_video_factory.agents.professional.feedback import (
 )
 from ai_video_factory.agents.professional.runner import (
     GroupProposal,
+    PlannedVideo,
     run_professional_director,
 )
 
@@ -83,8 +84,6 @@ def test_real_five_phase_controller_uses_one_agent_session(
                     "narrative_core": core, "blocks": blocks,
                 })
             elif agent.output_type is not str and isinstance(agent.output_type, type):
-                from ai_video_factory.agents.professional.runner import PlannedVideo
-
                 assert agent.output_type is PlannedVideo
                 proposed_beats = copy.deepcopy(beats)
                 if invented_ebook_cta and planning_count == 1:
