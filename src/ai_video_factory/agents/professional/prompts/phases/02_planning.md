@@ -8,4 +8,4 @@ Use visual_type=avatar on STRICTLY FEWER THAN 45% of beats. avatar_media is excl
 
 Add editor_notes for Haiku separately from image/video prompts. For word-triggered effects, include an exact source phrase AND its 1-based occurrence in that beat. No made-up seconds; STT resolves time later. Never embed title/overlay graphics in generation prompts.
 
-Submit the complete plan and inspect the Python report and rhythm map; the runtime decides when evaluation begins.
+Return ONE complete schema-conformant plan for the entire script, no Markdown fences. Python automatically submits, validates and stores that output; do not invoke a tool in this phase. The next phase can inspect the full validation report and rhythm map.
