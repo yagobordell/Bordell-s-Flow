@@ -48,10 +48,15 @@ class WholeVideoVisuals(StrictModel):
 
 
 class VisualCorrection(StrictModel):
-    """Empty cut replacement list means keep every existing narrated beat."""
+    """Only the changes, not a complete expensive reserialization of the video.
+
+    If a block must be resegmented, return its new cuts AND a complete visual
+    replacement for precisely that block. Every other block remains frozen.
+    """
 
     resegmented_blocks: list[GroupCuts]
-    blocks: list[VisualGroup] = Field(min_length=1)
+    replanned_blocks: list[VisualGroup]
+    visual_patches: list[VisualChoice]
 
 
 def assemble_plan(
@@ -103,6 +108,65 @@ def assemble_plan(
         "blocks": blocks,
     }
 
+
+
+def apply_correction(
+    *,
+    current_plan: dict[str, Any],
+    source_beats: list[dict[str, Any]],
+    correction: VisualCorrection,
+) -> dict[str, Any]:
+    """Patch only named visual beats and resegmented groups, fail closed.
+
+    This does NOT generate a new rhythm, invent missing images or auto-split
+    narration: all changes come from explicit model choices. Python only joins
+    validated source slices and checks reference integrity.
+    """
+    old = {b["block_id"]: b for b in current_plan["blocks"]}
+    replaced = {g.block_id: g for g in correction.replanned_blocks}
+    reseg = {g.block_id for g in correction.resegmented_blocks}
+    if len(replaced) != len(correction.replanned_blocks):
+        raise ValueError("Duplicate re-planned group.")
+    if reseg != set(replaced):
+        raise ValueError(
+            "Every resegmented group must have a full visual replacement; "
+            "all other groups must use targeted visual_patches."
+        )
+    patches = {v.beat_id: v for v in correction.visual_patches}
+    if len(patches) != len(correction.visual_patches):
+        raise ValueError("Duplicate visual patches.")
+    retained_ids = {
+        beat["beat_id"] for block in source_beats if block["block_id"] not in reseg
+        for beat in block["beats"]
+    }
+    if not set(patches).issubset(retained_ids):
+        raise ValueError("A visual patch references a missing or resegmented beat.")
+    updated: list[VisualGroup] = []
+    for group in source_beats:
+        block_id = group["block_id"]
+        if block_id in replaced:
+            updated.append(replaced[block_id])
+            continue
+        choices = []
+        existing = old[block_id]
+        if len(existing["beats"]) != len(group["beats"]):
+            raise ValueError("Source beat boundaries changed without replacement.")
+        for beat in existing["beats"]:
+            beat_id = beat["beat_id"]
+            if beat_id in patches:
+                choices.append(patches[beat_id])
+                continue
+            source_choice = {
+                key: beat.get(key)
+                for key in VisualChoice.model_fields
+            }
+            choices.append(VisualChoice.model_validate(source_choice))
+        updated.append(VisualGroup(block_id=block_id, beats=choices))
+    return assemble_plan(
+        narrative_core=current_plan["narrative_core"],
+        source_beats=source_beats,
+        visuals=WholeVideoVisuals(blocks=updated),
+    )
 
 def summarize_beats(blocks: list[dict[str, Any]]) -> dict[str, Any]:
     """Model-visible immutable source beats, without full-source duplication."""
