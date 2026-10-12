@@ -35,6 +35,35 @@ def _diagnostic(path: Path, report: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
+def _save_sdk_final_plan(
+    project: AgentBProject, output: Any
+) -> list[dict[str, Any]]:
+    """Accept a direct JSON response only after the same deterministic Python gate."""
+    if isinstance(output, dict):
+        candidate = output
+    elif isinstance(output, str):
+        value = output.strip()
+        if value.startswith("```") and value.endswith("```"):
+            value = value.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            candidate = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    else:
+        return []
+    if not isinstance(candidate, dict) or candidate.get("schema_version") != "b-pipeline-v1":
+        return []
+    try:
+        project.save_visual_plan(candidate, expected_revision=project.status()["revision"])
+    except PlanRejected as exc:
+        return [{"code": issue.code, "message": issue.message,
+                 "block_id": issue.block_id, "beat_ids": issue.beat_ids}
+                for issue in exc.issues[:12]]
+    except StaleRevision as exc:
+        return [{"code": "DIRECT_SAVE_STATE", "message": str(exc)}]
+    return []
+
+
 def _attempt_to_finalize(project: AgentBProject) -> tuple[bool, list[dict[str, Any]]]:
     """The controller, never the model, decides when all drafts constitute a valid plan."""
     state = project.status()
@@ -139,8 +168,13 @@ async def run_agent_b(
                 f"Agent B SDK error ({type(exc).__name__}); see {report_path}."
             ) from exc
 
+        final_output = getattr(result, "final_output", "")
+        recovered_errors: list[dict[str, Any]] = []
+        if not project.has_saved_plan():
+            recovered_errors = _save_sdk_final_plan(project, final_output)
         accepted, errors = _attempt_to_finalize(project)
-        last_output = str(getattr(result, "final_output", "") or "")
+        errors = errors or recovered_errors
+        last_output = str(final_output or "")
         entry = {
             "attempt": attempt,
             "event": "accepted" if accepted else "not_accepted",
