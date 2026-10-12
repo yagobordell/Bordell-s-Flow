@@ -37,7 +37,7 @@ def _block(block_id, beats):
 
 def _interleaved():
     return {
-        "schema_version": "b-pipeline-v1", "visual_style": "profesional",
+        "schema_version": "b-pipeline-v1", "planning_origin": "agent_b", "visual_style": "profesional",
         "blocks": [
             _block(1, [_beat(1, "A", "Call.", "A1. A caller in a city apartment."),
                        _beat(1, "B", "Look.", "A2. The same caller checking the phone.")]),
@@ -71,7 +71,7 @@ def test_interleaved_logical_chains_make_chronological_jobs_and_one_png_dependen
 
 def test_old_numeric_grids_keep_old_planner_and_rendering():
     old = {
-        "visual_style": "profesional",
+        "schema_version": "b-pipeline-v1", "visual_style": "profesional",
         "blocks": [_block(1, [_beat(1, "A", "First.", "1. A first shot."),
                               _beat(1, "B", "Second.", "2. A second shot.")])],
     }
@@ -141,7 +141,7 @@ def test_two_stills_one_beat_share_one_physical_grid():
         {"asset_id": "1A__2", "subshot_index": 2, "subshot_count": 2,
          "prompt": "A2. Second physical subshot.", "generation": "grid"},
     ]
-    plan = {"schema_version": "b-pipeline-v1", "visual_style": "profesional",
+    plan = {"schema_version": "b-pipeline-v1", "planning_origin": "agent_b", "visual_style": "profesional",
             "blocks": [_block(1, [a])]}
     jobs = plan_image_jobs(plan, described_beats(plan))
     assert len(jobs) == 1
