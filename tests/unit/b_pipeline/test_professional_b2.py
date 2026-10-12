@@ -72,7 +72,7 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
         .lower()
     )
     assert "original-avatar reference image" in prompt
-    assert "only avatar and avatar_media speak" in prompt
+    assert "only `avatar` and `avatar_media` speak" in prompt
     assert "120 characters" in prompt
     assert "different room or physical location" in prompt
     assert "screens and documents" in prompt
