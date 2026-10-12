@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import importlib
 import json
-from pathlib import Path
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from ai_video_factory.bots.agent_b.instructions import InstructionBundle
