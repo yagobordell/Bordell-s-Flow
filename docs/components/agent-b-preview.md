@@ -165,6 +165,71 @@ closed rather than generating unvalidated media.
 - Debugger cannot find `scripts.pipeline`: open the **repository root** in
   VS Code; `launch.json` uses that folder as the working directory.
 
+## Phase 2 repair and Phase 3 image-grid inspection (October 2026)
+
+The project root for the checked-in VS Code launch profiles is now
+`.video_factory_work/agent_b_preview_phone_phase3`. This is intentional:
+the previous failed session in `agent_b_preview_phone` is preserved for
+forensic inspection and never silently reused by a new model test.
+
+1. Switch to the latest PR #336 branch commit and re-select the existing
+   `.venv-agent-b` Python interpreter. Setup may be rerun but is normally
+   unnecessary if preflight passed.
+2. Run **Agent B — preflight (offline, no API)** once (F5).
+3. Run **Agent B — real planning (uses OpenAI API)** (F5). This sends
+   text-model requests and incurs token charges; no media generation is made.
+4. If the controller cannot accept the model response, inspect the NEW
+   `.video_factory_work/agent_b_preview_phone_phase3/agent_b_attempts.json`.
+   Every attempt lists the number of tool calls, the model's abbreviated
+   final reply, the staged block IDs and **specific Python validation codes**
+   where available. Please share the report without any API keys.
+5. On success, run **Agent B — inspect A/B image grid jobs (offline)** (F5).
+   It reads the accepted `visual_plan.json`, produces
+   `grid_jobs.json`, and makes exactly zero API calls. This is the
+   Phase 3 physical grid **preflight**, not image generation.
+
+The controller now distinguishes staged drafts from accepted full plans.
+It assembles a final global plan automatically when every source block
+has a valid visual draft. If the model emits a complete JSON final answer
+without calling `save_visual_plan`, Python may accept it only after
+passing the **same** deterministic validator and freeze gate.
+The plan's source text can never be silently rewritten to make a test pass.
+
+### Phase 3 grid planning semantics
+
+- `A1., A2., B1., B2., A3.` designate two independent **logical**
+  audiovisual sequences. They do **not** assign physical grid coordinates.
+- The first two assets can be one physical A grid, the middle two one B
+  grid, and the final A3 is a later single physical image with an explicit
+  continuation reference to the *actual preceding A PNG*.
+- Each grid contains 2–4 real visual panels, with black padding when a
+  square 2x2 output requires it. A one-shot continuation is a standalone
+  image, not an invalid one-panel grid.
+- A 70+ raw-character non-CTA still beat can own two subshots in one
+  beat and one grid. No source narration is duplicated.
+- `generate_b2_images` now understands cross-block PNG dependencies
+  for `schema_version=b-pipeline-v1`, checks previous PNG hashes and
+  reuses accepted paid outputs. If a previous request outcome is unknown,
+  it still **fails closed** rather than submitting another charge.
+- Old B2 plans **without** `schema_version=b-pipeline-v1` continue
+  using the existing local numeric grid planner.
+- The actual `run.ps1` media pipeline remains on its existing
+  production path pending Phase 4. Do not use the Phase 2 preview
+  `visual_plan.json` as a drop-in production plan yet: B1.1 span,
+  CTA ownership and downstream metadata require the dedicated adapter.
+
+### Optional CLI image-grid inspection
+
+```powershell
+.\.venv-agent-b\Scripts\python.exe -m scripts.pipeline.inspect_agent_b_grids `
+  --plan .video_factory_work/agent_b_preview_phone_phase3/visual_plan.json `
+  --output .video_factory_work/agent_b_preview_phone_phase3/grid_jobs.json
+```
+
+This records job order, physical grid contents, A/B logical chain
+identity, image sizes and prior PNG dependencies. The output is a
+diagnostic report, not a paid image or a rewritten public visual plan.
+
 ## CI verification
 
 The regular Python CI validates the complete repository without the optional
