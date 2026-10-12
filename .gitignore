@@ -9,6 +9,7 @@ build/
 
 # Virtual environments
 .venv/
+.venv-agent-b/
 venv/
 
 # Environment / secrets
@@ -19,7 +20,8 @@ venv/
 /config/salad.env
 
 # IDE / OS
-.vscode/
+/.vscode/*
+!/.vscode/launch.json
 .idea/
 .DS_Store
 
