@@ -10,6 +10,7 @@ from ai_video_factory.bots.contracts import (
     B2Output,
     B11Output,
     B12Output,
+    WholeB12Output,
     Beat,
     BlockMeta,
     MaterializedBlock,
@@ -74,30 +75,26 @@ class FakeProvider:
         if output_type is B11Output:
             assert payload == {"plain_script_for_recording": SCRIPT}
             return b11()
-        if output_type is B12Output:
-            assert set(payload) == {"narrative_core", "current_block_id", "blocks"}
-            assert len(payload["blocks"]) == 1
-            assert "span" not in payload["blocks"][0]
-            block_id = payload["current_block_id"]
-            self.b12_started.add(block_id)
-            if len(self.b12_started) == 2:
-                self.b12_both_started.set()
-            await asyncio.wait_for(self.b12_both_started.wait(), timeout=1.0)
-            self.b12_finished.add(block_id)
-            return B12Output.model_validate(
-                {
-                    "pipeline_stage": "B1.2",
-                    "block_id": block_id,
-                    "beats": [
-                        {
-                            "beat_id": f"{block_id}A",
-                            "text": payload["blocks"][0]["text"],
-                            "beat_type": "orientation",
-                        }
-                    ],
-                    "error": None,
-                }
-            )
+        if output_type is WholeB12Output:
+            assert set(payload) == {"plain_script_for_recording", "narrative_core", "blocks"}
+            assert payload["plain_script_for_recording"] == SCRIPT
+            assert len(payload["blocks"]) == 2
+            self.b12_started.update({1, 2})
+            self.b12_both_started.set()
+            self.b12_finished.update({1, 2})
+            return WholeB12Output.model_validate({
+                "pipeline_stage": "B1.2",
+                "narrative_core": payload["narrative_core"],
+                "blocks": [
+                    {"block_id": block["block_id"], "beats": [{
+                        "beat_id": f"{block['block_id']}A",
+                        "text": block["text"],
+                        "beat_type": "orientation",
+                    }]}
+                    for block in payload["blocks"]
+                ],
+                "error": None,
+            })
         assert output_type is B2Output
         assert self.b12_finished == {1, 2}, "B2 began before all B1.2 calls completed"
         self.b2_started.add(payload["current_block_id"])
@@ -132,7 +129,7 @@ def test_pipeline_parallel_calls_exact_source_and_medium_model_routing(
     assert [r.block_id for r in result.b12] == [1, 2]
     assert [r.blocks[0].block_id for r in result.b2] == [1, 2]
     assert "".join(r.beats[0].text for r in result.b12) == SCRIPT
-    assert [call[0] for call in fake.calls] == ["gpt-6-luna"] * 5
+    assert [call[0] for call in fake.calls] == ["gpt-6-luna"] * 4
     assert len(result.visual_plan()["blocks"]) == 2
     assert all("API transport:" in call[1] for call in fake.calls)
     merged_beats = result.merged_b12_output()
@@ -271,7 +268,7 @@ def test_stop_stage_never_starts_the_next_planning_wave(
     assert len(result.b2) == (2 if stop == "B2" else 0)
     assert len(provider.calls) == (
         (1 if start == "B1.1" else 0)
-        + (2 if start in ("B1.1", "B1.2") and stop != "B1.1" else 0)
+        + (1 if start in ("B1.1", "B1.2") and stop != "B1.1" else 0)
         + (2 if stop == "B2" else 0)
     )
 
@@ -506,29 +503,25 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
         )
     )
 
-    expected = {
-        ("B1.1", None),
-        ("B1.2", 1),
-        ("B1.2", 2),
-        ("B2", 1),
-        ("B2", 2),
-    }
-    assert set(inputs) == set(outputs) == expected
+    expected_calls = {("B1.1", None), ("B1.2", None), ("B2", 1), ("B2", 2)}
+    expected_outputs = expected_calls | {("B1.2", 1), ("B1.2", 2)}
+    assert set(inputs) == expected_calls
+    assert set(outputs) == expected_outputs
     assert inputs["B1.1", None] == {"plain_script_for_recording": SCRIPT}
-    assert inputs["B1.2", 1]["blocks"][0]["text"] == "  Uno.\n\n"
-    assert inputs["B1.2", 2]["blocks"][0]["text"] == "Dos.  "
+    assert inputs["B1.2", None]["blocks"][0]["text"] == "  Uno.\n\n"
+    assert inputs["B1.2", None]["blocks"][1]["text"] == "Dos.  "
     assert outputs["B1.1", None] == result.b11.model_dump()
     assert outputs["B1.2", 1] == result.b12[0].model_dump()
     assert outputs["B2", 2] == result.b2[1].model_dump()
     assert inputs["B2", 1]["blocks"][0]["beats"][0]["beat_id"] == "1A"
-    assert len(ledger.records) == 5
+    assert len(ledger.records) == 4
     assert stage_events == ["B1.1", "B1.2", "B2"]
     assert set(stage_times) == {"B1.1", "B1.2", "B2"}
-    assert set(call_times) == expected
+    assert set(call_times) == expected_calls
     assert all(seconds >= 0 for seconds in stage_times.values())
     assert all(seconds >= 0 for seconds in call_times.values())
     costs = ledger.report(blocks=2, run_status="completed")
-    assert costs["estimated_total_usd"] == "0.00010000"
+    assert costs["estimated_total_usd"] == "0.00008000"
     assert costs["stages"]["B1.1"]["recorded_calls"] == 1
-    assert costs["stages"]["B1.2"]["recorded_calls"] == 2
+    assert costs["stages"]["B1.2"]["recorded_calls"] == 1
     assert costs["stages"]["B2"]["recorded_calls"] == 2
