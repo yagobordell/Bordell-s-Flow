@@ -149,8 +149,10 @@ class AgentBProject:
             raise PlanRejected(issues)
         drafts = {**state.get("drafts", {}), str(block_id): dict(block_plan)}
         revision = expected_revision + 1
+        staged = [drafts[str(source.block_id)] for source in self.blocks
+                  if str(source.block_id) in drafts]
         self._write({**state, "revision": revision, "drafts": drafts,
-                     "plan": None, "sequence_index": {}})
+                     "plan": None, "sequence_index": sequence_index({"blocks": staged})})
         return revision
 
     def draft_blocks(self) -> list[dict[str, Any]]:
