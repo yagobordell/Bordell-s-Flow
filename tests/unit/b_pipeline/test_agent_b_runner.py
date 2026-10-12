@@ -124,3 +124,26 @@ def test_bounded_failure_never_freezes(tmp_path, monkeypatch):
     bundle = InstructionBundle.load()
     project = AgentBProject(tmp_path, [source()], CORE, instruction_sha256=bundle.sha256)
     assert project.status()["status"] == "planning"
+
+
+def test_partial_block_drafts_assemble_a_single_global_plan(tmp_path):
+    first = source("It rings.")
+    second = MaterializedBlock(block_id=2, type="development", emotional_entry="waiting",
+                               emotional_exit="settled", text="It matches.")
+    bundle = InstructionBundle.load()
+    p = AgentBProject(tmp_path, [first, second], CORE, instruction_sha256=bundle.sha256)
+    first_block = plan(first)["blocks"][0]
+    first_block["beats"][0]["prompt"] = "A1. Same phone ringing."
+    assert p.save_block_draft(1, first_block, expected_revision=0) == 1
+    with pytest.raises(Exception, match="Plan rejected"):
+        p.finalize_drafts(expected_revision=1)
+    second_block = {"block_id": 2, "type": "development", "emotional_entry": "waiting",
+                    "emotional_exit": "settled", "beats": [{
+                        "beat_id": "2A", "text": second.text, "beat_type": "action",
+                        "visual_type": "media_image", "prompt": "A2. Same phone and person.",
+                        "video_prompt": None, "audio": False, "reference": False}]}
+    assert p.save_block_draft(2, second_block, expected_revision=1) == 2
+    assert p.status()["drafted_block_ids"] == [1, 2]
+    assert p.finalize_drafts(expected_revision=2) == 3
+    p.freeze(expected_revision=3)
+    assert [b["block_id"] for b in p.frozen_plan()["blocks"]] == [1, 2]
