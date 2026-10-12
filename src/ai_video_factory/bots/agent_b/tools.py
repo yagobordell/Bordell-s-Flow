@@ -131,6 +131,45 @@ class ProductionToolService:
         return self._result({"status": "saved", "revision": revision,
                              "sequences": list(sequence_index(parsed))})
 
+    def save_block_draft(self, block_id: int, block_json: str,
+                         expected_revision: int) -> str:
+        """Stage beats and visuals together for one source block, without publishing them."""
+        self._guard()
+        if len(block_json) > 400_000:
+            raise ValueError("Block draft exceeds the 400 KB limit.")
+        try:
+            block = json.loads(block_json)
+            revision = self.project.save_block_draft(
+                block_id, block, expected_revision=expected_revision)
+        except json.JSONDecodeError as exc:
+            return self._result({"status": "invalid", "error": str(exc)})
+        except PlanRejected as exc:
+            self.last_report = self._errors(exc.issues)
+            return self._result({"status": "invalid", "error_count": len(exc.issues),
+                                 "errors": self.last_report})
+        except StaleRevision as exc:
+            return self._result({"status": "stale", "message": str(exc),
+                                 "project": self.project.status()})
+        self.last_report = []
+        return self._result({"status": "draft_saved", "revision": revision,
+                             "drafted_block_ids": self.project.status()["drafted_block_ids"]})
+
+    def finalize_drafts(self, expected_revision: int) -> str:
+        """Assemble all saved block drafts into one validated final visual plan."""
+        self._guard()
+        try:
+            revision = self.project.finalize_drafts(expected_revision=expected_revision)
+        except PlanRejected as exc:
+            self.last_report = self._errors(exc.issues)
+            return self._result({"status": "invalid", "error_count": len(exc.issues),
+                                 "errors": self.last_report})
+        except StaleRevision as exc:
+            return self._result({"status": "stale", "message": str(exc),
+                                 "project": self.project.status()})
+        self.last_report = []
+        return self._result({"status": "saved", "revision": revision,
+                             "sequences": list(self.project.status()["sequence_index"])})
+
     def sdk_tools(self) -> list[Any]:
         """Build SDK function tools bound to this project's service, not global state."""
         try:
@@ -183,6 +222,16 @@ class ProductionToolService:
             """Atomically save ONE complete audiovisual plan after Python validation."""
             return self.save_visual_plan(plan_json, expected_revision)
 
+        @function_tool
+        def save_block_draft(block_id: int, block_json: str, expected_revision: int) -> str:
+            """Persist one block's combined beats and visuals for later global assembly."""
+            return self.save_block_draft(block_id, block_json, expected_revision)
+
+        @function_tool
+        def finalize_drafts(expected_revision: int) -> str:
+            """Validate and save ONE complete plan from all staged B1.1 blocks."""
+            return self.finalize_drafts(expected_revision)
+
         return [read_script, read_group, read_project_context, read_instructions,
                 read_project_status, validate_plan, read_validation_report,
-                manage_visual_sequence, save_visual_plan]
+                manage_visual_sequence, save_visual_plan, save_block_draft, finalize_drafts]
