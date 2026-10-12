@@ -264,6 +264,10 @@ def parse_args() -> argparse.Namespace:
             "Requires the isolated openai-agents environment. Legacy remains default."
         ),
     )
+    parser.add_argument(
+        "--agent-b-model", default="gpt-5.1",
+        help="Tool-capable OpenAI model used only by Agent B (default: gpt-5.1).",
+    )
     parser.add_argument("--max-parallel-calls", type=int, default=8)
     parser.add_argument(
         "--style", "--b2-style", dest="visual_style",
@@ -327,6 +331,8 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
+    if getattr(args, "agent_b", False) and not args.agent_b_model.strip():
+        parser.error("--agent-b-model must not be empty")
     if getattr(args, "agent_b", False) and (
         args.from_stage != "B1.1"
         or args.visual_style not in {None, "profesional"}
@@ -3343,7 +3349,10 @@ async def main() -> None:
             visual_style=visual_style,
             enable_casero_cta=visual_style == "casero",
             **(
-                {"agent_b_project_dir": output / "agent_b"}
+                {
+                    "agent_b_project_dir": output / "agent_b",
+                    "agent_b_model": args.agent_b_model,
+                }
                 if getattr(args, "agent_b", False) else {}
             ),
             avatar_image=avatar_bytes,
