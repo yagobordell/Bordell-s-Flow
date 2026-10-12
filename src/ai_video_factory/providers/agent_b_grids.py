@@ -12,14 +12,14 @@ import re
 from typing import Any
 
 from .image_grids import (
-    BLACK_PANEL_DESCRIPTION,
-    BLACK_PANEL_SOURCE,
-    GridPlanError,
     _AVATAR_MEDIA_PANEL_HEIGHT,
     _AVATAR_MEDIA_PANEL_WIDTH,
     _PANEL_HEIGHT,
     _PANEL_WIDTH,
     _SHAPES,
+    BLACK_PANEL_DESCRIPTION,
+    BLACK_PANEL_SOURCE,
+    GridPlanError,
     _grid_prompt,
     _professional_grid_chunks,
 )
