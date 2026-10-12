@@ -584,8 +584,9 @@ def _one_image(
             kwargs["reference_image_urls"] = urls
             kwargs["prompt"] += (
                 "\n\nThe LAST attached image is the COMPLETE immediately previous "
-                "grid in the same visual story. This requested grid CONTINUES "
-                "that sequence. Preserve recurring character identity, clothing, "
+                "generated image or grid in the same visual story. This new "
+                "image CONTINUES that sequence. Preserve recurring character "
+                "identity, clothing, "
                 "objects, spatial arrangement, setting and persistent physical "
                 "states where appropriate, but create the NEW events and viewpoints "
                 "from the numbered descriptions above. Do not reproduce earlier "
@@ -730,9 +731,12 @@ def generate_b2_images(
         previous = job.get("continuity_previous_asset_id")
         if previous is None:
             continue
-        parent = job_index.get((job["block_id"], previous))
-        if parent is None or parent >= i or jobs[parent].get("grid") is None:
+        previous_block = job.get("continuity_previous_block_id", job["block_id"])
+        parent = job_index.get((previous_block, previous))
+        if parent is None or parent >= i:
             raise ImageGenerationError("Invalid chronological grid continuation dependency")
+        if plan.get("schema_version") != "b-pipeline-v1" and jobs[parent].get("grid") is None:
+            raise ImageGenerationError("Legacy image chains require a prior grid")
         if parent in children:
             raise ImageGenerationError("A completed grid cannot branch to two continuations")
         children[parent] = i
@@ -788,8 +792,13 @@ def generate_b2_images(
             source_url: str | None = None
             effective_job = job
             if job.get("continuity_previous_asset_id") is not None:
-                if predecessor is None or predecessor.get("grid") is None:
-                    raise ImageGenerationError("Chained grid predecessor has not completed")
+                if predecessor is None:
+                    raise ImageGenerationError("Chained image predecessor has not completed")
+                if (
+                    plan.get("schema_version") != "b-pipeline-v1"
+                    and predecessor.get("grid") is None
+                ):
+                    raise ImageGenerationError("Legacy continuation requires a prior grid")
                 source = output / predecessor["file"]
                 if source.is_symlink() or not source.is_file():
                     raise ImageGenerationError("Missing or linked prior grid reference")
