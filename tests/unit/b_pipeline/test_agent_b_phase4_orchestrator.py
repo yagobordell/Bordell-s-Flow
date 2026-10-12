@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from ai_video_factory.bots.contracts import B11Output
-from ai_video_factory.bots.workflow import BPipelineValidationError, run_b_pipeline
+from ai_video_factory.bots.workflow import run_b_pipeline
 
 
 def _b11() -> B11Output:
