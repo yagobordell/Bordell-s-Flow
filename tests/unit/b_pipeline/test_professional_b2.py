@@ -16,6 +16,8 @@ from ai_video_factory.bots.contracts import (
     B11Output,
     B12Output,
     ProfessionalB2Output,
+    WholeB12Output,
+    WholeProfessionalB2Output,
     ProfessionalVisualBeat,
 )
 from ai_video_factory.bots.workflow import run_b_pipeline
@@ -614,18 +616,18 @@ def test_professional_schema_boundary_matches_current_contract(
                     }],
                     "error": None,
                 })
-            if output_type is B12Output:
-                return B12Output.model_validate({
+            if output_type is WholeB12Output:
+                return WholeB12Output.model_validate({
                     "pipeline_stage": "B1.2",
-                    "block_id": 1,
-                    "beats": [{
+                    "narrative_core": json.loads(input_text)["narrative_core"],
+                    "blocks": [{"block_id": 1, "beats": [{
                         "beat_id": "1A",
                         "text": script,
                         "beat_type": "setup",
-                    }],
+                    }]}],
                     "error": None,
                 })
-            assert output_type is ProfessionalB2Output
+            assert output_type is WholeProfessionalB2Output
             attempts.append(instructions)
             block = json.loads(input_text)["blocks"][0]
             if block_type == "close" and len(attempts) > 1:
@@ -639,7 +641,7 @@ def test_professional_schema_boundary_matches_current_contract(
                     prompt="A quiet still-life photograph",
                     video_prompt=None, reference=False, audio=False,
                 )
-            return ProfessionalB2Output.model_validate({
+            return WholeProfessionalB2Output.model_validate({
                 "pipeline_stage": "B2",
                 "narrative_core": {
                     "central_question": "What?", "final_answer": "Answer."
@@ -660,7 +662,7 @@ def test_professional_schema_boundary_matches_current_contract(
     else:
         assert len(attempts) == 2
         assert len(rejected) == 1
-        assert "LAST beat of a close" in attempts[1]
+        assert "final close avatar" in attempts[1]
         assert (beat.visual_type, beat.prompt, beat.reference, beat.audio) == (
             "avatar", None, False, True
         )
@@ -689,19 +691,20 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
                     }],
                     "error": None,
                 })
-            if output_type is B12Output:
-                return B12Output.model_validate({
-                    "pipeline_stage": "B1.2", "block_id": 1,
-                    "beats": [{
+            if output_type is WholeB12Output:
+                return WholeB12Output.model_validate({
+                    "pipeline_stage": "B1.2",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": [{"block_id": 1, "beats": [{
                         "beat_id": "1A", "text": script, "beat_type": "action"
-                    }],
+                    }]}],
                     "error": None,
                 })
-            assert output_type is ProfessionalB2Output
+            assert output_type is WholeProfessionalB2Output
             attempts.append(instructions)
             if len(attempts) == 2:
-                assert "media_image and media_video ALWAYS require audio=false" in instructions
-                assert "nonempty prompt" in instructions
+                assert "120-character audio=true cap" in instructions
+                assert "invalid visual/audio/reference assignments" in instructions
             block = payload["blocks"][0]
             block["beats"][0].update(
                 visual_type="media_image" if len(attempts) == 1 else "media_video",
@@ -713,7 +716,7 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
                 reference=False,
                 audio=len(attempts) == 1,
             )
-            return ProfessionalB2Output.model_validate({
+            return WholeProfessionalB2Output.model_validate({
                 "pipeline_stage": "B2", "narrative_core": payload["narrative_core"],
                 "blocks": [block], "error": None,
             })
