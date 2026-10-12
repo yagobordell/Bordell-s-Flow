@@ -2490,7 +2490,10 @@ class BotArtifacts:
     def _folder(self, stage: str, block_id: int | None) -> Path:
         if stage not in (*_STAGES, "CTA", "CTA Detector", "B2 CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage in {"B1.1", "B2.1", "CTA", "CTA Detector"} or (stage in {"B1.2", "B2"} and block_id is None):
+        if (
+            stage in {"B1.1", "B2.1", "CTA", "CTA Detector"}
+            or (stage in {"B1.2", "B2"} and block_id is None)
+        ):
             if block_id is not None:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
@@ -2929,7 +2932,10 @@ async def main() -> None:
                 + (
                     (1
                      if stage == "B1.2" else
-                     (1 if visual_style == "profesional" else block_count - len(previous_partial_b2))
+                     (
+                         1 if visual_style == "profesional"
+                         else block_count - len(previous_partial_b2)
+                     )
                      if stage == "B2" else
                      1 if stage == "B2.1" else
                      block_count)
@@ -3100,7 +3106,10 @@ async def main() -> None:
                     if report_blocks is not None else None
                 ) if stop_index >= 1 else 0,
                 "B2": (
-                    max(1 if visual_style == "profesional" else report_blocks, timings.call_count("B2"))
+                    max(
+                        1 if visual_style == "profesional" else report_blocks,
+                        timings.call_count("B2"),
+                    )
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
                 "B2.1": (
@@ -3125,7 +3134,10 @@ async def main() -> None:
                 )
                 if stop_index >= 2:
                     expected_calls["B2"] = max(
-                        expected_calls["B2"] or 0, 1 if visual_style == "profesional" else report_blocks, timings.call_count("B2")
+                        expected_calls["B2"] or 0,
+                        1 if visual_style == "profesional" else report_blocks,
+                        timings.call_count("B2"),
+                    
                     )
                 if visual_style == "profesional" and stop_index >= 3:
                     expected_calls["B2.1"] = max(

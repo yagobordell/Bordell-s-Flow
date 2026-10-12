@@ -10,10 +10,10 @@ from ai_video_factory.bots.contracts import (
     B2Output,
     B11Output,
     B12Output,
-    WholeB12Output,
     Beat,
     BlockMeta,
     MaterializedBlock,
+    WholeB12Output,
 )
 from ai_video_factory.bots.workflow import (
     BPipelineValidationError,

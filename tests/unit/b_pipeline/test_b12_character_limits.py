@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_video_factory.bots.contracts import B11Output, B12Output, Beat, MaterializedBlock, WholeB12Output
+from ai_video_factory.bots.contracts import (
+    B11Output,
+    B12Output,
+    Beat,
+    MaterializedBlock,
+    WholeB12Output,
+)
 from ai_video_factory.bots.workflow import (
     BPipelineValidationError,
     run_b_pipeline,

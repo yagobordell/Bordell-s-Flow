@@ -14,11 +14,10 @@ from pydantic import ValidationError
 
 from ai_video_factory.bots.contracts import (
     B11Output,
-    B12Output,
     ProfessionalB2Output,
+    ProfessionalVisualBeat,
     WholeB12Output,
     WholeProfessionalB2Output,
-    ProfessionalVisualBeat,
 )
 from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.providers.image_grids import _grid_prompt, plan_image_jobs

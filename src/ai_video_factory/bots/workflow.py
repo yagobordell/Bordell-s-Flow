@@ -32,7 +32,6 @@ from .contracts import (
     B2InputBlock,
     B2Output,
     B11Output,
-    B12Input,
     B12Output,
     B21Output,
     Beat,
@@ -1003,7 +1002,10 @@ def validate_whole_professional_b2(
         raise BPipelineValidationError("B2 altered the narrative core")
     if len(result.blocks) != len(source.blocks):
         raise BPipelineValidationError("B2 changed the frozen block count")
-    if "".join(beat.text for block in source.blocks for beat in block.beats) != source.plain_script_for_recording:
+    joined_text = "".join(
+        beat.text for block in source.blocks for beat in block.beats
+    )
+    if joined_text != source.plain_script_for_recording:
         raise BPipelineValidationError("B2 source beats do not reconstruct full script")
     outputs: list[ProfessionalB2Output] = []
     for actual, expected in zip(result.blocks, source.blocks, strict=True):
@@ -1292,10 +1294,12 @@ async def run_b_pipeline(
                         on_rejected_b12_output(0, attempt, str(error), rejected)
                     if attempt > MAX_VALIDATION_RETRIES:
                         raise BPipelineValidationError(
-                            f"Whole-video B1.2 failed after {MAX_VALIDATION_RETRIES} retries: {error}"
+                            "Whole-video B1.2 failed after "
+                            f"{MAX_VALIDATION_RETRIES} retries: {error}"
                         ) from error
                     previous_response_id = (
-                        b12_response_id if getattr(provider, "supports_response_continuation", False)
+                        b12_response_id
+                        if getattr(provider, "supports_response_continuation", False)
                         else None
                     )
                     feedback = validation_feedback(
@@ -1608,7 +1612,9 @@ async def run_b_pipeline(
                     for item in parts:
                         on_output("B2", item.blocks[0].block_id, item.model_dump())
                 return parts
-            except (ValidationError, BPipelineValidationError, GridPlanError, RuntimeError) as error:
+            except (
+                ValidationError, BPipelineValidationError, GridPlanError, RuntimeError
+            ) as error:
                 if isinstance(error, RuntimeError) and not is_schema_failure(error):
                     raise
                 if candidate is not None and candidate.error is not None:
@@ -1621,7 +1627,8 @@ async def run_b_pipeline(
                     )
                 if attempt > MAX_VALIDATION_RETRIES:
                     raise BPipelineValidationError(
-                        f"Whole professional B2 failed after {MAX_VALIDATION_RETRIES} retries: {error}"
+                        "Whole professional B2 failed after "
+                        f"{MAX_VALIDATION_RETRIES} retries: {error}"
                     ) from error
                 feedback = validation_feedback(
                     "B2 profesional whole video", error,
@@ -1693,7 +1700,9 @@ async def run_b_pipeline(
                 if previous_partial_b2:
                     for block_id, saved in previous_partial_b2.items():
                         if block_id < 1 or block_id > len(materialized):
-                            raise BPipelineValidationError("B2 partial recovery has invalid block IDs")
+                            raise BPipelineValidationError(
+                                "B2 partial recovery has invalid block IDs"
+                            )
                         meta, block, b12 = (
                             b11.blocks[block_id - 1], materialized[block_id - 1],
                             b12_results[block_id - 1],
@@ -1714,7 +1723,10 @@ async def run_b_pipeline(
 
         # Parallel workers cannot see presenter runs crossing block boundaries.
         # Fix one eligible block at a time without re-running any other block.
-        while visual_style != "profesional" and (overflow := _overlong_avatar_run(b2_results)) is not None:
+        while (
+            visual_style != "profesional"
+            and (overflow := _overlong_avatar_run(b2_results)) is not None
+        ):
             run, total = overflow
             offset = 0
             candidates: list[tuple[int, int, int, str]] = []
