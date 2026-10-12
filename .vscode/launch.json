@@ -14,7 +14,7 @@
         "--input",
         "${workspaceFolder}/examples/agent_b_preview_phone.json",
         "--project",
-        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone",
+        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone_phase3",
         "--model",
         "gpt-5.1"
       ]
@@ -31,7 +31,7 @@
         "--input",
         "${workspaceFolder}/examples/agent_b_preview_phone.json",
         "--project",
-        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone",
+        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone_phase3",
         "--model",
         "gpt-5.1",
         "--max-attempts",
@@ -40,6 +40,20 @@
         "60",
         "--max-tools",
         "120"
+      ]
+    },
+    {
+      "name": "Agent B — inspect A/B image grid jobs (offline)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.pipeline.inspect_agent_b_grids",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--plan",
+        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone_phase3/visual_plan.json",
+        "--output",
+        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone_phase3/grid_jobs.json"
       ]
     }
   ]
