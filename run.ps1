@@ -20,25 +20,17 @@ try {
         $youtubeValue = $env:YOUTUBE_ENABLED
     }
     if (@($args) -contains "--agent-b") {
-        # Only an explicit opt-in may use the separately installed Agents SDK.
-        # Never alter production uv.lock or silently affect legacy runs.
+        # Explicit opt-in uses the separately installed SDK; never change uv.lock.
         $previewPython = Join-Path $PSScriptRoot ".venv-agent-b/Scripts/python.exe"
         if (-not (Test-Path -LiteralPath $previewPython -PathType Leaf)) {
-            throw "Agent B environment is missing. Run .\\scripts\\pipeline\\setup_agent_b_preview.ps1 first."
+            throw "Agent B environment missing. Run .\\scripts\\pipeline\\setup_agent_b_preview.ps1 first."
         }
         & $previewPython scripts/pipeline/run_managed.py @args
         $exitCode = $LASTEXITCODE
     }
     else {
         $uvArgs = @("run", "--locked", "--extra", "dev")
-        if ($youtubeValue -match '^(?i:true|1|yes|on)
-}
-finally {
-    Pop-Location
-}
-
-exit $exitCode
-) {
+        if ($youtubeValue -match '^(?i:true|1|yes|on)$') {
             $uvArgs += @("--extra", "youtube")
         }
         & uv @uvArgs python scripts/pipeline/run_managed.py @args
