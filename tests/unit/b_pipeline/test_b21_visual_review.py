@@ -11,7 +11,6 @@ from ai_video_factory.bots.contracts import (
     B11Output,
     B12Output,
     B21Output,
-    ProfessionalB2Output,
     WholeProfessionalB2Output,
 )
 from ai_video_factory.bots.workflow import (
