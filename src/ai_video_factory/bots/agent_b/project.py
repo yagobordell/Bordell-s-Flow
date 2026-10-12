@@ -67,7 +67,8 @@ class AgentBProject:
             self._check(self._read())
         else:
             self._write({"identity_sha256": self.identity_sha256, "revision": 0,
-                         "status": "planning", "plan": None, "sequence_index": {}})
+                         "status": "planning", "plan": None, "drafts": {},
+                         "sequence_index": {}})
 
     def _read(self) -> dict[str, Any]:
         return json.loads(self._path.read_text(encoding="utf-8"))
@@ -93,7 +94,8 @@ class AgentBProject:
         state = self._read()
         self._check(state)
         return {"revision": state["revision"], "status": state["status"],
-                "sequence_index": state["sequence_index"]}
+                "sequence_index": state["sequence_index"],
+                "drafted_block_ids": sorted(int(k) for k in state.get("drafts", {}))}
 
     def validate_plan(self, plan: Mapping[str, Any]) -> list[PlanIssue]:
         return validate_unified_plan(plan, self.blocks, self.core)
@@ -125,6 +127,54 @@ class AgentBProject:
         if issues:
             raise PlanRejected(issues)
         self._write({**state, "status": "frozen", "revision": expected_revision + 1})
+
+    def save_block_draft(
+        self, block_id: int, block_plan: Mapping[str, Any], *, expected_revision: int
+    ) -> int:
+        """Persist one full block with beats and visuals, not a legacy B-stage output."""
+        state = self._read()
+        self._check(state)
+        if state["status"] != "planning" or state["revision"] != expected_revision:
+            raise StaleRevision("Project revision changed or the final plan was frozen.")
+        source = next((b for b in self.blocks if b.block_id == block_id), None)
+        if source is None or not isinstance(block_plan, Mapping):
+            raise ValueError("Unknown B1.1 block or invalid block plan.")
+        candidate = {"schema_version": "b-pipeline-v1", "visual_style": "profesional",
+                     "narrative_core": self.core, "blocks": [dict(block_plan)]}
+        # Partial sequences may begin before or resume after this block.
+        issues = [item for item in validate_unified_plan(candidate, [source], self.core)
+                  if item.code not in {"ORPHAN_SEQUENCE", "SEQUENCE_ORDINAL"}]
+        if issues:
+            raise PlanRejected(issues)
+        drafts = {**state.get("drafts", {}), str(block_id): dict(block_plan)}
+        revision = expected_revision + 1
+        self._write({**state, "revision": revision, "drafts": drafts,
+                     "plan": None, "sequence_index": {}})
+        return revision
+
+    def draft_blocks(self) -> list[dict[str, Any]]:
+        state = self._read()
+        self._check(state)
+        drafts = state.get("drafts", {})
+        return [drafts[str(block.block_id)] for block in self.blocks
+                if str(block.block_id) in drafts]
+
+    def finalize_drafts(self, *, expected_revision: int) -> int:
+        """Assemble exactly one global plan; never publish intermediate block results."""
+        state = self._read()
+        self._check(state)
+        if state["revision"] != expected_revision or state["status"] != "planning":
+            raise StaleRevision("Project revision changed or the final plan was frozen.")
+        missing = [b.block_id for b in self.blocks
+                   if str(b.block_id) not in state.get("drafts", {})]
+        if missing:
+            raise PlanRejected([PlanIssue("INCOMPLETE_DRAFTS",
+                                           "Not all B1.1 blocks have a visual draft.",
+                                           expected=[b.block_id for b in self.blocks],
+                                           actual=sorted(int(k) for k in state.get("drafts", {})))])
+        candidate = {"schema_version": "b-pipeline-v1", "visual_style": "profesional",
+                     "narrative_core": self.core, "blocks": self.draft_blocks()}
+        return self.save_visual_plan(candidate, expected_revision=expected_revision)
 
     def frozen_plan(self) -> dict[str, Any]:
         state = self._read()
