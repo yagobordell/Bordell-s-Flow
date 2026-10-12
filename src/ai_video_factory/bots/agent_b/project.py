@@ -7,7 +7,8 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from ai_video_factory.bots.agent_b.validation import (
     PlanIssue,
