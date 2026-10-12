@@ -57,8 +57,10 @@ async def run_agent_b(
         "read_project_context and read_group. Decide cut boundaries and visuals together, "
         "respecting suspense, viewer attention and logical A1/A2 continuity across blocks. "
         "Consult the creative and image-prompting references when relevant. "
-        "Call validate_plan and save_visual_plan with the complete JSON object using "
-        "the current expected_revision. Do not request human approval. "
+        "For long scripts, save each combined beat/visual block with save_block_draft "
+        "and call finalize_drafts; alternatively validate and save the complete plan. "
+        "Use the current expected_revision for each write. "
+        "Do not request human approval. "
         "Only the tool-saved plan is authoritative, not your final natural-language reply.\n"
         + json.dumps({"narrative_core": dict(narrative_core),
                       "blocks": [{"block_id": b.block_id, "type": b.type,
