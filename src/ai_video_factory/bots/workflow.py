@@ -1189,6 +1189,9 @@ async def run_b_pipeline(
                 b11.narrative_core.model_dump(mode="json"),
                 model=agent_b_model or model,
             )
+            # Explicit route marker only on the public downstream copy; the frozen
+            # creative plan remains the sole authoritative Agent B plan.
+            unified = {**unified, "planning_origin": "agent_b"}
             b12_view, b2_view = legacy_consumer_views(unified, b11)
             merged_for_cta = {
                 "schema_version": "b-pipeline-merged-v1",
