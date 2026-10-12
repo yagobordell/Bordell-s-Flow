@@ -340,7 +340,7 @@ def test_beat_ids_excel_sequence_and_length_rule() -> None:
         pipeline_stage="B1.2", block_id=1,
         beats=[Beat(beat_id="1A", text=block.text, beat_type="claim")], error=None,
     )
-    with pytest.raises(BPipelineValidationError, match="length"):
+    with pytest.raises(BPipelineValidationError, match="maximum 40"):
         validate_beats(output, block)
 
 
