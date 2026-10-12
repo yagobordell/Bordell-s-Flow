@@ -13,7 +13,7 @@ from ai_video_factory.providers.openai_batch_images import described_beats
 
 
 def inspect_grid_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    if plan.get("schema_version") != "b-pipeline-v1":
+    if plan.get("schema_version") != "b-pipeline-v1" or plan.get("planning_origin") != "agent_b":
         raise ValueError("Only the accepted single Agent B b-pipeline-v1 plan is supported.")
     assets = described_beats(plan)
     jobs = plan_image_jobs(plan, assets)
