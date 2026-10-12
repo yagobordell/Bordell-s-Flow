@@ -1,0 +1,29 @@
+{
+  "narrative_core": {
+    "central_question": "Why does a bank caller ID look authentic?",
+    "final_answer": "A matching caller ID alone does not establish that the caller is really the bank."
+  },
+  "blocks": [
+    {
+      "block_id": 1,
+      "type": "intro",
+      "emotional_entry": "ordinary interruption",
+      "emotional_exit": "recognition",
+      "text": "Your phone rings. You look at the screen. "
+    },
+    {
+      "block_id": 2,
+      "type": "development",
+      "emotional_entry": "apparent credibility",
+      "emotional_exit": "growing doubt",
+      "text": "Chase. The bank’s logo. And the number is the same one printed on the back of your debit card. "
+    },
+    {
+      "block_id": 3,
+      "type": "development",
+      "emotional_entry": "checking the evidence",
+      "emotional_exit": "uneasy confirmation",
+      "text": "You even pick up the card to check. It matches."
+    }
+  ]
+}
