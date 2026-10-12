@@ -119,14 +119,15 @@ def test_paid_png_reference_crosses_block_without_recreating_previous_image(tmp_
     first = generate_b2_images(tmp_path, plan, **args)
     assert first["status"] == "completed"
     assert len(requests) == 3
-    assert "reference_image_urls" in requests[2]
-    final_reference = requests[2]["reference_image_urls"][-1]
+    continuations = [req for req in requests if req.get("reference_image_urls")]
+    assert len(continuations) == 1
+    final_reference = continuations[0]["reference_image_urls"][-1]
     reference_png = base64.b64decode(final_reference.split(",", 1)[1])
     root_grid = next(item for item in first["items"]
                      if item.get("continuity_chain_id") == "A"
                      and item.get("continuity_index") == 0)
     assert reference_png == (tmp_path / root_grid["file"]).read_bytes()
-    assert "CONTINUES" in requests[2]["prompt"]
+    assert "CONTINUES" in continuations[0]["prompt"]
     second = generate_b2_images(tmp_path, plan, **args)
     assert second["status"] == "completed"
     assert len(requests) == 3
