@@ -3094,6 +3094,13 @@ async def main() -> None:
         "reasoning_effort": settings.openai_reasoning_effort,
         "visual_style": visual_style,
     }
+    if getattr(args, "agent_b", False):
+        run_metadata["agent_b_sdk_cost_accounting"] = "not_in_legacy_ledger"
+        run_metadata["agent_b_plan_checkpoint"] = "agent_b/agent_b_project.json"
+        print(
+            "  Agent B SDK token usage is not included in the legacy API cost total.",
+            flush=True,
+        )
     if visual_style == "casero":
         run_metadata["casero_cta_enabled"] = True
     if stop_stage is not None:
@@ -3159,6 +3166,11 @@ async def main() -> None:
                         1,
                         timings.call_count("B2.1"),
                     )
+        if getattr(args, "agent_b", False):
+            # Internal adapter views are NOT B1.2/B2/B2.1 model calls.
+            # The SDK usage is reported separately until merged into the ledger.
+            for adapter_stage in ("B1.2", "B2", "B2.1", "B2 CTA"):
+                expected_calls[adapter_stage] = timings.call_count(adapter_stage)
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
         ledger.sync_image_usage(output)
