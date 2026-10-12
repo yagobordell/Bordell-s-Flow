@@ -1,0 +1,58 @@
+name: Agent B Preview SDK Smoke
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "src/ai_video_factory/bots/agent_b/**"
+      - "scripts/pipeline/run_agent_b_preview.py"
+      - "scripts/pipeline/setup_agent_b_preview.ps1"
+      - "config/agent-b-preview-requirements.txt"
+      - "examples/agent_b_preview_phone.json"
+      - "tests/unit/b_pipeline/test_agent_b_*.py"
+      - ".github/workflows/ci-agent-b-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview-sdk:
+    name: Agent B SDK offline preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Create isolated preview environment
+        run: |
+          uv venv --python 3.12 .venv-agent-b
+          uv pip install --python .venv-agent-b/bin/python -e ".[dev]" \
+            -r config/agent-b-preview-requirements.txt
+          uv pip check --python .venv-agent-b/bin/python
+      - name: Verify real Agents SDK and registered tools with no API key
+        env:
+          OPENAI_API_KEY: ""
+        run: |
+          .venv-agent-b/bin/python -m scripts.pipeline.run_agent_b_preview \
+            --preflight \
+            --input examples/agent_b_preview_phone.json \
+            --project .video_factory_work/agent_b_ci_preview \
+            --model gpt-5.1
+      - name: Run isolated Agent B unit tests
+        env:
+          OPENAI_API_KEY: ""
+        run: |
+          .venv-agent-b/bin/python -m pytest -q \
+            tests/unit/b_pipeline/test_agent_b_foundation.py \
+            tests/unit/b_pipeline/test_agent_b_runner.py \
+            tests/unit/b_pipeline/test_agent_b_preview_cli.py
