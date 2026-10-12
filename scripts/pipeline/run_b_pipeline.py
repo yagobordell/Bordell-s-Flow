@@ -15,7 +15,7 @@ from time import perf_counter
 from typing import Literal
 from uuid import uuid4
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, load_dotenv
 from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
@@ -2654,6 +2654,10 @@ def _print_metric(name: str, seconds: float, cost: object) -> None:
 
 async def main() -> None:
     args = parse_args()
+    if getattr(args, "agent_b", False):
+        # The SDK reads the real OPENAI_API_KEY environment variable; the
+        # legacy provider may instead have read it via pydantic settings.
+        load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     results_root = getattr(args, "results_root", Path("data/results"))
     # Git does not track empty runtime directories: restore the local libraries.
     if args.script_file is None:
