@@ -69,7 +69,7 @@ class ProductionToolService:
 
     def read_project_status(self) -> str:
         self._guard()
-        return self._result({"status": "ok", **self.project.status(),
+        return self._result({"status": "ok", "project": self.project.status(),
                              "instruction_sha256": self.instructions.sha256})
 
     def read_project_context(self) -> str:
@@ -80,7 +80,7 @@ class ProductionToolService:
                                          "emotional_exit": b.emotional_exit,
                                          "characters": len(b.text)}
                                         for b in self.project.blocks],
-                             **self.project.status()})
+                             "project": self.project.status()})
 
     def validate_plan(self, plan_json: str) -> str:
         self._guard()
