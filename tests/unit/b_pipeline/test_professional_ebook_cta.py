@@ -218,8 +218,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
         B11Output,
         B12Output,
         B21Output,
-        ProfessionalB2Output,
-    WholeProfessionalB2Output,
+        WholeProfessionalB2Output,
     )
     from ai_video_factory.bots.professional_cta import ProfessionalCTAVisuals
     from ai_video_factory.bots.workflow import run_b_pipeline
@@ -279,7 +278,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
 
         async def generate_structured_with_response(self, **kwargs):
             typ = kwargs["output_type"]
-            if typ in {ProfessionalB2Output, B21Output}:
+            if typ in {WholeProfessionalB2Output, B21Output}:
                 result = await self.generate_structured(**kwargs)
                 return result, SimpleNamespace(usage=None)
             if typ is ProfessionalCTADetection:

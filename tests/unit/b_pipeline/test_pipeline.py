@@ -520,7 +520,10 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
     assert set(call_times) == expected_calls
     assert all(seconds >= 0 for seconds in stage_times.values())
     assert all(seconds >= 0 for seconds in call_times.values())
-    costs = ledger.report(blocks=2, run_status="completed")
+    costs = ledger.report(
+        blocks=2, run_status="completed",
+        expected_calls={"B1.1": 1, "B1.2": 1, "B2": 2},
+    )
     assert costs["estimated_total_usd"] == "0.00008000"
     assert costs["stages"]["B1.1"]["recorded_calls"] == 1
     assert costs["stages"]["B1.2"]["recorded_calls"] == 1

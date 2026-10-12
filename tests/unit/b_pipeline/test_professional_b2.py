@@ -62,7 +62,7 @@ def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
         .lower()
     )
     assert "iphone 16/17 pro max" not in prompt
-    assert "runtime adds overall photographic style" in prompt
+    assert "application supplies the shared photographic style" in prompt
 
 def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     prompt = (
@@ -71,7 +71,7 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
         .read_text(encoding="utf-8")
         .lower()
     )
-    assert "100% the original avatar speaking" in prompt
+    assert "original-avatar reference image" in prompt
     assert "only avatar and avatar_media speak" in prompt
     assert "120 characters" in prompt
     assert "different room or physical location" in prompt
@@ -84,10 +84,10 @@ def test_professional_prompt_has_no_stock_exclusions() -> None:
         .read_text(encoding="utf-8")
         .lower()
     )
-    assert "act as a creative editor" in prompt
-    assert "last beat of any close block" in prompt
-    assert "intro blocks" in prompt
-    assert "up to 18" in prompt
+    assert "visual director and editor" in prompt
+    assert "last beat of every `close` block" in prompt
+    assert "`intro` — earn attention quickly" in prompt
+    assert "2–18 generated assets" in prompt
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -270,8 +270,8 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
     )
     assert "audio=false" in prompt
     assert "physical location" in prompt
-    assert "singular instants" in prompt
-    assert "narrative/visual continuity" in prompt
+    assert "one photographable instant" in prompt
+    assert "whole-video continuity" in prompt
 
 @pytest.mark.parametrize(
     ("visual_type", "audio", "accepted"),
@@ -337,8 +337,8 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
         .read_text(encoding="utf-8")
         .lower()
     )
-    assert "never generate a new image of the narrator in the original reference room" in prompt
-    assert "never depict anyone speaking to camera" in prompt
+    assert "a clearly different room or physical location" in prompt
+    assert "do not depict a newly generated replacement speaking host" in prompt
 
 @pytest.mark.parametrize(
     "wording",
