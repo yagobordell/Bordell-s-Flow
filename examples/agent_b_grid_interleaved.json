@@ -80,5 +80,6 @@
         }
       ]
     }
-  ]
+  ],
+  "planning_origin": "agent_b"
 }
