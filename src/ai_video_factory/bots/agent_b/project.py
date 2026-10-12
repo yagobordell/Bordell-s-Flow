@@ -98,6 +98,12 @@ class AgentBProject:
                 "sequence_index": state["sequence_index"],
                 "drafted_block_ids": sorted(int(k) for k in state.get("drafts", {}))}
 
+    def has_saved_plan(self) -> bool:
+        """A draft revision is not an accepted complete audiovisual plan."""
+        state = self._read()
+        self._check(state)
+        return state.get("plan") is not None
+
     def validate_plan(self, plan: Mapping[str, Any]) -> list[PlanIssue]:
         return validate_unified_plan(plan, self.blocks, self.core)
 
