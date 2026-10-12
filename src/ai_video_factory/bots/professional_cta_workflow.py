@@ -243,7 +243,7 @@ async def direct_professional_cta(
     ]
     error_detail = correction
     stage = "B2 CTA"
-    for attempt in range(MAX_VALIDATION_RETRIES + 1):
+    for _attempt in range(MAX_VALIDATION_RETRIES + 1):
         request_payload = (
             {**payload, "validation_feedback": error_detail}
             if error_detail else payload

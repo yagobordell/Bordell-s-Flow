@@ -626,7 +626,10 @@ def _b21_numbered_groups(
     ]
     for label, members in lettered.items():
         members.sort(key=lambda item: item[0])
-        beat_ids = [beat_id for _position, _number, beat_id in sorted(members, key=lambda item: item[1])]
+        beat_ids = [
+            beat_id
+            for _position, _number, beat_id in sorted(members, key=lambda item: item[1])
+        ]
         groups.append((members[0][0], label, beat_ids))
     groups.sort(key=lambda item: item[0])
     return [(label, beat_ids) for _start, label, beat_ids in groups]
@@ -2478,7 +2481,11 @@ async def run_b_pipeline(
                         ) from error
                     validation_retries += 1
                     failed_groups = _professional_b2_failed_beat_groups(error)
-                    if failed_groups is not None and candidate_is_complete and candidate is not None:
+                    if (
+                        failed_groups is not None
+                        and candidate_is_complete
+                        and candidate is not None
+                    ):
                         partial_base = candidate.model_copy(deep=True)
                         partial_beat_groups = failed_groups
                         feedback = _professional_b2_partial_feedback(
