@@ -148,3 +148,42 @@ def test_partial_block_drafts_assemble_a_single_global_plan(tmp_path):
     assert p.finalize_drafts(expected_revision=2) == 3
     p.freeze(expected_revision=3)
     assert [b["block_id"] for b in p.frozen_plan()["blocks"]] == [1, 2]
+
+
+def test_controller_accepts_valid_json_final_output_when_agent_skips_save(tmp_path, monkeypatch):
+    original = source()
+    complete = plan(original)
+
+    class Runner:
+        @staticmethod
+        async def run(*args, **kwargs):
+            return SimpleNamespace(final_output=json.dumps(complete))
+
+    sdk = SimpleNamespace(Agent=lambda **kwargs: None, Runner=Runner,
+                          SQLiteSession=lambda *args: None,
+                          function_tool=lambda function: function)
+    monkeypatch.setitem(sys.modules, "agents", sdk)
+    result = asyncio.run(run_agent_b(tmp_path, [original], CORE, model="test-model", sdk=sdk))
+    assert result == complete
+    log = json.loads((tmp_path / "agent_b_attempts.json").read_text(encoding="utf-8"))
+    assert log["status"] == "accepted"
+    assert log["attempts"][0]["tool_calls"] == 0
+
+
+def test_failed_sdk_output_writes_useful_diagnostic_file(tmp_path, monkeypatch):
+    class Runner:
+        @staticmethod
+        async def run(*args, **kwargs):
+            return SimpleNamespace(final_output="Sorry, no plan.")
+
+    sdk = SimpleNamespace(Agent=lambda **kwargs: None, Runner=Runner,
+                          SQLiteSession=lambda *args: None,
+                          function_tool=lambda function: function)
+    monkeypatch.setitem(sys.modules, "agents", sdk)
+    with pytest.raises(AgentBRunError, match="agent_b_attempts.json"):
+        asyncio.run(run_agent_b(tmp_path, [source()], CORE,
+                                model="test-model", max_attempts=2, sdk=sdk))
+    diagnostic = json.loads((tmp_path / "agent_b_attempts.json").read_text(encoding="utf-8"))
+    assert diagnostic["status"] == "not_accepted"
+    assert len(diagnostic["attempts"]) == 2
+    assert diagnostic["attempts"][0]["controller_errors"][0]["code"] == "NO_COMPLETE_PLAN"
