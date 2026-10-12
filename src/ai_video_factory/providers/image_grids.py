@@ -37,14 +37,20 @@ class GridPlanError(ValueError):
 def _grid_prompt(
     panels: list[dict[str, Any]], columns: int, rows: int,
     *, visual_style: str = "casero", panel_aspect: str = "16:9",
+    logical_labels: bool = False,
 ) -> str:
     """Build the grid prompt with visual descriptions and narration context."""
     descriptions: list[str] = []
     voice_over: list[str] = []
+    logical_panel_labels: list[str] = []
     for number, panel in enumerate(panels, 1):
         description = panel["description"].strip()
         numbered = _NUMBERED.match(description.lstrip())
-        if numbered is None:
+        logical = _GLOBAL_LABEL.match(description.lstrip()) if logical_labels else None
+        if logical:
+            descriptions.append(f"{number}. {logical.group(2)}")
+            logical_panel_labels.append(f"panel {number} = {logical.group(1)}")
+        elif numbered is None:
             descriptions.append(f"{number}. {description}")
         elif visual_style == "profesional":
             # A backward filler can precede the numbered sequence in the grid.
@@ -111,6 +117,13 @@ def _grid_prompt(
                 + " ONLY. Preserve the actual cover when it appears in a panel; "
                 "do not force an ebook to be visible solely because it is attached."
             )
+    if logical_panel_labels:
+        prompt += (
+            "\\n\\nLogical continuity identities: " + "; ".join(logical_panel_labels)
+            + ". These labels name recurring visual stories across the entire video; "
+            "they are NOT positions in this physical grid. Do not render the labels "
+            "as visible text and never depict earlier panels as extra cells."
+        )
     if len(prompt) + 400 > 32_000:
         raise GridPlanError("Grid prompt exceeds the supported GPT Image prompt limit")
     return prompt
@@ -170,6 +183,10 @@ def plan_image_jobs(
     determines generation state and grid position. Parent beat_id is retained for
     narration/timing downstream.
     """
+    if plan.get("schema_version") == "b-pipeline-v1":
+        from .agent_b_grids import plan_agent_b_image_jobs
+
+        return plan_agent_b_image_jobs(plan, described)
     visual_style = plan.get("visual_style", "casero")
     if visual_style not in {"casero", "profesional"}:
         raise GridPlanError("Unknown B2 visual style")
