@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from ai_video_factory.bots.contracts import B11Output, B12Output
+from ai_video_factory.bots.contracts import B11Output, WholeB12Output
 from scripts.pipeline import run_b_pipeline as runner
 
 VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
@@ -415,26 +415,29 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
             requested.append(output_type.__name__)
             if output_type is B11Output:
                 result = B11Output.model_validate(_b11_payload())
-            elif output_type is B12Output:
-                result = B12Output.model_validate({
+            elif output_type is WholeB12Output:
+                result = WholeB12Output.model_validate({
                     "pipeline_stage": "B1.2",
-                    "block_id": 1,
-                    "beats": [{
-                        "beat_id": "1A", "text": payload["blocks"][0]["text"],
-                        "beat_type": "orientation",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": [{
+                        "block_id": 1,
+                        "beats": [{
+                            "beat_id": "1A", "text": payload["blocks"][0]["text"],
+                            "beat_type": "orientation",
+                        }],
                     }],
                     "error": None,
                 })
             else:
-                from ai_video_factory.bots.contracts import ProfessionalB2Output
+                from ai_video_factory.bots.contracts import WholeProfessionalB2Output
 
-                assert output_type is ProfessionalB2Output
+                assert output_type is WholeProfessionalB2Output
                 block = payload["blocks"][0]
                 block["beats"][0].update(
                     visual_type="avatar", prompt=None, video_prompt=None,
                     reference=False, audio=True,
                 )
-                result = ProfessionalB2Output.model_validate({
+                result = WholeProfessionalB2Output.model_validate({
                     "pipeline_stage": "B2",
                     "narrative_core": payload["narrative_core"],
                     "blocks": [block],
@@ -469,11 +472,11 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
     for start, stop, expected, present, absent in (
         ("B1.1", "B1.1", ["B11Output"], ["B1.1/output.json"], ["B1.2", "B2"]),
         (
-            "B1.2", "B1.2", ["B11Output", "B12Output"],
+            "B1.2", "B1.2", ["B11Output", "WholeB12Output"],
             ["B1.2/merged_output.json"], ["B2", "visual_plan.json"],
         ),
         (
-            "B2", "B2", ["B11Output", "B12Output", "ProfessionalB2Output"],
+            "B2", "B2", ["B11Output", "WholeB12Output", "WholeProfessionalB2Output"],
             ["B2/merged_output.json", "visual_plan.json"], ["images"],
         ),
     ):

@@ -299,3 +299,55 @@ class B21Output(StrictModel):
         elif self.pipeline_stage is not None or self.modified_beats is not None:
             raise ValueError("B2.1 error must null out success fields")
         return self
+
+
+class WholeB12Input(StrictModel):
+    """One B1.2 call receives the complete immutable narration and all blocks."""
+    plain_script_for_recording: str = Field(min_length=1)
+    narrative_core: NarrativeCore
+    blocks: list[MaterializedBlock] = Field(min_length=1)
+
+
+class WholeB12Block(StrictModel):
+    block_id: int = Field(ge=1)
+    beats: list[Beat] = Field(min_length=1)
+
+
+class WholeB12Output(StrictModel):
+    pipeline_stage: Literal["B1.2"] | None
+    narrative_core: NarrativeCore | None
+    blocks: list[WholeB12Block] | None
+    error: B12Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "WholeB12Output":
+        if self.error is None:
+            if self.pipeline_stage != "B1.2" or self.narrative_core is None or not self.blocks:
+                raise ValueError("Whole B1.2 success requires core and all blocks")
+        elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
+            raise ValueError("Whole B1.2 error must null out success fields")
+        return self
+
+
+class WholeProfessionalB2Input(StrictModel):
+    """Professional video director receives every frozen block and beat."""
+    plain_script_for_recording: str = Field(min_length=1)
+    narrative_core: NarrativeCore
+    blocks: list[B2InputBlock] = Field(min_length=1)
+    cta_groups: list[list[str]] | None = None
+
+
+class WholeProfessionalB2Output(StrictModel):
+    pipeline_stage: Literal["B2"] | None
+    narrative_core: NarrativeCore | None
+    blocks: list[ProfessionalB2Block] | None
+    error: B2Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "WholeProfessionalB2Output":
+        if self.error is None:
+            if self.pipeline_stage != "B2" or self.narrative_core is None or not self.blocks:
+                raise ValueError("Whole professional B2 success requires core and all blocks")
+        elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
+            raise ValueError("Whole professional B2 error must null out success fields")
+        return self

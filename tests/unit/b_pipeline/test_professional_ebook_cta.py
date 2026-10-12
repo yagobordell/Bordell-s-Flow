@@ -218,7 +218,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
         B11Output,
         B12Output,
         B21Output,
-        ProfessionalB2Output,
+        WholeProfessionalB2Output,
     )
     from ai_video_factory.bots.professional_cta import ProfessionalCTAVisuals
     from ai_video_factory.bots.workflow import run_b_pipeline
@@ -250,7 +250,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
             input_image_url=None,
         ):
             payload = json.loads(input_text)
-            if output_type is ProfessionalB2Output:
+            if output_type is WholeProfessionalB2Output:
                 block = payload["blocks"][0]
                 for beat in block["beats"]:
                     beat.update({
@@ -258,7 +258,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
                         "reference": False, "video_prompt": None,
                         "prompt": "Ordinary B2 static composition.",
                     })
-                return ProfessionalB2Output.model_validate({
+                return WholeProfessionalB2Output.model_validate({
                     "pipeline_stage": "B2",
                     "narrative_core": payload["narrative_core"],
                     "blocks": [block], "error": None,
@@ -278,7 +278,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
 
         async def generate_structured_with_response(self, **kwargs):
             typ = kwargs["output_type"]
-            if typ in {ProfessionalB2Output, B21Output}:
+            if typ in {WholeProfessionalB2Output, B21Output}:
                 result = await self.generate_structured(**kwargs)
                 return result, SimpleNamespace(usage=None)
             if typ is ProfessionalCTADetection:
