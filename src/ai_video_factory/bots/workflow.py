@@ -15,12 +15,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib.resources import files
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
 from ai_video_factory.config import settings
 from ai_video_factory.providers.base import StructuredTextProvider
+from ai_video_factory.providers.grid_numbering import (
+    MAX_GRID_SEQUENCE_PANELS,
+    alphabetic_sequence_id,
+    format_grid_marker,
+    parse_grid_marker,
+)
 from ai_video_factory.providers.image_grids import (
     GridPlanError,
     plan_image_jobs,
@@ -37,7 +43,13 @@ from .contracts import (
     Beat,
     BlockMeta,
     MaterializedBlock,
+    ProfessionalB2BatchInput,
+    ProfessionalB2BatchOutput,
+    ProfessionalB2Block,
+    ProfessionalB2CorrectionOutput,
     ProfessionalB2Output,
+    ProfessionalVisualBeat,
+    WholeB12Block,
     WholeB12Input,
     WholeB12Output,
     WholeProfessionalB2Input,
@@ -87,12 +99,47 @@ def _beat_suffix(number: int) -> str:
 
 
 def _without_whitespace_and_punctuation(text: str) -> str:
-    """Normalize layout and punctuation while preserving words and their order."""
+    """Ignore layout, punctuation, and recoverable case while preserving content."""
     return "".join(
-        character
+        character.lower() if len(character.lower()) == 1 else character
         for character in text
         if not character.isspace() and not unicodedata.category(character).startswith("P")
     )
+
+
+def _restore_source_beat_texts(source: str, beats: list[Beat]) -> list[Beat]:
+    """Rebuild exact beat slices from source and model-selected boundaries.
+
+    The model chooses narrative boundaries and preserves the non-punctuation
+    content stream. The application owns exact punctuation and whitespace.
+    Separator characters before the next substantive source character stay
+    with the preceding beat.
+    """
+    source_offsets = [
+        index for index, character in enumerate(source)
+        if not character.isspace()
+        and not unicodedata.category(character).startswith("P")
+    ]
+    source_cursor = 0
+    source_start = 0
+    restored: list[Beat] = []
+    for index, beat in enumerate(beats):
+        source_cursor += len(_without_whitespace_and_punctuation(beat.text))
+        if source_cursor > len(source_offsets):
+            raise BPipelineValidationError("B1.2 beat content exceeds its source block")
+        if index + 1 == len(beats):
+            source_end = len(source)
+        elif source_cursor < len(source_offsets):
+            source_end = source_offsets[source_cursor]
+        else:
+            source_end = len(source)
+        if source_end < source_start:
+            raise BPipelineValidationError("B1.2 beat boundaries are not in source order")
+        restored.append(beat.model_copy(update={"text": source[source_start:source_end]}))
+        source_start = source_end
+    if source_cursor != len(source_offsets):
+        raise BPipelineValidationError("B1.2 beats do not consume the complete source block")
+    return restored
 
 
 def _occurrences(text: str, fragment: str) -> list[int]:
@@ -227,8 +274,8 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     for number, beat in enumerate(result.beats, start=1):
         if beat.beat_id != f"{block.block_id}{_beat_suffix(number)}":
             raise BPipelineValidationError(f"Invalid B1.2 beat ID {beat.beat_id}")
-        if not _without_whitespace_and_punctuation(beat.text) or len(beat.text.split()) > 40:
-            raise BPipelineValidationError(f"Invalid B1.2 beat text or length: {beat.beat_id}")
+        if not _without_whitespace_and_punctuation(beat.text):
+            raise BPipelineValidationError(f"Invalid B1.2 beat text: {beat.beat_id}")
     actual_text = "".join(beat.text for beat in result.beats)
     actual_words = _without_whitespace_and_punctuation(actual_text)
     expected_words = _without_whitespace_and_punctuation(block.text)
@@ -249,10 +296,18 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
             f"expected {expected_words[mismatch:mismatch + 25]!r}, "
             f"received {actual_words[mismatch:mismatch + 25]!r}"
         )
-    length_errors = _beat_character_length_errors(result.beats)
+    restored_beats = _restore_source_beat_texts(block.text, result.beats)
+    word_errors = [
+        f"B1.2 beat {beat.beat_id} has {len(beat.text.split())} words (maximum 40)"
+        for beat in restored_beats if len(beat.text.split()) > 40
+    ]
+    if word_errors:
+        raise BPipelineValidationError("; ".join(word_errors))
+    length_errors = _beat_character_length_errors(restored_beats)
     if length_errors:
         raise BPipelineValidationError("; ".join(length_errors))
-    return result.beats
+    result.beats = restored_beats
+    return restored_beats
 
 
 def _beat_character_length_errors(beats: list[Beat]) -> list[str]:
@@ -270,6 +325,30 @@ def _beat_character_length_errors(beats: list[Beat]) -> list[str]:
 
 _MAX_CONSECUTIVE_AVATAR_CHARACTERS = 120
 _PRESENTER_VISUAL_TYPES = frozenset({"avatar", "avatar_media"})
+_PROFESSIONAL_B2_BATCH_SIZE = 4
+
+
+def _overlong_audio_runs_in_plan(
+    plan: dict[str, Any],
+) -> list[list[tuple[str, int]]]:
+    """Return every consecutive audio=true run over the cap in a merged plan."""
+    overflows: list[list[tuple[str, int]]] = []
+    run: list[tuple[str, int]] = []
+    run_chars = 0
+    for block in plan.get("blocks", []):
+        for beat in block.get("beats", []):
+            if beat.get("audio"):
+                item = (str(beat.get("beat_id", "?")), len(str(beat.get("text", "")).strip()))
+                run.append(item)
+                run_chars += item[1]
+            else:
+                if run_chars > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
+                    overflows.append(run)
+                run = []
+                run_chars = 0
+    if run_chars > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
+        overflows.append(run)
+    return overflows
 
 
 @dataclass(frozen=True)
@@ -282,7 +361,14 @@ class _AvatarRunBeat:
 def _overlong_avatar_run(
     outputs: list[B2Output | ProfessionalB2Output] | tuple[B2Output | ProfessionalB2Output, ...],
 ) -> tuple[list[_AvatarRunBeat], int] | None:
-    """Find the first overlong spoken run in whole-video beat order.
+    """Find the first overlong spoken run in whole-video beat order."""
+    return next(iter(_overlong_avatar_runs(outputs)), None)
+
+
+def _overlong_avatar_runs(
+    outputs: list[B2Output | ProfessionalB2Output] | tuple[B2Output | ProfessionalB2Output, ...],
+) -> list[tuple[list[_AvatarRunBeat], int]]:
+    """Find every overlong spoken run in whole-video beat order.
 
     Professional B2 defines a run by consecutive audio=true beats, regardless of
     visual_type. Casero has no audio flag, so it retains the historical
@@ -290,6 +376,7 @@ def _overlong_avatar_run(
     """
     run: list[_AvatarRunBeat] = []
     characters = 0
+    overflows: list[tuple[list[_AvatarRunBeat], int]] = []
     for output in outputs:
         if not output.blocks:
             raise BPipelineValidationError("B2 output is missing its block")
@@ -303,7 +390,7 @@ def _overlong_avatar_run(
             )
             if not continues_run:
                 if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
-                    return run, characters
+                    overflows.append((run, characters))
                 run = []
                 characters = 0
                 continue
@@ -317,8 +404,8 @@ def _overlong_avatar_run(
             )
             characters += length
     if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
-        return run, characters
-    return None
+        overflows.append((run, characters))
+    return overflows
 
 
 def _avatar_run_error(
@@ -416,28 +503,34 @@ def repair_frozen_b2_text(
 ) -> B2Output | ProfessionalB2Output:
     """Restore B1.2 narration before visual validation, without a retry.
 
-    B2 owns visual decisions only. If the model changes the text of an
-    otherwise structurally matching beat (including CRLF/LF normalization),
-    the frozen B1.2 text is authoritative and is restored locally.
-    Structural changes such as changed beat IDs or beat counts remain errors.
+    B2 owns visual decisions only. When the frozen B1.2 beat IDs and order
+    match, their text and type are restored locally while visual fields remain
+    unchanged. Missing, duplicate, reordered, or added IDs and changed beat
+    counts remain errors because their visual assignments cannot be mapped
+    safely to source beats.
     """
     if result.error is not None or not result.blocks:
         return result
     actual = result.blocks[0]
     expected = supplied.blocks[0]
-    if (
-        len(actual.beats) != len(expected.beats)
-        or [beat.beat_id for beat in actual.beats]
-        != [beat.beat_id for beat in expected.beats]
-    ):
+    expected_ids = [beat.beat_id for beat in expected.beats]
+    actual_ids = [beat.beat_id for beat in actual.beats]
+    if len(actual.beats) != len(expected.beats) or actual_ids != expected_ids:
         return result
     repaired = result.model_copy(deep=True)
     for visual, upstream in zip(repaired.blocks[0].beats, expected.beats, strict=True):
+        visual.beat_id = upstream.beat_id
+        visual.beat_type = upstream.beat_type
         visual.text = upstream.text
     return repaired
 
 
-def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input) -> None:
+def validate_visuals(
+    result: B2Output | ProfessionalB2Output,
+    supplied: B2Input,
+    *,
+    check_audio_run: bool = True,
+) -> None:
     _require_success("B2", result.error)
     if result.narrative_core != supplied.narrative_core or not result.blocks:
         raise BPipelineValidationError("B2 altered the narrative core or omitted the block")
@@ -473,34 +566,70 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
                 f"B2 changed a frozen B1.2 beat {upstream.beat_id}: "
                 + "; ".join(sorted(differences))
             )
-    overflow = _overlong_avatar_run((result,))
-    if overflow is not None:
-        raise BPipelineValidationError(
-            _avatar_run_error(
-                *overflow, professional=isinstance(result, ProfessionalB2Output)
+    if check_audio_run:
+        overflow = _overlong_avatar_run((result,))
+        if overflow is not None:
+            raise BPipelineValidationError(
+                _avatar_run_error(
+                    *overflow, professional=isinstance(result, ProfessionalB2Output)
+                )
             )
-        )
 
 
 _B21_IMAGE_SPLIT_THRESHOLD = 70
-_B21_NUMBERED_PROMPT = re.compile(r"^\s*([1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
-
-
 def _b21_prompt_body(prompt: str) -> str:
-    matched = _B21_NUMBERED_PROMPT.match(prompt)
-    return matched.group(2).strip() if matched is not None else prompt.strip()
+    marker = parse_grid_marker(prompt)
+    return marker.body.strip() if marker is not None else prompt.strip()
 
 
-def _professional_plan(
-    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
-    *,
-    cta_groups: tuple[tuple[str, ...], ...] = (),
-    cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None,
-) -> dict[str, object]:
-    blocks = [item.blocks[0].model_dump() for item in outputs if item.blocks]
-    if cta_groups:
-        blocks = apply_cta_visuals(blocks, cta_groups, cta_overrides or {})
-    return {"visual_style": "profesional", "blocks": blocks}
+def _b21_numbered_groups(
+    block: dict[str, object],
+) -> list[tuple[str | None, list[str]]]:
+    """Return legacy runs and lettered groups, including nonconsecutive beats."""
+    lettered: dict[str, list[tuple[int, int, str]]] = {}
+    legacy: list[tuple[int, list[str]]] = []
+    current: list[str] = []
+    current_start = 0
+    for position, beat in enumerate(block["beats"]):
+        marker = parse_grid_marker(beat.get("prompt"))
+        if marker is not None and marker.style == "lettered":
+            if current:
+                legacy.append((current_start, current))
+                current = []
+            if marker.sequence_id is not None:
+                lettered.setdefault(marker.sequence_id, []).append(
+                    (position, marker.panel_number, beat["beat_id"])
+                )
+            continue
+        if marker is None or marker.style != "legacy":
+            if current:
+                legacy.append((current_start, current))
+                current = []
+            continue
+        if marker.panel_number == 1:
+            if current:
+                legacy.append((current_start, current))
+            current_start = position
+            current = [beat["beat_id"]]
+        elif current and marker.panel_number == len(current) + 1:
+            current.append(beat["beat_id"])
+        else:
+            if current:
+                legacy.append((current_start, current))
+            current_start = position
+            current = [beat["beat_id"]]
+    if current:
+        legacy.append((current_start, current))
+
+    groups: list[tuple[int, str | None, list[str]]] = [
+        (start, None, beat_ids) for start, beat_ids in legacy if len(beat_ids) >= 2
+    ]
+    for label, members in lettered.items():
+        members.sort(key=lambda item: item[0])
+        beat_ids = [beat_id for _position, _number, beat_id in sorted(members, key=lambda item: item[1])]
+        groups.append((members[0][0], label, beat_ids))
+    groups.sort(key=lambda item: item[0])
+    return [(label, beat_ids) for _start, label, beat_ids in groups]
 
 
 def _b21_split_candidates(plan: dict[str, object]) -> list[dict[str, object]]:
@@ -520,36 +649,8 @@ def _b21_split_candidates(plan: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _b21_numbered_runs(block: dict[str, object]) -> list[list[str]]:
-    """Return valid source-numbered B2 runs without changing their prompts."""
-    runs: list[list[str]] = []
-    current: list[str] = []
-    for beat in block["beats"]:
-        prompt = beat.get("prompt")
-        matched = (
-            _B21_NUMBERED_PROMPT.match(prompt)
-            if isinstance(prompt, str) else None
-        )
-        if matched is None:
-            if current:
-                runs.append(current)
-                current = []
-            continue
-        number = int(matched.group(1))
-        if number == 1:
-            if current:
-                runs.append(current)
-            current = [beat["beat_id"]]
-        elif current and number == len(current) + 1:
-            current.append(beat["beat_id"])
-        else:
-            # Raw B2 grid preflight owns the detailed error. Treat malformed
-            # numbering as a boundary here so B2.1 never tries to repair it.
-            if current:
-                runs.append(current)
-            current = []
-    if current:
-        runs.append(current)
-    return [run for run in runs if len(run) >= 2]
+    """Return all B2 grid groups without requiring adjacency in narration."""
+    return [beat_ids for _label, beat_ids in _b21_numbered_groups(block)]
 
 
 def validate_b21(
@@ -640,13 +741,13 @@ def validate_b21(
 def _b21_pack_grid_units(
     units: list[tuple[dict[str, object], list[str]]],
 ) -> list[list[tuple[dict[str, object], list[str]]]]:
-    """Pack logical continuity runs of up to 18 assets, preserving beat subshot pairs."""
+    """Pack logical continuity runs of up to 20 assets, preserving beat subshot pairs."""
     chunks: list[list[tuple[dict[str, object], list[str]]]] = []
     current: list[tuple[dict[str, object], list[str]]] = []
     count = 0
     for unit in units:
         size = len(unit[1])
-        if current and count + size > 18:
+        if current and count + size > MAX_GRID_SEQUENCE_PANELS:
             chunks.append(current)
             current, count = [], 0
         current.append(unit)
@@ -682,9 +783,9 @@ def apply_b21_review(
         (patch.block_id, patch.beat_id): patch
         for patch in result.modified_beats or []
     }
-    source_runs = {
+    source_groups = {
         block["block_id"]: [
-            run for run in _b21_numbered_runs(block)
+            (label, run) for label, run in _b21_numbered_groups(block)
             if not any(
                 beat.get("cta_group_id") is not None
                 for beat in block["beats"]
@@ -695,9 +796,26 @@ def apply_b21_review(
     }
     source_run_keys = {
         (block_id, beat_id)
-        for block_id, runs in source_runs.items()
-        for run in runs for beat_id in run
+        for block_id, groups in source_groups.items()
+        for _label, run in groups for beat_id in run
     }
+    used_grid_labels: dict[int, set[str]] = {}
+    for block in source_plan["blocks"]:
+        used_grid_labels[block["block_id"]] = {
+            marker.sequence_id
+            for beat in block["beats"]
+            if (marker := parse_grid_marker(beat.get("prompt"))) is not None
+            and marker.style == "lettered" and marker.sequence_id is not None
+        }
+
+    def allocate_grid_label(block_id: int) -> str:
+        used = used_grid_labels.setdefault(block_id, set())
+        index = 1
+        while alphabetic_sequence_id(index) in used:
+            index += 1
+        label = alphabetic_sequence_id(index)
+        used.add(label)
+        return label
 
     for block in reviewed["blocks"]:
         for beat in block["beats"]:
@@ -713,7 +831,9 @@ def apply_b21_review(
                 first = _b21_prompt_body(patch.prompt)
                 second = _b21_prompt_body(patch.second_prompt)
                 if generation == "grid" and key not in source_run_keys:
-                    first, second = f"1. {first}", f"2. {second}"
+                    label = allocate_grid_label(block["block_id"])
+                    first = format_grid_marker("lettered", label, 1, first)
+                    second = format_grid_marker("lettered", label, 2, second)
                 beat["visual_subshots"] = [
                     {
                         "asset_id": f"{beat['beat_id']}__1",
@@ -732,40 +852,80 @@ def apply_b21_review(
                 ]
                 beat["prompt"] = first
 
-    # Existing B2 numbered continuity is authoritative. Insert any new subshot
-    # immediately after its source image, then shift/restart numbering in code.
+    # Existing grid groups are authoritative. Insert B2.1 subshots in their
+    # source group's logical order, then deterministically reflow each group.
     reviewed_by_block = {
         block["block_id"]: block for block in reviewed["blocks"]
     }
-    for block_id, runs in source_runs.items():
+    for block_id, groups in source_groups.items():
         block = reviewed_by_block[block_id]
         beats = {beat["beat_id"]: beat for beat in block["beats"]}
-        for run in runs:
+        prepared: list[tuple[str | None, list[tuple[dict[str, object], list[str]]]]] = []
+        for label, run in groups:
             units: list[tuple[dict[str, object], list[str]]] = []
             for beat_id in run:
                 beat = beats[beat_id]
                 subshots = beat.get("visual_subshots")
                 if isinstance(subshots, list):
-                    prompts = [
-                        _b21_prompt_body(str(item["prompt"])) for item in subshots
-                    ]
+                    prompts = [_b21_prompt_body(str(item["prompt"])) for item in subshots]
                 else:
                     prompts = [_b21_prompt_body(str(beat["prompt"]))]
                 units.append((beat, prompts))
-            for chunk in _b21_pack_grid_units(units):
-                number = 1
-                for beat, prompts in chunk:
-                    subshots = beat.get("visual_subshots")
-                    if isinstance(subshots, list):
-                        for item, body in zip(subshots, prompts, strict=True):
-                            item["generation"] = "grid"
-                            item["prompt"] = f"{number}. {body}"
-                            number += 1
-                        beat["prompt"] = subshots[0]["prompt"]
-                    else:
-                        beat["prompt"] = f"{number}. {prompts[0]}"
+            prepared.extend(
+                (label, chunk) for chunk in _b21_pack_grid_units(units)
+            )
+
+        reserved_labels = {
+            marker.sequence_id
+            for beat in block["beats"]
+            if (marker := parse_grid_marker(beat.get("prompt"))) is not None
+            and marker.style == "lettered" and marker.sequence_id is not None
+        }
+        reserved_labels.update(label for label, _chunk in prepared if label is not None)
+        used_labels: set[str] = set()
+        for label, chunk in prepared:
+            if label is None:
+                next_label = None
+            elif label not in used_labels:
+                next_label = label
+                used_labels.add(label)
+            else:
+                index = 1
+                while alphabetic_sequence_id(index) in reserved_labels | used_labels:
+                    index += 1
+                next_label = alphabetic_sequence_id(index)
+                used_labels.add(next_label)
+            number = 1
+            for beat, prompts in chunk:
+                subshots = beat.get("visual_subshots")
+                if isinstance(subshots, list):
+                    for item, body in zip(subshots, prompts, strict=True):
+                        item["generation"] = "grid"
+                        item["prompt"] = format_grid_marker(
+                            "lettered" if next_label is not None else "legacy",
+                            next_label, number, body,
+                        )
                         number += 1
+                    beat["prompt"] = subshots[0]["prompt"]
+                else:
+                    beat["prompt"] = format_grid_marker(
+                        "lettered" if next_label is not None else "legacy",
+                        next_label, number, prompts[0],
+                    )
+                    number += 1
     return reviewed
+
+
+def _professional_plan(
+    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+    *,
+    cta_groups: tuple[tuple[str, ...], ...] = (),
+    cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None,
+) -> dict[str, object]:
+    blocks = [item.blocks[0].model_dump() for item in outputs if item.blocks]
+    if cta_groups:
+        blocks = apply_cta_visuals(blocks, cta_groups, cta_overrides or {})
+    return {"visual_style": "profesional", "blocks": blocks}
 
 
 def _reviewed_professional_plan(
@@ -779,6 +939,37 @@ def _reviewed_professional_plan(
         outputs, cta_groups=cta_groups, cta_overrides=cta_overrides,
     )
     return apply_b21_review(plan, b21) if b21 is not None else plan
+
+
+def _grid_error_block_id(error: BaseException) -> int | None:
+    """Map a grid marker error to its source B1.1 block when possible."""
+    message = str(error)
+    beat_match = re.search(r"(?:at |description at )(\d+)[A-Z]+", message)
+    if beat_match is not None:
+        return int(beat_match.group(1))
+    block_match = re.search(r"\bin block (\d+)\b", message, re.IGNORECASE)
+    if block_match is not None:
+        return int(block_match.group(1))
+    return None
+
+
+def _renumber_lettered_panels(outputs: list[ProfessionalB2Output]) -> None:
+    """Number each lettered grid's panels 1..N in narrative order within its block.
+
+    The application owns grid numbering, so repeated or skipped panel numbers from
+    the model are corrected here instead of failing the whole batch.
+    """
+    for output in outputs:
+        for block in output.blocks:
+            counts: dict[str, int] = {}
+            for beat in block.beats:
+                marker = parse_grid_marker(beat.prompt)
+                if marker is None or marker.style != "lettered" or marker.sequence_id is None:
+                    continue
+                counts[marker.sequence_id] = counts.get(marker.sequence_id, 0) + 1
+                beat.prompt = format_grid_marker(
+                    "lettered", marker.sequence_id, counts[marker.sequence_id], marker.body,
+                )
 
 
 def _professional_grid_preflight(
@@ -923,13 +1114,13 @@ async def _call_stage[OutputT: BaseModel](
         previous_response_id and getattr(provider, "supports_response_continuation", False)
     )
     if on_input is not None:
-        submitted = dict(payload)
-        if correction_feedback:
-            submitted = {
-                **submitted,
-                "_validation_correction": correction_feedback,
-                "_previous_response_id": previous_response_id if continued else None,
-            }
+        submitted = (
+            {"_validation_correction": correction_feedback}
+            if continued and correction_feedback
+            else dict(payload)
+        )
+        if continued:
+            submitted["_previous_response_id"] = previous_response_id
         on_input(stage, block_id, submitted)
     kwargs = {
         "model": model,
@@ -943,6 +1134,8 @@ async def _call_stage[OutputT: BaseModel](
         kwargs["input_image_url"] = input_image_url
     if continued:
         kwargs["previous_response_id"] = previous_response_id
+    if stage == "B2" and getattr(provider, "supports_reasoning_effort_override", False):
+        kwargs["reasoning_effort"] = settings.openai_b2_reasoning_effort
     started = perf_counter()
     try:
         metered = getattr(provider, "generate_structured_with_response", None)
@@ -967,29 +1160,202 @@ def validate_whole_beats(
     materialized: list[MaterializedBlock],
     script: str,
 ) -> list[B12Output]:
-    """Validate the global response, then recover immutable per-block checkpoints."""
+    """Validate every block and report all block-local failures together."""
     _require_success("B1.2", result.error)
     if result.narrative_core != core or not result.blocks:
         raise BPipelineValidationError("B1.2 altered the frozen narrative core")
     if len(result.blocks) != len(materialized):
         raise BPipelineValidationError("B1.2 changed the frozen block count")
     outputs: list[B12Output] = []
+    errors: list[str] = []
     for actual, block in zip(result.blocks, materialized, strict=True):
         if actual.block_id != block.block_id:
-            raise BPipelineValidationError("B1.2 altered block IDs or order")
+            errors.append(
+                f"B1.2 block {block.block_id} returned ID {actual.block_id} or changed block order"
+            )
+            continue
         part = B12Output(
             pipeline_stage="B1.2", block_id=block.block_id,
             beats=actual.beats, error=None,
         )
-        validate_beats(part, block)
-        if "".join(beat.text for beat in actual.beats) != block.text:
-            raise BPipelineValidationError(
-                f"B1.2 block {block.block_id} does not reconstruct source exactly"
-            )
+        try:
+            actual.beats = validate_beats(part, block)
+            if "".join(beat.text for beat in actual.beats) != block.text:
+                raise BPipelineValidationError(
+                    f"B1.2 block {block.block_id} does not reconstruct source exactly"
+                )
+        except (ValidationError, BPipelineValidationError) as error:
+            errors.append(f"B1.2 block {block.block_id}: {error}")
+            continue
         outputs.append(part)
+    if errors:
+        raise BPipelineValidationError(" || ".join(errors))
     if "".join(block.text for block in materialized) != script:
         raise BPipelineValidationError("Whole B1.2 input blocks do not reconstruct script")
     return outputs
+
+
+def _failed_b12_block_ids(
+    error: BaseException,
+    current: WholeB12Output | None,
+    materialized: list[MaterializedBlock],
+    *,
+    previous_targets: tuple[int, ...] = (),
+) -> tuple[int, ...]:
+    """Locate source block groups affected by a B1.2 validation failure."""
+    valid_ids = {block.block_id for block in materialized}
+    failed: set[int] = set()
+    message = str(error)
+    failed.update(
+        int(match.group(1))
+        for match in re.finditer(r"B1\.2 beat\s+(\d+)[A-Z]+", message, re.IGNORECASE)
+    )
+    failed.update(
+        int(match.group(1))
+        for match in re.finditer(r"B1\.2 block\s+(\d+)", message, re.IGNORECASE)
+    )
+    if isinstance(error, ValidationError):
+        for detail in error.errors():
+            location = detail.get("loc", ())
+            try:
+                blocks_index = location.index("blocks")
+                block_offset = location[blocks_index + 1]
+            except (ValueError, IndexError):
+                continue
+            if isinstance(block_offset, int):
+                if previous_targets and 0 <= block_offset < len(previous_targets):
+                    # Validation locations in a sparse retry are relative to its
+                    # returned groups, not to the original whole-video block list.
+                    failed.add(previous_targets[block_offset])
+                elif 0 <= block_offset < len(materialized):
+                    failed.add(materialized[block_offset].block_id)
+
+    if current is not None and "block count" in message.lower():
+        actual_ids = {block.block_id for block in current.blocks or []}
+        failed.update(valid_ids - actual_ids)
+        if not failed:
+            failed.update(valid_ids)
+    if current is not None and "block ids or order" in message.lower():
+        actual_blocks = current.blocks or []
+        for index, expected in enumerate(materialized):
+            if index >= len(actual_blocks) or actual_blocks[index].block_id != expected.block_id:
+                failed.add(expected.block_id)
+    failed.intersection_update(valid_ids)
+    if not failed and previous_targets:
+        failed.update(previous_targets)
+    if not failed:
+        # If validation cannot associate a failure with one block, all source
+        # blocks are the smallest safely identifiable correction scope.
+        failed.update(valid_ids)
+    return tuple(block_id for block_id in sorted(valid_ids) if block_id in failed)
+
+
+def _b12_targeted_retry_feedback(
+    error: BaseException,
+    block_ids: tuple[int, ...],
+    current: WholeB12Output,
+    materialized: list[MaterializedBlock],
+    core: object,
+) -> str:
+    """Ask B1.2 to re-segment only the source blocks that failed validation."""
+    selected = set(block_ids)
+    source_groups = [
+        block.model_dump() for block in materialized if block.block_id in selected
+    ]
+    current_groups = [
+        {"block_id": block.block_id, "beats": [beat.model_dump() for beat in block.beats]}
+        for block in current.blocks or [] if block.block_id in selected
+    ]
+    return "\n".join((
+        "VALIDATION FAILED: B1.2 targeted block correction",
+        f"- Failure: {error}",
+        "Required correction:",
+        f"Correct only source block groups: {', '.join(map(str, block_ids))}.",
+        "Return every beat for each named block, in source order, but do not return "
+        "any unaffected block. Keep each beat at or below 40 words and 100 stripped "
+        "characters. If a beat exceeds a limit, split that source passage into two "
+        "or more consecutive beats and renumber the affected block's beat IDs "
+        "sequentially from its A suffix.",
+        "Preserve every source word exactly and do not move text across frozen B1.1 "
+        "block boundaries. The application restores source punctuation and whitespace, "
+        "then merges these groups into the previously accepted whole-video result and "
+        "validates the complete reconstruction before continuing.",
+        "Keep the narrative_core unchanged. Return the B1.2 success schema with "
+        "pipeline_stage='B1.2', only the named block groups in blocks, and error=null.",
+        "Narrative core:",
+        json.dumps(core.model_dump() if isinstance(core, BaseModel) else core,
+                   ensure_ascii=False, separators=(",", ":")),
+        "Frozen source text and metadata for only the requested groups:",
+        json.dumps(source_groups, ensure_ascii=False, separators=(",", ":")),
+        "Previous beat segmentation for only those groups:",
+        json.dumps(current_groups, ensure_ascii=False, separators=(",", ":")),
+    ))
+
+
+def merge_whole_b12_correction(
+    current: WholeB12Output,
+    correction: WholeB12Output,
+    core: object,
+    materialized: list[MaterializedBlock],
+    block_ids: tuple[int, ...],
+) -> tuple[WholeB12Output, list[str]]:
+    """Merge valid corrected groups, retaining any block that still needs repair."""
+    _require_success("B1.2", correction.error)
+    if correction.narrative_core != core or not correction.blocks:
+        raise BPipelineValidationError(
+            "B1.2 targeted correction altered the narrative core or omitted all groups"
+        )
+    expected_ids = tuple(block.block_id for block in materialized)
+    if tuple(block.block_id for block in current.blocks or []) != expected_ids:
+        raise BPipelineValidationError(
+            "B1.2 cannot merge a targeted correction into an incomplete whole-video result"
+        )
+    selected = set(block_ids)
+    source_by_id = {block.block_id: block for block in materialized}
+    merged_by_id = {
+        block.block_id: block.model_copy(deep=True) for block in current.blocks or []
+    }
+    errors: list[str] = []
+    returned_ids = [block.block_id for block in correction.blocks]
+    duplicates = {block_id for block_id in returned_ids if returned_ids.count(block_id) > 1}
+    for block_id in sorted(duplicates):
+        errors.append(f"B1.2 block {block_id} was returned more than once")
+    for block_id in block_ids:
+        if block_id not in returned_ids:
+            errors.append(f"B1.2 block {block_id} was omitted from its targeted correction")
+    unexpected = set(returned_ids) - selected
+    for block_id in sorted(unexpected):
+        errors.append(f"B1.2 block {block_id} was returned outside the requested groups")
+    if returned_ids != sorted(returned_ids):
+        errors.append("B1.2 targeted correction returned its block groups out of order")
+
+    seen: set[int] = set()
+    for corrected in correction.blocks:
+        block_id = corrected.block_id
+        if block_id not in selected or block_id in seen:
+            continue
+        seen.add(block_id)
+        source = source_by_id[block_id]
+        part = B12Output(
+            pipeline_stage="B1.2", block_id=block_id,
+            beats=corrected.beats, error=None,
+        )
+        try:
+            restored = validate_beats(part, source)
+            if "".join(beat.text for beat in restored) != source.text:
+                raise BPipelineValidationError(
+                    f"B1.2 block {block_id} does not reconstruct source exactly"
+                )
+        except (ValidationError, BPipelineValidationError) as error:
+            errors.append(f"B1.2 block {block_id}: {error}")
+            continue
+        merged_by_id[block_id] = WholeB12Block(block_id=block_id, beats=restored)
+
+    merged = WholeB12Output(
+        pipeline_stage="B1.2", narrative_core=current.narrative_core,
+        blocks=[merged_by_id[block_id] for block_id in expected_ids], error=None,
+    )
+    return merged, errors
 
 
 def validate_whole_professional_b2(
@@ -1002,13 +1368,10 @@ def validate_whole_professional_b2(
         raise BPipelineValidationError("B2 altered the narrative core")
     if len(result.blocks) != len(source.blocks):
         raise BPipelineValidationError("B2 changed the frozen block count")
-    joined_text = "".join(
-        beat.text for block in source.blocks for beat in block.beats
-    )
-    if joined_text != source.plain_script_for_recording:
-        raise BPipelineValidationError("B2 source beats do not reconstruct full script")
     outputs: list[ProfessionalB2Output] = []
-    for actual, expected in zip(result.blocks, source.blocks, strict=True):
+    for block_index, (actual, expected) in enumerate(
+        zip(result.blocks, source.blocks, strict=True)
+    ):
         if actual.block_id != expected.block_id:
             raise BPipelineValidationError("B2 changed block IDs or order")
         supplied = B2Input(
@@ -1021,13 +1384,299 @@ def validate_whole_professional_b2(
             blocks=[actual], error=None,
         )
         part = repair_frozen_b2_text(part, supplied)
-        validate_visuals(part, supplied)
+        result.blocks[block_index] = part.blocks[0]
+        validate_visuals(part, supplied, check_audio_run=False)
         outputs.append(part)
-    overflow = _overlong_avatar_run(outputs)
-    if overflow is not None:
-        raise BPipelineValidationError(_avatar_run_error(*overflow, professional=True))
+    overflows = _overlong_avatar_runs(outputs)
+    if overflows:
+        raise BPipelineValidationError(
+            " || ".join(
+                _avatar_run_error(*overflow, professional=True)
+                for overflow in overflows
+            )
+        )
+    _renumber_lettered_panels(outputs)
     _professional_grid_preflight(_professional_plan(outputs))
     return outputs
+
+
+def validate_professional_b2_batch(
+    result: ProfessionalB2BatchOutput,
+    core: object,
+    expected_blocks: list[B2InputBlock],
+) -> list[ProfessionalB2Output]:
+    """Validate one ordered B2 batch without losing full-plan context checks."""
+    _require_success("B2", result.error)
+    if result.narrative_core != core or not result.blocks:
+        raise BPipelineValidationError("B2 batch altered the narrative core or omitted blocks")
+    if len(result.blocks) != len(expected_blocks):
+        raise BPipelineValidationError("B2 batch changed its frozen block count")
+    outputs: list[ProfessionalB2Output] = []
+    for index, (actual, expected) in enumerate(
+        zip(result.blocks, expected_blocks, strict=True)
+    ):
+        if actual.block_id != expected.block_id:
+            raise BPipelineValidationError("B2 batch altered block IDs or order")
+        supplied = B2Input(
+            narrative_core=core,
+            current_block_id=expected.block_id,
+            blocks=(expected,),
+        )
+        part = ProfessionalB2Output(
+            pipeline_stage="B2", narrative_core=result.narrative_core,
+            blocks=[actual], error=None,
+        )
+        part = repair_frozen_b2_text(part, supplied)
+        result.blocks[index] = part.blocks[0]
+        validate_visuals(part, supplied, check_audio_run=False)
+        outputs.append(part)
+    return outputs
+
+
+def _professional_b2_failed_beat_groups(
+    error: BaseException,
+) -> dict[int, tuple[str, ...]] | None:
+    """Extract the exact beat IDs in a failed professional audio run."""
+    message = str(error)
+    if not message.startswith("B2 consecutive audio=true beats "):
+        return None
+    groups: dict[int, list[str]] = {}
+    for match in re.finditer(r"(?<!\d)(\d+[A-Z]+)\s+\(\d+\)", message):
+        beat_id = match.group(1)
+        block_id = int(re.match(r"\d+", beat_id).group())
+        groups.setdefault(block_id, []).append(beat_id)
+    return {block_id: tuple(beat_ids) for block_id, beat_ids in sorted(groups.items())} or None
+
+
+def _professional_b2_failed_audio_runs(error: BaseException) -> tuple[tuple[str, ...], ...]:
+    """Preserve separate overlong runs when several are reported together."""
+    runs: list[tuple[str, ...]] = []
+    for diagnostic in str(error).split(" || "):
+        if not diagnostic.startswith("B2 consecutive audio=true beats "):
+            continue
+        beat_ids = tuple(
+            match.group(1)
+            for match in re.finditer(r"(?<!\d)(\d+[A-Z]+)\s+\(\d+\)", diagnostic)
+        )
+        if beat_ids:
+            runs.append(beat_ids)
+    return tuple(runs)
+
+
+def _professional_b2_partial_feedback(
+    error: BaseException,
+    beat_groups: dict[int, tuple[str, ...]],
+    previous: WholeProfessionalB2Output,
+    *,
+    correction_error: BaseException | None = None,
+) -> str:
+    """Ask for only the exact failing audio-run beat groups."""
+    current_groups = []
+    for block in previous.blocks or []:
+        beat_ids = set(beat_groups.get(block.block_id, ()))
+        beats = [beat.model_dump() for beat in block.beats if beat.beat_id in beat_ids]
+        if beats:
+            current_groups.append({"block_id": block.block_id, "beats": beats})
+    failing_runs = _professional_b2_failed_audio_runs(error)
+    named_groups = "; ".join(
+        f"run {index}: {', '.join(run)}"
+        for index, run in enumerate(failing_runs, 1)
+    ) or "; ".join(
+        f"block {block_id}: {', '.join(beat_ids)}"
+        for block_id, beat_ids in beat_groups.items()
+    )
+    return "\n".join((
+        "VALIDATION FAILED: B2 profesional whole video",
+        "Validator diagnostics:",
+        f"- Failure: {error}",
+        "Required correction:",
+        f"Failing consecutive beat run(s): {named_groups}.",
+        "For each reported run, change the minimum number of discretionary beats "
+        "needed so every remaining consecutive audio=true segment is at most 120 "
+        "characters. Use a faithful media_image with audio=false, a nonempty English "
+        "prompt, and video_prompt=null for a break; use media_video only if its motion "
+        "materially improves the scene, with a valid video_prompt.",
+        "Leave every other beat's visual/audio fields exactly as supplied.",
+        "Return only the beat entries whose visual fields you changed to create "
+        "those breaks. You may return a subset of the listed IDs; omit unchanged "
+        "beats. Each blocks entry contains only block_id and a beats array of the "
+        "changed beat IDs in source order. Do not return complete blocks or the full plan.",
+        "Preserve each returned beat's ID, text, and type. The application merges "
+        "only these beat visual assignments into the latest plan, retaining every "
+        "other beat and all earlier accepted corrections unchanged.",
+        "Respect the mandatory original-avatar anchor on the final beat of every "
+        "close block. The merged whole-video plan will be checked again for all "
+        "120-character audio=true runs.",
+        "Return the B2 correction schema with pipeline_stage='B2', the unchanged "
+        "narrative_core, the listed beat groups under blocks, and error=null.",
+        *(
+            (f"The previous patch did not pass validation: {correction_error}. "
+             "Return a valid patch for the same current run groups.",)
+            if correction_error is not None else ()
+        ),
+        "Current versions of only the failing beats:",
+        json.dumps(current_groups, ensure_ascii=False, separators=(",", ":")),
+    ))
+
+
+def _professional_b2_batch_retry_feedback(
+    error: BaseException,
+    *,
+    batch_number: int,
+    total_batches: int,
+    block_ids: tuple[int, ...],
+    previous: ProfessionalB2BatchOutput | None = None,
+) -> str:
+    """Retry only the current batch after a non-audio validation failure."""
+    ids = ", ".join(map(str, block_ids))
+    lines = [
+        f"VALIDATION FAILED: B2 batch {batch_number}/{total_batches}",
+        f"- Failure: {error}",
+        "Required correction:",
+        f"Correct only this batch's block IDs: {ids}.",
+        "Return each listed block completely, with all beats in source order. "
+        "Do not return prior accepted batches or future blocks.",
+        "Preserve B1.1 metadata and every frozen beat ID, text, order, and type. "
+        "Correct only the B2 visual fields that failed validation.",
+        "The application will keep earlier accepted batches unchanged and validate "
+        "the accumulated plan again before requesting the next batch.",
+        "Return the B2 batch schema with pipeline_stage='B2', unchanged "
+        "narrative_core, only the listed blocks, and error=null.",
+    ]
+    if previous is not None and previous.blocks:
+        lines.extend((
+            "Current response for this batch:",
+            json.dumps(
+                [block.model_dump() for block in previous.blocks],
+                ensure_ascii=False, separators=(",", ":"),
+            ),
+        ))
+    return "\n".join(lines)
+
+
+def _professional_b2_invalid_input_feedback(
+    error: BaseException,
+    *,
+    image_supplied: bool,
+    batch_number: int,
+    total_batches: int,
+    block_ids: tuple[int, ...],
+) -> str:
+    """Correct a model-reported input error after local source checks passed."""
+    lines = [
+        "VALIDATION FAILED: B2 professional input diagnosis",
+        f"- Your previous response returned INVALID_UPSTREAM_INPUT: {error}",
+        "- The application has already verified the complete ordered B1.1/B1.2 "
+        "source against the authoritative script.",
+        f"- Batch {batch_number}/{total_batches} uses validated source blocks "
+        f"{', '.join(map(str, block_ids))}, and their span anchors match each block edge.",
+        "Required correction:",
+        "The upstream input is valid. Do not return INVALID_UPSTREAM_INPUT or any "
+        "error object. Continue the visual-direction task and return only the "
+        f"complete current batch blocks {', '.join(map(str, block_ids))}.",
+        "Do not reinterpret separator whitespace at block boundaries as an "
+        "ambiguous source association; the application already resolved those "
+        "boundaries and validated exact script reconstruction.",
+    ]
+    if image_supplied:
+        lines.append(
+            "The original-avatar reference image was supplied with the initial "
+            "Responses API call and remains available through this response continuation."
+        )
+    return "\n".join(lines)
+
+
+def merge_professional_b2_correction(
+    base: WholeProfessionalB2Output,
+    correction: ProfessionalB2CorrectionOutput,
+    source: WholeProfessionalB2Input,
+    beat_groups: dict[int, tuple[str, ...]],
+) -> WholeProfessionalB2Output:
+    """Merge only the explicitly requested beat visuals into the full plan."""
+    _require_success("B2", correction.error)
+    if correction.narrative_core != source.narrative_core or not correction.blocks:
+        raise BPipelineValidationError(
+            "B2 targeted correction altered the narrative core or omitted beat groups"
+        )
+    corrected_by_id: dict[int, dict[str, ProfessionalVisualBeat]] = {}
+    for group in correction.blocks:
+        if group.block_id in corrected_by_id:
+            raise BPipelineValidationError(
+                f"B2 targeted correction duplicated block {group.block_id}"
+            )
+        corrected_by_id[group.block_id] = {}
+        for beat in group.beats:
+            if beat.beat_id in corrected_by_id[group.block_id]:
+                raise BPipelineValidationError(
+                    f"B2 targeted correction duplicated beat {beat.beat_id}"
+                )
+            corrected_by_id[group.block_id][beat.beat_id] = beat
+    unexpected = sorted(set(corrected_by_id) - set(beat_groups))
+    if unexpected:
+        raise BPipelineValidationError(
+            "B2 targeted correction returned unexpected block IDs "
+            + ", ".join(map(str, unexpected))
+        )
+    expected_block_order = tuple(
+        block_id for block_id in beat_groups if block_id in corrected_by_id
+    )
+    if tuple(corrected_by_id) != expected_block_order:
+        raise BPipelineValidationError(
+            "B2 targeted correction returned beat groups out of source order"
+        )
+
+    source_by_id = {block.block_id: block for block in source.blocks}
+    result = base.model_copy(deep=True)
+    result_index_by_id = {
+        block.block_id: index for index, block in enumerate(result.blocks or [])
+    }
+    for block_id, returned in corrected_by_id.items():
+        target_beat_ids = beat_groups[block_id]
+        expected = source_by_id.get(block_id)
+        result_index = result_index_by_id.get(block_id)
+        if expected is None or result_index is None:
+            raise BPipelineValidationError(
+                f"B2 targeted correction refers to unknown block {block_id}"
+            )
+        if not set(returned) <= set(target_beat_ids):
+            extra = sorted(set(returned) - set(target_beat_ids))
+            raise BPipelineValidationError(
+                f"B2 targeted correction returned non-target beats "
+                f"{', '.join(extra)} for block {block_id}"
+            )
+        target_order = tuple(beat_id for beat_id in target_beat_ids if beat_id in returned)
+        if tuple(returned) != target_order:
+            raise BPipelineValidationError(
+                f"B2 targeted correction beats are out of source order in block {block_id}"
+            )
+        source_beats = {beat.beat_id: beat for beat in expected.beats}
+        current_block = result.blocks[result_index]
+        merged_beats: list[ProfessionalVisualBeat] = []
+        for visual in current_block.beats:
+            upstream = source_beats.get(visual.beat_id)
+            if upstream is None:
+                raise BPipelineValidationError(
+                    f"B2 base plan contains unknown beat {visual.beat_id}"
+                )
+            patch = returned.get(visual.beat_id)
+            merged_beats.append(
+                visual.model_copy(update={
+                    "beat_id": upstream.beat_id,
+                    "text": upstream.text,
+                    "beat_type": upstream.beat_type,
+                    **({
+                        "visual_type": patch.visual_type,
+                        "prompt": patch.prompt,
+                        "video_prompt": patch.video_prompt,
+                        "reference": patch.reference,
+                        "audio": patch.audio,
+                    } if patch is not None else {}),
+                })
+            )
+        block_payload = current_block.model_dump()
+        block_payload["beats"] = [beat.model_dump() for beat in merged_beats]
+        result.blocks[result_index] = ProfessionalB2Block.model_validate(block_payload)
+    return result
 
 
 async def run_b_pipeline(
@@ -1263,14 +1912,37 @@ async def run_b_pipeline(
         try:
             feedback = ""
             previous_response_id: str | None = None
-            for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+            correction_block_ids: tuple[int, ...] | None = None
+            b12_candidate: WholeB12Output | None = None
+            attempt = 0
+            full_retry_count = 0
+            block_retry_counts: dict[int, int] = {}
+            while True:
+                attempt += 1
                 candidate: WholeB12Output | None = None
                 try:
+                    if correction_block_ids is None:
+                        request_payload = b12_input.model_dump()
+                        correction_feedback = None
+                    else:
+                        if b12_candidate is None:
+                            raise BPipelineValidationError(
+                                "B1.2 targeted correction has no complete base result"
+                            )
+                        selected = set(correction_block_ids)
+                        request_payload = {
+                            "narrative_core": b11.narrative_core.model_dump(),
+                            "blocks": [
+                                block.model_dump() for block in materialized
+                                if block.block_id in selected
+                            ],
+                        }
+                        correction_feedback = feedback
                     candidate = await _call_stage(
-                        "B1.2", None, b12_input.model_dump(),
+                        "B1.2", None, request_payload,
                         provider=provider, model=model, prompt="b1_2.md",
                         instructions_suffix="\n\n" + feedback if feedback else "",
-                        correction_feedback=feedback or None,
+                        correction_feedback=correction_feedback,
                         previous_response_id=previous_response_id,
                         on_response_id=remember_b12,
                         output_type=WholeB12Output,
@@ -1278,9 +1950,32 @@ async def run_b_pipeline(
                         on_api_response=on_api_response,
                         on_call_duration=on_call_duration,
                     )
-                    b12_results = validate_whole_beats(
-                        candidate, b11.narrative_core, materialized, script,
-                    )
+                    if correction_block_ids is None:
+                        b12_candidate = candidate.model_copy(deep=True)
+                        b12_results = validate_whole_beats(
+                            b12_candidate, b11.narrative_core, materialized, script,
+                        )
+                    else:
+                        if b12_candidate is None:
+                            raise BPipelineValidationError(
+                                "B1.2 targeted correction has no complete base result"
+                            )
+                        b12_candidate, merge_errors = merge_whole_b12_correction(
+                            b12_candidate, candidate, b11.narrative_core,
+                            materialized, correction_block_ids,
+                        )
+                        try:
+                            b12_results = validate_whole_beats(
+                                b12_candidate, b11.narrative_core, materialized, script,
+                            )
+                        except (ValidationError, BPipelineValidationError) as error:
+                            if merge_errors:
+                                raise BPipelineValidationError(
+                                    " || ".join((*merge_errors, str(error)))
+                                ) from error
+                            raise
+                        if merge_errors:
+                            raise BPipelineValidationError(" || ".join(merge_errors))
                     break
                 except (ValidationError, BPipelineValidationError, RuntimeError) as error:
                     if isinstance(error, RuntimeError) and not is_schema_failure(error):
@@ -1292,30 +1987,61 @@ async def run_b_pipeline(
                     }
                     if on_rejected_b12_output is not None:
                         on_rejected_b12_output(0, attempt, str(error), rejected)
-                    if attempt > MAX_VALIDATION_RETRIES:
-                        raise BPipelineValidationError(
-                            "Whole-video B1.2 failed after "
-                            f"{MAX_VALIDATION_RETRIES} retries: {error}"
-                        ) from error
                     previous_response_id = (
                         b12_response_id
                         if getattr(provider, "supports_response_continuation", False)
                         else None
                     )
-                    feedback = validation_feedback(
-                        "B1.2 whole video", error,
-                        previous=candidate.model_dump() if candidate else None,
-                        continued=previous_response_id is not None,
-                        instructions=(
-                            "Correct the COMPLETE whole-video beat segmentation. "
-                            "Preserve every B1.1 block, ID, and source character. "
-                            "Every beat must be a contiguous verbatim slice including "
-                            "punctuation and whitespace, max 40 words and 100 stripped "
-                            "characters, with no minimum length. Preserve global rhythm."
-                        ),
-                    )
+                    if b12_candidate is None and candidate is not None:
+                        b12_candidate = candidate.model_copy(deep=True)
+                    if b12_candidate is None:
+                        # A response that could not be parsed has no valid full plan
+                        # to merge, so retain a small complete-output retry budget.
+                        if full_retry_count >= MAX_VALIDATION_RETRIES:
+                            raise BPipelineValidationError(
+                                "Whole-video B1.2 failed after "
+                                f"{full_retry_count} complete-output retries: {error}"
+                            ) from error
+                        full_retry_count += 1
+                        correction_block_ids = None
+                        feedback = validation_feedback(
+                            "B1.2 whole video", error,
+                            previous=candidate.model_dump() if candidate else None,
+                            continued=previous_response_id is not None,
+                            instructions=(
+                                "Retry the complete whole-video beat segmentation because "
+                                "no complete structured result was available to merge. "
+                                "Preserve every B1.1 block and source word. Respect the "
+                                "40-word and 100-character maximums."
+                            ),
+                        )
+                    else:
+                        correction_block_ids = _failed_b12_block_ids(
+                            error, b12_candidate, materialized,
+                            previous_targets=correction_block_ids or (),
+                        )
+                        exhausted = tuple(
+                            block_id for block_id in correction_block_ids
+                            if block_retry_counts.get(block_id, 0) >= MAX_VALIDATION_RETRIES
+                        )
+                        if exhausted:
+                            raise BPipelineValidationError(
+                                "B1.2 block groups failed after "
+                                f"{MAX_VALIDATION_RETRIES} targeted retries each: "
+                                f"{', '.join(map(str, exhausted))}: {error}"
+                            ) from error
+                        for block_id in correction_block_ids:
+                            block_retry_counts[block_id] = (
+                                block_retry_counts.get(block_id, 0) + 1
+                            )
+                        feedback = _b12_targeted_retry_feedback(
+                            error, correction_block_ids, b12_candidate,
+                            materialized, b11.narrative_core,
+                        )
+            if b12_candidate is None:
+                raise BPipelineValidationError("B1.2 produced no complete merged result")
             if on_output is not None:
-                on_output("B1.2", None, candidate.model_dump())
+                on_output("B1.2", None, b12_candidate.model_dump())
                 for item in b12_results:
                     on_output("B1.2", item.block_id, item.model_dump())
         finally:
@@ -1572,8 +2298,7 @@ async def run_b_pipeline(
     async def b2_whole_professional(
         downstream_feedback: str = "",
     ) -> list[ProfessionalB2Output]:
-        # One director chooses the carrier for every pulse in full-video context.
-        # Keep existing per-block outputs for B2.1, CTA merge, TTS and checkpoints.
+        # One Responses API conversation plans four blocks at a time, in order.
         reserved_groups = (
             await cta_detection_task if cta_detection_task is not None
             else previous_cta_groups
@@ -1586,62 +2311,233 @@ async def run_b_pipeline(
             )
             for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
         ]
-        request = WholeProfessionalB2Input(
-            plain_script_for_recording=script, narrative_core=b11.narrative_core,
-            blocks=frozen_blocks,
-            cta_groups=[list(group) for group in reserved_groups]
-            if reserved_groups is not None else None,
+        if "".join(block.text for block in materialized) != script:
+            raise BPipelineValidationError(
+                "Professional B2 source blocks do not reconstruct the authoritative script"
+            )
+        for meta, block in zip(b11.blocks, materialized, strict=True):
+            if (
+                not block.text.lstrip().startswith(meta.span.first_words)
+                or not block.text.rstrip().endswith(meta.span.last_words)
+            ):
+                raise BPipelineValidationError(
+                    f"Professional B2 block {block.block_id} does not match its frozen B1.1 anchors"
+                )
+        if "".join(
+            beat.text for block in frozen_blocks for beat in block.beats
+        ) != script:
+            raise BPipelineValidationError(
+                "Professional B2 beats do not reconstruct the authoritative script"
+            )
+        cta_payload = (
+            [list(group) for group in reserved_groups]
+            if reserved_groups is not None else None
         )
-        feedback = downstream_feedback
-        for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
-            candidate: WholeProfessionalB2Output | None = None
-            try:
-                # Each complete retry is sent with the original presenter image.
-                candidate = await _call_stage(
-                    "B2", None, request.model_dump(),
-                    provider=provider, model=model, prompt="b2_professional.md",
-                    instructions_suffix="\n\n" + feedback if feedback else "",
-                    output_type=WholeProfessionalB2Output,
-                    input_image_url=image_url,
-                    on_input=on_input, on_api_response=on_api_response,
-                    on_call_duration=on_call_duration,
-                )
-                parts = validate_whole_professional_b2(candidate, request)
-                if on_output is not None:
-                    on_output("B2", None, candidate.model_dump())
-                    for item in parts:
-                        on_output("B2", item.blocks[0].block_id, item.model_dump())
-                return parts
-            except (
-                ValidationError, BPipelineValidationError, GridPlanError, RuntimeError
-            ) as error:
-                if isinstance(error, RuntimeError) and not is_schema_failure(error):
-                    raise
-                if candidate is not None and candidate.error is not None:
-                    raise
-                if on_rejected_b2_output is not None:
-                    on_rejected_b2_output(
-                        0, attempt, str(error),
-                        candidate.model_dump() if candidate is not None
-                        else {"unparsed_response": True, "validation_error": str(error)},
+        accepted: list[ProfessionalB2Output] = []
+        b2_response_id: str | None = None
+        api_attempt = 0
+
+        def remember_b2_response(response_id: str) -> None:
+            nonlocal b2_response_id
+            b2_response_id = response_id
+
+        total_batches = (
+            len(frozen_blocks) + _PROFESSIONAL_B2_BATCH_SIZE - 1
+        ) // _PROFESSIONAL_B2_BATCH_SIZE
+        for batch_number, offset in enumerate(
+            range(0, len(frozen_blocks), _PROFESSIONAL_B2_BATCH_SIZE), start=1
+        ):
+            batch_blocks = frozen_blocks[
+                offset:offset + _PROFESSIONAL_B2_BATCH_SIZE
+            ]
+            batch_ids = tuple(block.block_id for block in batch_blocks)
+            batch_input = ProfessionalB2BatchInput(
+                narrative_core=b11.narrative_core,
+                batch_number=batch_number,
+                total_batches=total_batches,
+                blocks=batch_blocks,
+                cta_groups=cta_payload,
+            )
+            prefix_blocks = frozen_blocks[:offset + len(batch_blocks)]
+            prefix_source = WholeProfessionalB2Input(
+                narrative_core=b11.narrative_core,
+                blocks=prefix_blocks,
+                cta_groups=cta_payload,
+            )
+            batch_note = (
+                f"B2 sequential batch {batch_number}/{total_batches}. Use the narrative "
+                "core, this batch, and earlier conversation turns as context. "
+                f"Return only current block IDs {', '.join(map(str, batch_ids))}. "
+                "Earlier batches in this Responses API conversation have been validated "
+                "and accepted; preserve their visual decisions."
+            )
+            if downstream_feedback and (
+                bool(set(batch_ids) & retry_ids) or (not retry_ids and batch_number == 1)
+            ):
+                batch_note += "\n\n" + downstream_feedback
+
+            partial_base: WholeProfessionalB2Output | None = None
+            partial_beat_groups: dict[int, tuple[str, ...]] | None = None
+            feedback = batch_note
+            validation_retries = 0
+            upstream_input_retries = 0
+            server_error_retries = 0
+            batch_attempt = 0
+            while True:
+                batch_attempt += 1
+                api_attempt += 1
+                candidate: WholeProfessionalB2Output | None = None
+                raw_response: (
+                    ProfessionalB2BatchOutput | ProfessionalB2CorrectionOutput | None
+                ) = None
+                candidate_is_complete = False
+                try:
+                    previous_response_id = (
+                        b2_response_id
+                        if getattr(provider, "supports_response_continuation", False)
+                        else None
                     )
-                if attempt > MAX_VALIDATION_RETRIES:
-                    raise BPipelineValidationError(
-                        "Whole professional B2 failed after "
-                        f"{MAX_VALIDATION_RETRIES} retries: {error}"
-                    ) from error
-                feedback = validation_feedback(
-                    "B2 profesional whole video", error,
-                    previous=candidate.model_dump() if candidate else None,
-                    continued=False,
-                    instructions=(
-                        "Correct the COMPLETE visual plan. Preserve all source text, "
-                        "blocks, beat IDs, and beat types. Keep valid carrier choices "
-                        "and correct only invalid visual/audio/reference assignments "
-                        "or prompts. Enforce the GLOBAL 120-character audio=true cap, "
-                        "the final close avatar, and valid block-local grid numbering."
-                    ),
-                )
+                    is_group_correction = partial_beat_groups is not None
+                    response_type = (
+                        ProfessionalB2CorrectionOutput
+                        if is_group_correction else ProfessionalB2BatchOutput
+                    )
+                    response = await _call_stage(
+                        "B2", None, batch_input.model_dump(),
+                        provider=provider, model=model, prompt="b2_professional.md",
+                        instructions_suffix="\n\n" + feedback if feedback else "",
+                        output_type=response_type,
+                        input_image_url=image_url,
+                        previous_response_id=previous_response_id,
+                        correction_feedback=feedback if is_group_correction else None,
+                        on_response_id=remember_b2_response,
+                        on_input=on_input, on_api_response=on_api_response,
+                        on_call_duration=on_call_duration,
+                    )
+                    raw_response = response
+                    if is_group_correction and partial_base is not None:
+                        candidate = merge_professional_b2_correction(
+                            partial_base, response, prefix_source, partial_beat_groups,
+                        )
+                    else:
+                        batch_parts = validate_professional_b2_batch(
+                            response, b11.narrative_core, batch_blocks,
+                        )
+                        candidate = WholeProfessionalB2Output(
+                            pipeline_stage="B2",
+                            narrative_core=b11.narrative_core,
+                            blocks=[
+                                *(item.blocks[0] for item in accepted),
+                                *(item.blocks[0] for item in batch_parts),
+                            ],
+                            error=None,
+                        )
+                    candidate_is_complete = bool(candidate.blocks)
+                    accepted = validate_whole_professional_b2(candidate, prefix_source)
+                    if on_output is not None:
+                        for item in accepted:
+                            on_output("B2", item.blocks[0].block_id, item.model_dump())
+                    break
+                except (
+                    ValidationError, BPipelineValidationError, GridPlanError, RuntimeError
+                ) as error:
+                    if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                        raise
+                    if (
+                        raw_response is not None and raw_response.error is not None
+                        and raw_response.error.code != "INVALID_UPSTREAM_INPUT"
+                    ):
+                        raise
+                    if on_rejected_b2_output is not None:
+                        on_rejected_b2_output(
+                            0, api_attempt, str(error),
+                            raw_response.model_dump() if raw_response is not None
+                            else candidate.model_dump() if candidate is not None
+                            else {"unparsed_response": True, "validation_error": str(error)},
+                        )
+                    if raw_response is not None and raw_response.error is not None:
+                        if upstream_input_retries >= 1:
+                            raise BPipelineValidationError(
+                                f"B2 batch {batch_number} returned INVALID_UPSTREAM_INPUT "
+                                "again after a Responses API correction: "
+                                f"{raw_response.error.message}"
+                            ) from error
+                        upstream_input_retries += 1
+                        partial_base = None
+                        partial_beat_groups = None
+                        feedback = _professional_b2_invalid_input_feedback(
+                            raw_response.error, image_supplied=image_url is not None,
+                            batch_number=batch_number, total_batches=total_batches,
+                            block_ids=batch_ids,
+                        )
+                        continue
+                    if validation_retries >= MAX_VALIDATION_RETRIES:
+                        raise BPipelineValidationError(
+                            f"B2 batch {batch_number} failed after "
+                            f"{MAX_VALIDATION_RETRIES} validation retries: {error}"
+                        ) from error
+                    validation_retries += 1
+                    failed_groups = _professional_b2_failed_beat_groups(error)
+                    if failed_groups is not None and candidate_is_complete and candidate is not None:
+                        partial_base = candidate.model_copy(deep=True)
+                        partial_beat_groups = failed_groups
+                        feedback = _professional_b2_partial_feedback(
+                            error, partial_beat_groups, partial_base,
+                        )
+                    elif partial_beat_groups is not None and partial_base is not None:
+                        feedback = _professional_b2_partial_feedback(
+                            error,
+                            partial_beat_groups,
+                            partial_base,
+                            correction_error=error,
+                        )
+                    else:
+                        current_batch_response = (
+                            raw_response
+                            if isinstance(raw_response, ProfessionalB2BatchOutput)
+                            else None
+                        )
+                        feedback = _professional_b2_batch_retry_feedback(
+                            error,
+                            batch_number=batch_number,
+                            total_batches=total_batches,
+                            block_ids=batch_ids,
+                            previous=current_batch_response,
+                        )
+                except Exception as error:
+                    status_code = getattr(error, "status_code", None)
+                    if not isinstance(status_code, int) or status_code < 500:
+                        raise
+                    if on_rejected_b2_output is not None:
+                        on_rejected_b2_output(
+                            0, api_attempt, str(error),
+                            {
+                                "api_error": str(error),
+                                "status_code": status_code,
+                                "request_id": getattr(error, "request_id", None),
+                            },
+                        )
+                    if server_error_retries >= 1:
+                        raise BPipelineValidationError(
+                            f"B2 batch {batch_number} Responses API returned HTTP "
+                            f"{status_code} after its retry budget: {error}"
+                        ) from error
+                    server_error_retries += 1
+                    retry_note = (
+                        f"The previous Responses API request for batch {batch_number} "
+                        f"ended with HTTP {status_code} before a structured result. "
+                        "Retry only the current batch and preserve accepted prior batches."
+                    )
+                    feedback = f"{feedback}\n\n{retry_note}"
+                    continue
+
+        final_plan = WholeProfessionalB2Output(
+            pipeline_stage="B2", narrative_core=b11.narrative_core,
+            blocks=[item.blocks[0] for item in accepted], error=None,
+        )
+        if on_output is not None:
+            on_output("B2", None, final_plan.model_dump())
+        return accepted
 
     b2_started = perf_counter()
     try:
@@ -1825,12 +2721,11 @@ async def run_b_pipeline(
                     _professional_grid_preflight(_professional_plan(professional_results))
                     break
                 except GridPlanError as error:
-                    match = re.search(r"(?:at |description at )(\d+)[A-Z]+", str(error))
-                    if match is None:
+                    block_id = _grid_error_block_id(error)
+                    if block_id is None:
                         raise BPipelineValidationError(
                             f"B2 grid preflight failed before B2.1: {error}"
                         ) from error
-                    block_id = int(match.group(1))
                     if b2_correction_counts.get(block_id, 0) >= MAX_VALIDATION_RETRIES:
                         raise BPipelineValidationError(
                             f"B2 block {block_id} exhausted retries before B2.1 grid preflight"
@@ -1876,6 +2771,7 @@ async def run_b_pipeline(
 
         async def direct_one(
             group_number: int, group: tuple[str, ...], feedback: str = "",
+            previous_visuals: dict[str, ProfessionalCTAVisualBeat] | None = None,
         ) -> dict[str, ProfessionalCTAVisualBeat]:
             return await direct_professional_cta(
                 group_number, group, cta_merged_b12,
@@ -1884,6 +2780,7 @@ async def run_b_pipeline(
                 on_input=on_input, on_output=on_output,
                 on_api_response=on_api_response,
                 on_call_duration=on_call_duration, correction=feedback,
+                previous_visuals=previous_visuals,
             )
 
         if not cta_overrides:
@@ -1896,22 +2793,23 @@ async def run_b_pipeline(
         # The merged CTA and ordinary B2 must obey the global audio/grid
         # constraints before B2.1 or any paid image work.
         for attempt in range(MAX_VALIDATION_RETRIES + 1):
+            audio_overflows: list[list[tuple[str, int]]] = []
             try:
                 final_cta_plan = _professional_plan(
                     [x for x in b2_results if isinstance(x, ProfessionalB2Output)],
                     cta_groups=cta_groups, cta_overrides=cta_overrides,
                 )
-                spoken_run = 0
-                for block in final_cta_plan["blocks"]:
-                    for beat in block["beats"]:
-                        if beat["audio"]:
-                            spoken_run += len(beat["text"].strip())
-                            if spoken_run > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
-                                raise BPipelineValidationError(
-                                    "CTA merged audio=true run exceeds 120 characters"
-                                )
-                        else:
-                            spoken_run = 0
+                audio_overflows = _overlong_audio_runs_in_plan(final_cta_plan)
+                if audio_overflows:
+                    descriptions = [
+                        ", ".join(f"{beat_id} ({characters})" for beat_id, characters in run)
+                        + f" total {sum(characters for _, characters in run)} characters"
+                        for run in audio_overflows
+                    ]
+                    raise BPipelineValidationError(
+                        "CTA merged audio=true runs exceed 120 characters: "
+                        + " || ".join(descriptions)
+                    )
                 _professional_grid_preflight(final_cta_plan)
                 break
             except (BPipelineValidationError, GridPlanError, ValueError) as exc:
@@ -1919,14 +2817,90 @@ async def run_b_pipeline(
                     raise BPipelineValidationError(
                         f"CTA merged plan failed validation: {exc}"
                     ) from exc
-                # B2 is frozen. Only B2 CTA may correct the invalid merge.
+
+                feedback_by_group: dict[int, str] = {}
+                if audio_overflows:
+                    for group_number, group in enumerate(cta_groups, 1):
+                        group_set = set(group)
+                        relevant = [
+                            run for run in audio_overflows
+                            if any(beat_id in group_set for beat_id, _ in run)
+                        ]
+                        if not relevant:
+                            continue
+                        lines = [
+                            "VALIDATION FAILED: merged CTA presenter audio run",
+                            "Correct only this CTA group; preserve its frozen beat text and IDs.",
+                        ]
+                        for run in relevant:
+                            details = ", ".join(
+                                f"{beat_id} ({characters} characters)"
+                                for beat_id, characters in run
+                            )
+                            cta_members = [
+                                beat_id for beat_id, _ in run if beat_id in group_set
+                            ]
+                            lines.append(
+                                f"- Global run: {details}; total "
+                                f"{sum(characters for _, characters in run)} characters "
+                                f"(maximum {_MAX_CONSECUTIVE_AVATAR_CHARACTERS}). "
+                                f"CTA beats in this run: {', '.join(cta_members)}."
+                            )
+                        lines.extend((
+                            "Break every listed run by changing the minimum number of "
+                            "discretionary CTA beats in this group from avatar/avatar_media "
+                            "to a faithful media_image or media_video with audio=false. "
+                            "Generated CTA B-roll must retain the ebook reference and "
+                            "reference_sources=['ebook']; keep the beat text unchanged.",
+                            "Preserve every valid previous choice below. Return the complete "
+                            "CTA group, one entry per supplied beat, changing only what is "
+                            "needed to satisfy the listed global runs.",
+                            "Previous CTA decisions for this group:",
+                            json.dumps(
+                                [cta_overrides[beat_id].model_dump()
+                                 for beat_id in group if beat_id in cta_overrides],
+                                ensure_ascii=False, separators=(",", ":"),
+                            ),
+                        ))
+                        feedback_by_group[group_number] = "\n".join(lines)
+                else:
+                    match = re.search(r"\b(\d+[A-Z]+)\b", str(exc))
+                    target_ids = {match.group(1)} if match else set()
+                    for group_number, group in enumerate(cta_groups, 1):
+                        if not target_ids or target_ids.intersection(group):
+                            feedback_by_group[group_number] = (
+                                "VALIDATION FAILED: B2 CTA merged-plan correction\n"
+                                f"- Failure: {exc}\n"
+                                "Correct only this supplied CTA group. Preserve frozen narration "
+                                "and all valid previous visuals. Return the complete group.\n"
+                                "Previous CTA decisions: "
+                                + json.dumps(
+                                    [cta_overrides[beat_id].model_dump()
+                                     for beat_id in group if beat_id in cta_overrides],
+                                    ensure_ascii=False, separators=(",", ":"),
+                                )
+                            )
+                if not feedback_by_group:
+                    feedback_by_group = {
+                        group_number: f"VALIDATION FAILED: {exc}. Correct this CTA group only."
+                        for group_number in range(1, len(cta_groups) + 1)
+                    }
+                selected_numbers = set(feedback_by_group)
                 repaired = await asyncio.gather(*(
-                    direct_one(i, group, str(exc))
+                    direct_one(
+                        i, group, feedback_by_group[i],
+                        previous_visuals={
+                            beat_id: cta_overrides[beat_id]
+                            for beat_id in group if beat_id in cta_overrides
+                        },
+                    )
                     for i, group in enumerate(cta_groups, 1)
+                    if i in selected_numbers
                 ))
-                cta_overrides = {
-                    k: v for values in repaired for k, v in values.items()
-                }
+                updated_overrides = dict(cta_overrides)
+                for values in repaired:
+                    updated_overrides.update(values)
+                cta_overrides = updated_overrides
 
     result = BPipelineResult(
         b11=b11,

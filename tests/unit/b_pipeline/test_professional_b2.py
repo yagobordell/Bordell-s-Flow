@@ -14,10 +14,10 @@ from pydantic import ValidationError
 
 from ai_video_factory.bots.contracts import (
     B11Output,
+    ProfessionalB2BatchOutput,
     ProfessionalB2Output,
     ProfessionalVisualBeat,
     WholeB12Output,
-    WholeProfessionalB2Output,
 )
 from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.providers.image_grids import _grid_prompt, plan_image_jobs
@@ -87,7 +87,7 @@ def test_professional_prompt_has_no_stock_exclusions() -> None:
     assert "visual director and editor" in prompt
     assert "last beat of every `close` block" in prompt
     assert "`intro` — earn attention quickly" in prompt
-    assert "2–18 generated assets" in prompt
+    assert "may hold at most twenty" in prompt
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -626,7 +626,7 @@ def test_professional_schema_boundary_matches_current_contract(
                     }]}],
                     "error": None,
                 })
-            assert output_type is WholeProfessionalB2Output
+            assert output_type is ProfessionalB2BatchOutput
             attempts.append(instructions)
             block = json.loads(input_text)["blocks"][0]
             if block_type == "close" and len(attempts) > 1:
@@ -640,7 +640,7 @@ def test_professional_schema_boundary_matches_current_contract(
                     prompt="A quiet still-life photograph",
                     video_prompt=None, reference=False, audio=False,
                 )
-            return WholeProfessionalB2Output.model_validate({
+            return ProfessionalB2BatchOutput.model_validate({
                 "pipeline_stage": "B2",
                 "narrative_core": {
                     "central_question": "What?", "final_answer": "Answer."
@@ -661,7 +661,8 @@ def test_professional_schema_boundary_matches_current_contract(
     else:
         assert len(attempts) == 2
         assert len(rejected) == 1
-        assert "final close avatar" in attempts[1]
+        assert "VALIDATION FAILED: B2 batch 1/1" in attempts[1]
+        assert "Correct only this batch's block IDs: 1." in attempts[1]
         assert (beat.visual_type, beat.prompt, beat.reference, beat.audio) == (
             "avatar", None, False, True
         )
@@ -699,11 +700,11 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
                     }]}],
                     "error": None,
                 })
-            assert output_type is WholeProfessionalB2Output
+            assert output_type is ProfessionalB2BatchOutput
             attempts.append(instructions)
             if len(attempts) == 2:
-                assert "120-character audio=true cap" in instructions
-                assert "invalid visual/audio/reference assignments" in instructions
+                assert "VALIDATION FAILED: B2 batch 1/1" in instructions
+                assert "Correct only this batch's block IDs: 1." in instructions
             block = payload["blocks"][0]
             block["beats"][0].update(
                 visual_type="media_image" if len(attempts) == 1 else "media_video",
@@ -715,7 +716,7 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
                 reference=False,
                 audio=len(attempts) == 1,
             )
-            return WholeProfessionalB2Output.model_validate({
+            return ProfessionalB2BatchOutput.model_validate({
                 "pipeline_stage": "B2", "narrative_core": payload["narrative_core"],
                 "blocks": [block], "error": None,
             })

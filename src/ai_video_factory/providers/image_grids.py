@@ -9,10 +9,9 @@ No panel is cropped or materialized as a separate image in this stage.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
-_NUMBERED = re.compile(r"^([1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
+from .grid_numbering import MAX_GRID_SEQUENCE_PANELS, parse_grid_marker
 _SHAPES = {
     2: (2, 2), 3: (2, 2), 4: (2, 2),
     5: (3, 2), 6: (3, 2),
@@ -43,12 +42,12 @@ def _grid_prompt(
     voice_over: list[str] = []
     for number, panel in enumerate(panels, 1):
         description = panel["description"].strip()
-        numbered = _NUMBERED.match(description.lstrip())
-        if numbered is None:
+        marker = parse_grid_marker(description.lstrip())
+        if marker is None:
             descriptions.append(f"{number}. {description}")
         elif visual_style == "profesional":
-            # A backward filler can precede the numbered sequence in the grid.
-            descriptions.append(f"{number}. {numbered.group(2)}")
+            # Physical cell order replaces the logical letter/ordinal marker.
+            descriptions.append(f"{number}. {marker.body}")
         else:
             descriptions.append(description)
         text = panel.get("text")
@@ -119,7 +118,11 @@ def _grid_prompt(
 def _professional_grid_chunks(
     run: list[dict[str, Any]],
 ) -> list[list[dict[str, Any]]]:
-    """Partition logical continuity into 2–4-cell grids without splitting beat subshots."""
+    """Partition continuity into physical grids without splitting beat subshots.
+
+    Video panels keep native 1080p cells in 2x2 grids; still-only runs can use
+    3x3 grids.
+    """
     from functools import lru_cache
 
     units: list[list[dict[str, Any]]] = []
@@ -131,6 +134,11 @@ def _professional_grid_chunks(
         else:
             units.append([asset])
 
+    video_present = any(
+        asset["visual_type"] in {"media_video", "avatar"} for asset in run
+    )
+    max_panels = 4 if video_present else 9
+
     @lru_cache(None)
     def solve(index: int) -> tuple[tuple[int, ...], ...] | None:
         if index == len(units):
@@ -139,9 +147,9 @@ def _professional_grid_chunks(
         count = 0
         for end in range(index + 1, len(units) + 1):
             count += len(units[end - 1])
-            if count > 4:
+            if count > max_panels:
                 break
-            if count < 2:
+            if count < 2 and not video_present:
                 continue
             tail = solve(end)
             if tail is not None:
@@ -151,25 +159,24 @@ def _professional_grid_chunks(
         return min(
             candidates, key=lambda groups: (
                 len(groups),
+                sum(
+                    sum(len(units[i]) for i in group) == 1
+                    for group in groups
+                ),
                 tuple(-sum(len(units[i]) for i in group) for group in groups),
             ),
         )
 
     grouping = solve(0)
     if grouping is None:
-        raise GridPlanError("Cannot split numbered continuity into 2–4-panel grids")
+        raise GridPlanError("Cannot split numbered continuity into 2–9-panel grids")
     return [[asset for i in group for asset in units[i]] for group in grouping]
 
 
 def plan_image_jobs(
     plan: dict[str, Any], described: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Group logical numbered visual assets, then plan 2–4 cell grids.
-
-    A beat may now own two image assets. Asset identity, not parent beat identity,
-    determines generation state and grid position. Parent beat_id is retained for
-    narration/timing downstream.
-    """
+    """Plan legacy consecutive grids and lettered nonconsecutive B2 grids."""
     visual_style = plan.get("visual_style", "casero")
     if visual_style not in {"casero", "profesional"}:
         raise GridPlanError("Unknown B2 visual style")
@@ -179,150 +186,171 @@ def plan_image_jobs(
 
     described_by_beat: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for item in described:
-        described_by_beat.setdefault(
-            (item["block_id"], item["beat_id"]), []
-        ).append(item)
+        described_by_beat.setdefault((item["block_id"], item["beat_id"]), []).append(item)
     for items in described_by_beat.values():
         items.sort(key=lambda item: int(item.get("subshot_index", 1)))
 
     positions: dict[tuple[int, str], int] = {}
-    runs: list[list[dict[str, Any]]] = []
+    logical_groups: list[tuple[list[dict[str, Any]], str | None, bool]] = []
+    lettered_members: dict[tuple[int, str], list[tuple[dict[str, Any], int]]] = {}
     cursor = 0
+
     for block in plan["blocks"]:
-        current: list[dict[str, Any]] = []
+        legacy_current: list[dict[str, Any]] = []
         previous_cta: int | None = None
 
-        def finish() -> None:
-            nonlocal current
-            if current:
-                if len(current) < 2:
+        def finish_legacy() -> None:
+            nonlocal legacy_current
+            if legacy_current:
+                if len(legacy_current) < 2:
                     raise GridPlanError(
-                        f"Orphan numbered description at {current[0]['beat_id']}"
+                        f"Orphan numbered description at {legacy_current[0]['beat_id']}"
                     )
-                runs.append(current)
-                current = []
+                logical_groups.append((legacy_current, None, True))
+                legacy_current = []
 
         for beat in block["beats"]:
             if beat.get("cta_group_id") != previous_cta:
-                finish()
+                finish_legacy()
             previous_cta = beat.get("cta_group_id")
-            sources = described_by_beat.get(
-                (block["block_id"], beat["beat_id"]), []
-            )
+            sources = described_by_beat.get((block["block_id"], beat["beat_id"]), [])
             if not sources:
-                finish()
+                finish_legacy()
                 cursor += 1
                 continue
             for source in sources:
                 source_key = key(source)
                 if source_key in positions:
-                    raise GridPlanError(
-                        f"Duplicate visual asset position: {source_key[1]}"
-                    )
+                    raise GridPlanError(f"Duplicate visual asset position: {source_key[1]}")
                 positions[source_key] = cursor
                 cursor += 1
+                marker = parse_grid_marker(source.get("description", ""))
                 if source.get("generation") == "independent":
-                    finish()
+                    finish_legacy()
+                    if marker is not None and marker.style == "lettered":
+                        raise GridPlanError(
+                            f"Lettered B2 grid asset {source['beat_id']} cannot use independent generation"
+                        )
                     continue
-                matched = _NUMBERED.match(source["description"].lstrip())
-                if matched is None:
-                    finish()
+                if marker is None:
+                    finish_legacy()
                     continue
-                number = int(matched.group(1))
+                if marker.style == "lettered":
+                    finish_legacy()
+                    if visual_style != "profesional":
+                        raise GridPlanError("Lettered grids are supported only for professional B2")
+                    assert marker.sequence_id is not None
+                    lettered_members.setdefault(
+                        (block["block_id"], marker.sequence_id), []
+                    ).append((source, marker.panel_number))
+                    continue
+
+                number = marker.panel_number
                 if number == 1:
-                    finish()
-                    current = [source]
-                elif current and number == len(current) + 1:
-                    current.append(source)
+                    finish_legacy()
+                    legacy_current = [source]
+                elif legacy_current and number == len(legacy_current) + 1:
+                    legacy_current.append(source)
                 else:
                     raise GridPlanError(
                         f"Invalid B2 continuity numbering at {source['beat_id']}: "
-                        f"expected {len(current) + 1 if current else 1}, got {number}"
+                        f"expected {len(legacy_current) + 1 if legacy_current else 1}, got {number}"
                     )
-                if len(current) == (18 if visual_style == "profesional" else 9):
-                    finish()
-        finish()
+                if len(legacy_current) == (
+                    MAX_GRID_SEQUENCE_PANELS if visual_style == "profesional" else 9
+                ):
+                    finish_legacy()
+        finish_legacy()
 
-    grid_runs: list[list[dict[str, Any]]] = []
+    orphan_keys = set()
+    for (block_id, label), members in lettered_members.items():
+        members.sort(key=lambda item: positions[key(item[0])])
+        numbers = [number for _asset, number in members]
+        expected = list(range(1, len(members) + 1))
+        if len(members) < 2:
+            # A lone lettered panel has no grid to join; it is generated as a standalone image.
+            orphan_keys.update(key(asset) for asset, _number in members)
+            continue
+        if len(members) > MAX_GRID_SEQUENCE_PANELS:
+            raise GridPlanError(
+                f"Lettered B2 grid {label} in block {block_id} has {len(members)} panels; "
+                f"the maximum is {MAX_GRID_SEQUENCE_PANELS}, so continue the development under a new letter"
+            )
+        if numbers != expected:
+            details = ", ".join(
+                f"{asset['beat_id']}={label}{number}" for asset, number in members
+            )
+            raise GridPlanError(
+                f"Lettered B2 grid {label} in block {block_id} must number its panels "
+                f"1, 2, ..., {len(members)} in narrative order without restarting; got [{details}]. "
+                "A new development in the same block needs the next unused letter"
+            )
+        cta_ids = {asset.get("cta_group_id") for asset, _number in members}
+        if len(cta_ids) > 1 or any(cta_id is not None for cta_id in cta_ids):
+            raise GridPlanError(
+                f"Lettered B2 grid {label} crosses a CTA ownership boundary"
+            )
+        logical_groups.append(([asset for asset, _number in members], label, False))
+
+    logical_groups.sort(key=lambda item: positions[key(item[0][0])])
     standalone_numbered: set[tuple[int, str]] = set()
-    for run in runs:
-        avatar_media_count = sum(
-            asset["visual_type"] == "avatar_media" for asset in run
-        )
-        if 0 < avatar_media_count < len(run):
-            standalone_numbered.update(key(asset) for asset in run)
+    standalone_numbered.update(orphan_keys)
+    grid_groups: list[tuple[list[dict[str, Any]], str | None, bool]] = []
+    for assets, label, allow_fillers in logical_groups:
+        avatar_media_count = sum(asset["visual_type"] == "avatar_media" for asset in assets)
+        if 0 < avatar_media_count < len(assets):
+            standalone_numbered.update(key(asset) for asset in assets)
         else:
-            grid_runs.append(run)
+            grid_groups.append((assets, label, allow_fillers))
 
-    numbered = {
-        key(asset) for run in grid_runs for asset in run
-    }
+    numbered = {key(asset) for assets, _label, _fill in grid_groups for asset in assets}
     forced_independent = {
-        key(asset) for asset in described
-        if asset.get("generation") == "independent"
+        key(asset) for asset in described if asset.get("generation") == "independent"
     }
     standalone_keys = standalone_numbered | forced_independent
     described_by_key = {key(asset): asset for asset in described}
-    standalone = {
-        asset_key: described_by_key[asset_key] for asset_key in standalone_keys
-    }
+    standalone = {asset_key: described_by_key[asset_key] for asset_key in standalone_keys}
     available = {
-        key(asset): asset
-        for asset in described
+        key(asset): asset for asset in described
         if key(asset) not in numbered and key(asset) not in standalone_keys
     }
 
     grids: list[dict[str, Any]] = []
-    for logical_run in grid_runs:
+    for logical_run, label, allow_fillers in grid_groups:
         chunks = (
             _professional_grid_chunks(logical_run)
             if visual_style == "profesional" else [logical_run]
         )
         for chain_index, run in enumerate(chunks):
-            columns, rows = _SHAPES[len(run)]
+            columns, rows = (2, 2) if len(run) == 1 else _SHAPES[len(run)]
             count = columns * rows
-            avatar_media_grid = all(
-                asset["visual_type"] == "avatar_media" for asset in run
-            )
+            avatar_media_grid = all(asset["visual_type"] == "avatar_media" for asset in run)
             first = positions[key(run[0])]
             last = positions[key(run[-1])]
-            allow_fillers = len(chunks) == 1
+            use_fillers = allow_fillers and len(chunks) == 1
             forward = sorted(
                 (
                     asset_key for asset_key in available
-                    if (
-                        positions[asset_key] > last
-                        and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
-                        and (
-                            available[asset_key]["visual_type"] == "avatar_media"
-                        ) == avatar_media_grid
-                    )
-                ),
-                key=positions.__getitem__,
-            )[:count - len(run)] if allow_fillers else []
+                    if positions[asset_key] > last
+                    and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
+                    and (available[asset_key]["visual_type"] == "avatar_media") == avatar_media_grid
+                ), key=positions.__getitem__,
+            )[:count - len(run)] if use_fillers else []
             missing = count - len(run) - len(forward)
             backward = sorted(
                 (
                     asset_key for asset_key in available
-                    if (
-                        positions[asset_key] < first
-                        and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
-                        and (
-                            available[asset_key]["visual_type"] == "avatar_media"
-                        ) == avatar_media_grid
-                    )
-                ),
-                key=positions.__getitem__,
-                reverse=True,
-            )[:missing] if allow_fillers else []
+                    if positions[asset_key] < first
+                    and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
+                    and (available[asset_key]["visual_type"] == "avatar_media") == avatar_media_grid
+                ), key=positions.__getitem__, reverse=True,
+            )[:missing] if use_fillers else []
             selected = [available[asset_key] for asset_key in forward + backward] + run
             for asset_key in forward + backward:
                 del available[asset_key]
             selected.sort(key=lambda asset: positions[key(asset)])
 
-            has_video = any(
-                asset["visual_type"] in {"media_video", "avatar"} for asset in selected
-            )
+            has_video = any(asset["visual_type"] in {"media_video", "avatar"} for asset in selected)
             panel_width, panel_height = (
                 (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
                 if avatar_media_grid else (1920, 1080)
@@ -333,14 +361,8 @@ def plan_image_jobs(
             selected.extend(
                 {
                     "block_id": run[0]["block_id"],
-                    "beat_id": (
-                        f"{run[0]['block_id']}BLACKPANEL"
-                        f"{chr(ord('A') + index)}"
-                    ),
-                    "asset_id": (
-                        f"{run[0]['block_id']}BLACKPANEL"
-                        f"{chr(ord('A') + index)}"
-                    ),
+                    "beat_id": f"{run[0]['block_id']}BLACKPANEL{chr(ord('A') + index)}",
+                    "asset_id": f"{run[0]['block_id']}BLACKPANEL{chr(ord('A') + index)}",
                     "visual_type": "media_image",
                     "description": BLACK_PANEL_DESCRIPTION,
                     "source": BLACK_PANEL_SOURCE,
@@ -353,18 +375,19 @@ def plan_image_jobs(
                     **asset,
                     "row": index // columns,
                     "column": index % columns,
-                    "source": asset.get("source") or (
-                        "numbered" if key(asset) in numbered else "filler"
-                    ),
+                    "source": asset.get("source") or ("numbered" if key(asset) in numbered else "filler"),
                 }
                 for index, asset in enumerate(selected)
             ]
             anchor = run[0]
+            chain_id = (
+                f"{anchor['block_id']}:{label}"
+                if label is not None else
+                f"{logical_run[0]['block_id']}:{logical_run[0].get('asset_id', logical_run[0]['beat_id'])}"
+            )
             grids.append({
-                "continuity_chain_id": (
-                    f"{logical_run[0]['block_id']}:"
-                    f"{logical_run[0].get('asset_id', logical_run[0]['beat_id'])}"
-                ),
+                "continuity_chain_id": chain_id,
+                **({"continuity_sequence_id": label} if label is not None else {}),
                 "continuity_index": chain_index,
                 **({
                     "continuity_previous_asset_id": chunks[chain_index - 1][0].get(
@@ -385,12 +408,10 @@ def plan_image_jobs(
                 "grid": {
                     "columns": columns, "rows": rows,
                     "panel_width": panel_width, "panel_height": panel_height,
-                    "width": columns * panel_width,
-                    "height": rows * panel_height,
+                    "width": columns * panel_width, "height": rows * panel_height,
                     "numbered_beat_ids": [asset["beat_id"] for asset in run],
-                    "numbered_asset_ids": [
-                        asset.get("asset_id", asset["beat_id"]) for asset in run
-                    ],
+                    "numbered_asset_ids": [asset.get("asset_id", asset["beat_id"]) for asset in run],
+                    **({"sequence_id": label} if label is not None else {}),
                 },
                 "panels": panels,
                 **({"video_panel_ids": [
@@ -408,8 +429,7 @@ def plan_image_jobs(
                 {"size": f"{_AVATAR_MEDIA_PANEL_WIDTH}x{_AVATAR_MEDIA_PANEL_HEIGHT}"}
                 if asset["visual_type"] == "avatar_media"
                 else {"size": "1920x1088", "video_source": True}
-                if visual_style == "profesional"
-                and asset["visual_type"] in {"media_video", "avatar"}
+                if visual_style == "profesional" and asset["visual_type"] in {"media_video", "avatar"}
                 else {}
             ),
         }
@@ -419,11 +439,7 @@ def plan_image_jobs(
     def job_position(job: dict[str, Any]) -> int:
         if job.get("grid") is None:
             return positions[key(job)]
-        return min(
-            positions[key(panel)]
-            for panel in job["panels"]
-            if panel.get("source") != BLACK_PANEL_SOURCE
-        )
+        return min(positions[key(panel)] for panel in job["panels"] if panel.get("source") != BLACK_PANEL_SOURCE)
 
     jobs.sort(key=job_position)
     return jobs

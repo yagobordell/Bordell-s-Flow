@@ -50,6 +50,7 @@ class OpenAIProvider:
         self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
 
     supports_response_continuation = True
+    supports_reasoning_effort_override = True
 
     async def generate_structured[StructuredOutputT: BaseModel](
         self,
@@ -60,6 +61,7 @@ class OpenAIProvider:
         output_type: type[StructuredOutputT],
         input_image_url: str | None = None,
         previous_response_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> StructuredOutputT:
         response = await self._parse_with_flex_fallback(
             model=model,
@@ -72,6 +74,7 @@ class OpenAIProvider:
                 if input_image_url is not None else input_text
             ),
             text_format=output_type,
+            reasoning_effort=reasoning_effort,
             **({"previous_response_id": previous_response_id} if previous_response_id else {}),
         )
 
@@ -94,6 +97,7 @@ class OpenAIProvider:
         input_image_url: str | None = None,
         input_image_urls: list[str] | None = None,
         previous_response_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> tuple[StructuredOutputT, Any]:
         """Return validated structured output and its original, usage-bearing API response.
 
@@ -117,6 +121,7 @@ class OpenAIProvider:
             instructions=instructions,
             input=input_payload,
             text_format=output_type,
+            reasoning_effort=reasoning_effort,
             **({"previous_response_id": previous_response_id} if previous_response_id else {}),
         )
         parsed = response.output_parsed
@@ -126,10 +131,12 @@ class OpenAIProvider:
             raise RuntimeError("OpenAI returned an unexpected structured output type")
         return parsed, response
 
-    async def _parse_with_flex_fallback(self, **kwargs: Any) -> Any:
+    async def _parse_with_flex_fallback(
+        self, *, reasoning_effort: str | None = None, **kwargs: Any
+    ) -> Any:
         request_kwargs = {
             **kwargs,
-            "reasoning": {"effort": self._reasoning_effort},
+            "reasoning": {"effort": reasoning_effort or self._reasoning_effort},
             "service_tier": self._service_tier,
         }
 

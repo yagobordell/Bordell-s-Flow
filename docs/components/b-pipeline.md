@@ -26,31 +26,39 @@ Structured Outputs is appended at runtime.
   pulses, not mandatory cuts or isolated visual assets. Frozen block boundaries
   and exact source slices are preserved, with at most 40 whitespace-separated
   words and 100 stripped characters per beat (no minimum character limit).
-- B1.2 is validated as a single complete response: every original block and its
-  sequential beat IDs must be present, and all beat texts must reconstruct every
-  block and the entire original script **exactly**, including punctuation and
-  whitespace. Up to two validation correction calls rerun the **whole video**,
-  not an independently corrected block. The authoritative global request and
+- B1.2 first segments the complete video in one response. The application
+  restores exact source punctuation and whitespace, then verifies that the
+  canonical beat texts reconstruct every block and the entire original script
+  **exactly**. If validation fails, Responses API retries identify the concrete
+  errors across blocks and request only the affected B1.1 block groups; the
+  application merges those groups and revalidates the complete plan, allowing up
+  to two correction attempts per failing block. The authoritative request and
   result are stored in `B1.2/input.json` and `B1.2/output.json`, rejected
   attempts in `B1.2/rejected_attempt_<n>.json`. Once fully validated, the
   application persists each block's beats under `B1.2/block_<id>/output.json`
   for downstream checkpoints and `B1.2/merged_output.json` for full-video readers.
-- Professional B2 also receives the **full script and all completed B1.2 beats**
-  in one call, with the original avatar reference and any CTA-reserved beat groups.
-  It directs the **whole video's** visual progression without moving a beat or
-  changing its narration. It assigns the original avatar, avatar with support
-  image, B-roll still or B-roll video for every beat, and respects the 120-character
-  maximum consecutive `audio=true` narration run across block boundaries.
-  Up to two corrective calls replan the full video; rejected responses are stored
-  in `B2/rejected_attempt_<n>.json`. Validated `B2/block_<id>/output.json` and
-  `B2/merged_output.json` continue to serve existing downstream components.
+- Professional B2 directs consecutive batches of up to four B1.2 blocks in one
+  Responses API conversation. The raw script is not sent; each batch includes
+  frozen source beats, the narrative core, the original avatar reference, and
+  any CTA-reserved beat groups. Each batch is validated and
+  accepted before the next is requested. The application validates cumulative
+  audio runs and visual grids across accepted batches; if validation finds
+  specific failing beats, B2 returns only those beat groups and the application
+  merges them while preserving all other decisions and earlier corrections.
+  The final B2 plan covers every beat and keeps the 120-character maximum for
+  consecutive `audio=true` narration across block and batch boundaries.
+  Rejected responses are stored in `B2/rejected_attempt_<n>.json`. Validated
+  `B2/block_<id>/output.json` and `B2/merged_output.json` continue to serve
+  existing downstream components.
 - **Casero B2 remains per-block and parallel.** It preserves upstream narration
   and assigns the existing four visual types under its own unchanged rules.
   Professional B2.1 remains a full-video audit of the frozen visual carriers.
 - `--from B1.2` and `--from B2` still consume validated checkpoints, but
   incomplete per-block outputs are **not** stitched together into a supposedly
   global B1.2 or professional B2 decision. Replanning those stages requires
-  a new whole-video call.
+  a new whole-video call. Resuming professional B2 reuses complete CTA detector
+  and director checkpoints; if any director output is missing, it reuses the
+  detector groups and regenerates all CTA directors after B2.
 
 ## Professional B2: demonstrator identity, animation prompts and speaking intent
 
@@ -139,9 +147,17 @@ person and setting stay continuous while neighboring images emphasize
 different framing/details instead of duplicating nearly identical views.
 The professional image-grid prompt explicitly preserves each panel's
 distinct shot composition rather than normalizing all panels to one angle.
-Professional B2 compares visual decisions and continuity across **all**
-blocks in one request. The logical numbered image-grid constraint remains
-block-local, even when the same scene continues into the next block.
+Professional B2 directs the video through one sequential Responses API
+conversation, in batches of up to four blocks. A lettered logical grid uses a
+stable uppercase label plus a one-based frame number at the start of each
+prompt (for example, `A1. ...`, `A2. ...`). Beats carrying the same label may be
+nonconsecutive and interleaved with other grid labels or ordinary/avatar beats;
+the planner collects them by label, validates complete ordered numbering, and
+allows up to twenty panels per sequence. Still-only sequences are packed into
+physical grids of up to nine panels; sequences containing video use 2x2 grids
+to preserve native 1080p panels. Lettered groups remain block-local and are
+split at CTA boundaries. Existing numeric consecutive runs remain supported
+for saved plans and legacy B2 output.
 
 **Strict professional audio/type contract:** `media_image` MUST have
 `audio: false` (ordinary master narration may still play as voice-over).

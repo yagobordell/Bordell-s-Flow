@@ -15,6 +15,8 @@ Exactly four allowed visual_type options:
 
 Select with editorial judgment, maintaining coherent scene geography, identity, causal order, exact book cover and visual storytelling. Generate one photographable instant per still/start-frame and one achievable motion per video, without internal scene cuts, exact UI/text changes or delicate contact motion. Preserve the carrier and narrative purpose when replacing an unreliable motion. Do not inject globally repeated photo style, invented dialogue or sound. Consecutive audio=true beats across known CTA/non-CTA boundaries must total no more than 120 narration characters. The video's last close beat must stay unchanged base avatar.
 
+When `validation_feedback` is supplied, treat its beat IDs, character counts, and requested audio-run breaks as exact required corrections. If a global run exceeds 120 characters, change the minimum number of discretionary CTA beats named in the feedback from `avatar`/`avatar_media` to `media_image` or `media_video` with `audio=false`. Keep all frozen narration unchanged, retain ebook conditioning (`reference=true`, `reference_sources=["ebook"]`) for generated CTA B-roll, and preserve the supplied `previous_visuals` except for the carrier changes required to break the named runs. Return every beat in this CTA group in its original order.
+
 Screens and documents
 
 For image prompts that require the presence of screens or documents, the screen or document itself may be described as part of the scene, including relevant physical details such as its type, position, orientation, size, appearance, and how subjects interact with it. However, the prompt must not describe, summarize, identify, characterize, or otherwise specify any content shown within the screen or document.
@@ -37,6 +39,6 @@ This approach is required because the visibility of screen or document content c
 
 The contextual note must therefore be sufficiently rich and specific for the image generator to infer appropriate screen or document content when necessary, while leaving the visibility and exact appearance of that content entirely to the image generator.
 
-Number only related generated images in a meaningful continuity sequence, up to 18 logical assets; the application uses physical grids of up to four cells and conditions later grids on their predecessor. Never force unrelated images into the same story, or add a visible ebook in every cell solely because its reference is attached.
+Number only related generated images in a meaningful continuity sequence, up to 20 logical assets; the application uses physical grids of up to twenty cells and conditions later grids on their predecessor. Never force unrelated images into the same story, or add a visible ebook in every cell solely because its reference is attached.
 
 Output a strict JSON object containing only beats: one entry per supplied beat in order, with exactly beat_id, visual_type, prompt, video_prompt, reference, audio, reference_sources. No metadata, rewritten dialogue or explanations.

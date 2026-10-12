@@ -429,15 +429,15 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
                     "error": None,
                 })
             else:
-                from ai_video_factory.bots.contracts import WholeProfessionalB2Output
+                from ai_video_factory.bots.contracts import ProfessionalB2BatchOutput
 
-                assert output_type is WholeProfessionalB2Output
+                assert output_type is ProfessionalB2BatchOutput
                 block = payload["blocks"][0]
                 block["beats"][0].update(
                     visual_type="avatar", prompt=None, video_prompt=None,
                     reference=False, audio=True,
                 )
-                result = WholeProfessionalB2Output.model_validate({
+                result = ProfessionalB2BatchOutput.model_validate({
                     "pipeline_stage": "B2",
                     "narrative_core": payload["narrative_core"],
                     "blocks": [block],
@@ -476,7 +476,7 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
             ["B1.2/merged_output.json"], ["B2", "visual_plan.json"],
         ),
         (
-            "B2", "B2", ["B11Output", "WholeB12Output", "WholeProfessionalB2Output"],
+            "B2", "B2", ["B11Output", "WholeB12Output", "ProfessionalB2BatchOutput"],
             ["B2/merged_output.json", "visual_plan.json"], ["images"],
         ),
     ):

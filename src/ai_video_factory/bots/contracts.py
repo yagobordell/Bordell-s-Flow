@@ -331,10 +331,24 @@ class WholeB12Output(StrictModel):
 
 class WholeProfessionalB2Input(StrictModel):
     """Professional video director receives every frozen block and beat."""
-    plain_script_for_recording: str = Field(min_length=1)
     narrative_core: NarrativeCore
     blocks: list[B2InputBlock] = Field(min_length=1)
     cta_groups: list[list[str]] | None = None
+
+
+class ProfessionalB2BatchInput(StrictModel):
+    """One sequential batch of up to four frozen source blocks."""
+    narrative_core: NarrativeCore
+    batch_number: int = Field(ge=1)
+    total_batches: int = Field(ge=1)
+    blocks: list[B2InputBlock] = Field(min_length=1, max_length=4)
+    cta_groups: list[list[str]] | None = None
+
+    @model_validator(mode="after")
+    def batch_within_run(self) -> "ProfessionalB2BatchInput":
+        if self.batch_number > self.total_batches:
+            raise ValueError("B2 batch_number cannot exceed total_batches")
+        return self
 
 
 class WholeProfessionalB2Output(StrictModel):
@@ -350,4 +364,46 @@ class WholeProfessionalB2Output(StrictModel):
                 raise ValueError("Whole professional B2 success requires core and all blocks")
         elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
             raise ValueError("Whole professional B2 error must null out success fields")
+        return self
+
+
+class ProfessionalB2CorrectionBlock(StrictModel):
+    """Only the named beats in one failed B2 validation group."""
+    block_id: int = Field(ge=1)
+    beats: list[ProfessionalVisualBeat] = Field(min_length=1)
+
+
+class ProfessionalB2CorrectionOutput(StrictModel):
+    """Sparse B2 correction response; unaffected beats are merged locally."""
+    pipeline_stage: Literal["B2"] | None
+    narrative_core: NarrativeCore | None
+    blocks: list[ProfessionalB2CorrectionBlock] | None
+    error: B2Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "ProfessionalB2CorrectionOutput":
+        if self.error is None:
+            if self.pipeline_stage != "B2" or self.narrative_core is None or not self.blocks:
+                raise ValueError("B2 targeted correction requires core and beat groups")
+        elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
+            raise ValueError("B2 correction error must null out success fields")
+        return self
+
+
+class ProfessionalB2BatchOutput(StrictModel):
+    """Validated visual output for the current B2 block batch only."""
+    pipeline_stage: Literal["B2"] | None
+    narrative_core: NarrativeCore | None
+    blocks: list[ProfessionalB2Block] | None
+    error: B2Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "ProfessionalB2BatchOutput":
+        if self.error is None:
+            if self.pipeline_stage != "B2" or self.narrative_core is None or not self.blocks:
+                raise ValueError("B2 batch output requires core and one or more blocks")
+            if len(self.blocks) > 4:
+                raise ValueError("B2 batch output cannot exceed four blocks")
+        elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
+            raise ValueError("B2 batch error must null out success fields")
         return self

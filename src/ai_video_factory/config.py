@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     openai_model: str = "gpt-6-luna"
     openai_reasoning_effort: str = "medium"
+    openai_b2_reasoning_effort: str = "medium"
 
     # AI33 is retained for Fish/voice only; B2 images use the official OpenAI API.
     ai33_api_key: str | None = None
