@@ -7,8 +7,8 @@ source-owned data; the planner never receives permission to rewrite source or ga
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from pydantic import ValidationError
