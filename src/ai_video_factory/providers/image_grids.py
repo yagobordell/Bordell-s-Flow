@@ -184,7 +184,7 @@ def plan_image_jobs(
     determines generation state and grid position. Parent beat_id is retained for
     narration/timing downstream.
     """
-    if plan.get("schema_version") == "b-pipeline-v1":
+    if plan.get("planning_origin") == "agent_b":
         from .agent_b_grids import plan_agent_b_image_jobs
 
         return plan_agent_b_image_jobs(plan, described)
