@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 _NUMBERED = re.compile(r"^([1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
+_GLOBAL_LABEL = re.compile(r"^([A-Z]{1,4}[1-9][0-9]*)\.\s+(.+)$", re.DOTALL)
 _SHAPES = {
     2: (2, 2), 3: (2, 2), 4: (2, 2),
     5: (3, 2), 6: (3, 2),
