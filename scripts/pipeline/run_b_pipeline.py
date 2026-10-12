@@ -257,6 +257,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output root; each script gets a child folder (default: data/output).",
     )
+    parser.add_argument(
+        "--agent-b", action="store_true",
+        help=(
+            "Opt-in unified Agent B director after B1.1; professional, new runs only. "
+            "Requires the isolated openai-agents environment. Legacy remains default."
+        ),
+    )
     parser.add_argument("--max-parallel-calls", type=int, default=8)
     parser.add_argument(
         "--style", "--b2-style", dest="visual_style",
@@ -320,6 +327,18 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
+    if getattr(args, "agent_b", False) and (
+        args.from_stage != "B1.1"
+        or args.visual_style not in {None, "profesional"}
+        or args.stop_stage in {"B1.1", "B1.2"}
+        or args.images_only or args.videos_only or args.regenerate_audio
+        or args.resume_audio or args.publish_only or args.youtube_only
+        or args.qr_only or args.list_scripts or args.list_avatars
+    ):
+        parser.error(
+            "--agent-b requires a new professional B1.1 planning run, "
+            "optionally --stop B2 or B2.1. No resume or utility modes."
+        )
     if args.replace_professional_voice and (
         args.voice_id is None or args.voice_audio is not None or args.default_voice
         or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
@@ -2793,6 +2812,8 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if getattr(args, "agent_b", False) and visual_style != "profesional":
+        raise SystemExit("--agent-b supports only professional visual style")
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
         raise SystemExit("--replace-professional-voice is available only in Profesional")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
@@ -3061,6 +3082,7 @@ async def main() -> None:
         },
     }
     run_metadata = {
+        "planning_mode": "agent_b" if getattr(args, "agent_b", False) else "legacy",
         "script_file": script_file.name,
         "avatar": avatar_metadata,
         "script_sha256": script_sha256,
@@ -3304,6 +3326,10 @@ async def main() -> None:
             max_parallel_calls=args.max_parallel_calls,
             visual_style=visual_style,
             enable_casero_cta=visual_style == "casero",
+            **(
+                {"agent_b_project_dir": output / "agent_b"}
+                if getattr(args, "agent_b", False) else {}
+            ),
             avatar_image=avatar_bytes,
             **(
                 {"ebook_image": covers.files[0].read_bytes()}
@@ -3443,6 +3469,12 @@ async def main() -> None:
                     image_manifest = await _generate_images(output, visual_plan)
                     break
                 except ImageGenerationError as image_error:
+                    if getattr(args, "agent_b", False):
+                        raise RuntimeError(
+                            "Agent B images failed. Do not hand off a frozen plan to "
+                            "legacy B2 correction. Inspect the saved image-state "
+                            "error and resume through --images-only after repair."
+                        ) from image_error
                     retry_block_id = _continuity_retry_block_id(image_error)
                     if retry_block_id is None:
                         raise
