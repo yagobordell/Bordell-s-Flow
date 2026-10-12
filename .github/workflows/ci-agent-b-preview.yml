@@ -5,6 +5,11 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "src/ai_video_factory/bots/agent_b/**"
+      - "src/ai_video_factory/bots/workflow.py"
+      - "scripts/pipeline/run_b_pipeline.py"
+      - "run.ps1"
+      - "src/ai_video_factory/providers/agent_b_grids.py"
+      - "src/ai_video_factory/providers/openai_batch_images.py"
       - "scripts/pipeline/run_agent_b_preview.py"
       - "scripts/pipeline/setup_agent_b_preview.ps1"
       - "config/agent-b-preview-requirements.txt"
@@ -57,7 +62,9 @@ jobs:
             tests/unit/b_pipeline/test_agent_b_runner.py \
             tests/unit/b_pipeline/test_agent_b_preview_cli.py \
             tests/unit/b_pipeline/test_agent_b_grid_continuity.py \
-            tests/unit/b_pipeline/test_agent_b_phase3_preview.py
+            tests/unit/b_pipeline/test_agent_b_phase3_preview.py \
+            tests/unit/b_pipeline/test_agent_b_phase4_integration.py \
+            tests/unit/b_pipeline/test_agent_b_phase4_orchestrator.py
   windows-preview:
     name: Agent B Windows VS Code setup smoke
     runs-on: windows-latest
@@ -74,6 +81,17 @@ jobs:
         with:
           version: "0.12.18"
           enable-cache: true
+      - name: Parse main run.ps1 launcher syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path ./run.ps1).Path,
+              [ref]$tokens,
+              [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
       - name: Execute exact VS Code PowerShell environment setup and preflight
         shell: pwsh
         env:
