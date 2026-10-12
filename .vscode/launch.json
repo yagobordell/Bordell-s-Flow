@@ -55,6 +55,20 @@
         "--output",
         "${workspaceFolder}/.video_factory_work/agent_b_preview_phone_phase3/grid_jobs.json"
       ]
+    },
+    {
+      "name": "Agent B — Phase 3 A/B sample grids (offline)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.pipeline.inspect_agent_b_grids",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--plan",
+        "${workspaceFolder}/examples/agent_b_grid_interleaved.json",
+        "--output",
+        "${workspaceFolder}/.video_factory_work/agent_b_sample_grid_jobs.json"
+      ]
     }
   ]
 }
