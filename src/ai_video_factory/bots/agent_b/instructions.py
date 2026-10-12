@@ -25,7 +25,7 @@ class InstructionBundle:
     sha256: str
 
     @classmethod
-    def load(cls, root: Path | None = None) -> "InstructionBundle":
+    def load(cls, root: Path | None = None) -> InstructionBundle:
         directory = (root or _DEFAULT_ROOT).resolve(strict=True)
         contents: dict[str, str] = {}
         digest = hashlib.sha256()
