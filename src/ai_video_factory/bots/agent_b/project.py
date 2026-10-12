@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ai_video_factory.bots.agent_b.validation import PlanIssue, sequence_index, validate_unified_plan
+from ai_video_factory.bots.agent_b.validation import (\n    PlanIssue,\n    sequence_index,\n    validate_unified_plan,\n)
 from ai_video_factory.bots.contracts import MaterializedBlock
 
 
@@ -30,7 +30,7 @@ class ProjectIdentityMismatch(ValueError):
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(\n        value, sort_keys=True, ensure_ascii=False, separators=(",", ":")\n    ).encode("utf-8")
 
 
 class AgentBProject:
