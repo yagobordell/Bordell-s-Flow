@@ -1158,7 +1158,11 @@ def _continuity_retry_block_id(error: ImageGenerationError) -> int | None:
     """Return the B2 block implicated by a preflight continuity error."""
     if not isinstance(error.__cause__, GridPlanError):
         return None
-    match = re.search(r"continuity numbering at (\d+)[A-Z]", str(error))
+    message = str(error)
+    match = re.search(r"(?:continuity numbering at |at |description at )(\d+)[A-Z]", message)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\bin block (\d+)\b", message, re.IGNORECASE)
     return int(match.group(1)) if match else None
 
 
@@ -2490,7 +2494,10 @@ class BotArtifacts:
     def _folder(self, stage: str, block_id: int | None) -> Path:
         if stage not in (*_STAGES, "CTA", "CTA Detector", "B2 CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage in {"B1.1", "B2.1", "CTA", "CTA Detector"}:
+        if (
+            stage in {"B1.1", "B2.1", "CTA", "CTA Detector"}
+            or (stage in {"B1.2", "B2"} and block_id is None)
+        ):
             if block_id is not None:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
@@ -2526,7 +2533,7 @@ class BotArtifacts:
         self, block_id: int, attempt: int, error: str, payload: dict[str, object]
     ) -> None:
         _write(
-            self._folder("B1.2", block_id) / f"rejected_attempt_{attempt}.json",
+            self._folder("B1.2", block_id or None) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
@@ -2534,7 +2541,7 @@ class BotArtifacts:
         self, block_id: int, attempt: int, error: str, payload: dict[str, object]
     ) -> None:
         _write(
-            self._folder("B2", block_id) / f"rejected_attempt_{attempt}.json",
+            self._folder("B2", block_id or None) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
@@ -2927,9 +2934,12 @@ async def main() -> None:
             resume_expected_calls = {
                 stage: prior_counts[stage]
                 + (
-                    (block_count - len(previous_partial_b12)
+                    (1
                      if stage == "B1.2" else
-                     block_count - len(previous_partial_b2)
+                     (
+                         1 if visual_style == "profesional"
+                         else block_count - len(previous_partial_b2)
+                     )
                      if stage == "B2" else
                      1 if stage == "B2.1" else
                      block_count)
@@ -3066,6 +3076,7 @@ async def main() -> None:
         "script_sha256": script_sha256,
         "model": settings.openai_model,
         "reasoning_effort": settings.openai_reasoning_effort,
+        "b2_reasoning_effort": settings.openai_b2_reasoning_effort,
         "visual_style": visual_style,
     }
     if visual_style == "casero":
@@ -3096,11 +3107,14 @@ async def main() -> None:
                 "CTA Detector": timings.call_count("CTA Detector"),
                 "B2 CTA": timings.call_count("B2 CTA"),
                 "B1.2": (
-                    max(report_blocks, timings.call_count("B1.2"))
+                    max(1, timings.call_count("B1.2"))
                     if report_blocks is not None else None
                 ) if stop_index >= 1 else 0,
                 "B2": (
-                    max(report_blocks, timings.call_count("B2"))
+                    max(
+                        1 if visual_style == "profesional" else report_blocks,
+                        timings.call_count("B2"),
+                    )
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
                 "B2.1": (
@@ -3125,7 +3139,10 @@ async def main() -> None:
                 )
                 if stop_index >= 2:
                     expected_calls["B2"] = max(
-                        expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
+                        expected_calls["B2"] or 0,
+                        1 if visual_style == "profesional" else report_blocks,
+                        timings.call_count("B2"),
+                    
                     )
                 if visual_style == "profesional" and stop_index >= 3:
                     expected_calls["B2.1"] = max(
@@ -3275,27 +3292,36 @@ async def main() -> None:
                 detection = ProfessionalCTADetection.model_validate_json(
                     previous_detector.read_text(encoding="utf-8")
                 )
-                prior_cta_groups = tuple(
+                saved_groups = tuple(
                     tuple(group) for group in detection.cta_groups
                 )
+                director_paths = [
+                    output / "B2 CTA" / f"group_{index}" / "output.json"
+                    for index in range(1, len(saved_groups) + 1)
+                ]
+                if any(
+                    path.is_symlink() or path.parent.is_symlink()
+                    for path in director_paths
+                ):
+                    raise RuntimeError("Unsafe saved professional CTA director")
+                prior_cta_groups = saved_groups
                 prior_cta_overrides = {}
-                for index, group in enumerate(prior_cta_groups, 1):
-                    previous_director = (
-                        output / "B2 CTA" / f"group_{index}" / "output.json"
-                    )
-                    if previous_director.is_symlink() or not previous_director.is_file():
-                        raise RuntimeError(
-                            "Saved CTA director output is missing; reconcile before retry"
+                # A failed B2 call can leave a valid detector but no CTA
+                # director outputs. Reuse the detector and regenerate all CTA
+                # director groups after B2 when any director checkpoint is absent.
+                if all(path.is_file() for path in director_paths):
+                    for group, previous_director in zip(
+                        saved_groups, director_paths, strict=True
+                    ):
+                        decisions = ProfessionalCTAVisuals.model_validate_json(
+                            previous_director.read_text(encoding="utf-8")
                         )
-                    decisions = ProfessionalCTAVisuals.model_validate_json(
-                        previous_director.read_text(encoding="utf-8")
-                    )
-                    if [beat.beat_id for beat in decisions.beats] != list(group):
-                        raise RuntimeError("Saved CTA director IDs differ from detector")
-                    for beat in decisions.beats:
-                        if beat.beat_id in prior_cta_overrides:
-                            raise RuntimeError("Duplicate CTA beat in saved checkpoint")
-                        prior_cta_overrides[beat.beat_id] = beat
+                        if [beat.beat_id for beat in decisions.beats] != list(group):
+                            raise RuntimeError("Saved CTA director IDs differ from detector")
+                        for beat in decisions.beats:
+                            if beat.beat_id in prior_cta_overrides:
+                                raise RuntimeError("Duplicate CTA beat in saved checkpoint")
+                            prior_cta_overrides[beat.beat_id] = beat
 
         result = await run_b_pipeline(
             script,

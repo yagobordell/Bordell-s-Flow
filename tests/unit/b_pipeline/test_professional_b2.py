@@ -14,9 +14,10 @@ from pydantic import ValidationError
 
 from ai_video_factory.bots.contracts import (
     B11Output,
-    B12Output,
+    ProfessionalB2BatchOutput,
     ProfessionalB2Output,
     ProfessionalVisualBeat,
+    WholeB12Output,
 )
 from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.providers.image_grids import _grid_prompt, plan_image_jobs
@@ -61,7 +62,7 @@ def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
         .lower()
     )
     assert "iphone 16/17 pro max" not in prompt
-    assert "runtime adds overall photographic style" in prompt
+    assert "application supplies the shared photographic style" in prompt
 
 def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     prompt = (
@@ -70,8 +71,8 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
         .read_text(encoding="utf-8")
         .lower()
     )
-    assert "100% the original avatar speaking" in prompt
-    assert "only avatar and avatar_media speak" in prompt
+    assert "original-avatar reference image" in prompt
+    assert "only `avatar` and `avatar_media` speak" in prompt
     assert "120 characters" in prompt
     assert "different room or physical location" in prompt
     assert "screens and documents" in prompt
@@ -83,10 +84,10 @@ def test_professional_prompt_has_no_stock_exclusions() -> None:
         .read_text(encoding="utf-8")
         .lower()
     )
-    assert "act as a creative editor" in prompt
-    assert "last beat of any close block" in prompt
-    assert "intro blocks" in prompt
-    assert "up to 18" in prompt
+    assert "visual director and editor" in prompt
+    assert "last beat of every `close` block" in prompt
+    assert "`intro` — earn attention quickly" in prompt
+    assert "may hold at most twenty" in prompt
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -269,8 +270,8 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
     )
     assert "audio=false" in prompt
     assert "physical location" in prompt
-    assert "singular instants" in prompt
-    assert "narrative/visual continuity" in prompt
+    assert "one photographable instant" in prompt
+    assert "whole-video continuity" in prompt
 
 @pytest.mark.parametrize(
     ("visual_type", "audio", "accepted"),
@@ -336,8 +337,8 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
         .read_text(encoding="utf-8")
         .lower()
     )
-    assert "never generate a new image of the narrator in the original reference room" in prompt
-    assert "never depict anyone speaking to camera" in prompt
+    assert "a clearly different room or physical location" in prompt
+    assert "do not depict a newly generated replacement speaking host" in prompt
 
 @pytest.mark.parametrize(
     "wording",
@@ -614,18 +615,18 @@ def test_professional_schema_boundary_matches_current_contract(
                     }],
                     "error": None,
                 })
-            if output_type is B12Output:
-                return B12Output.model_validate({
+            if output_type is WholeB12Output:
+                return WholeB12Output.model_validate({
                     "pipeline_stage": "B1.2",
-                    "block_id": 1,
-                    "beats": [{
+                    "narrative_core": json.loads(input_text)["narrative_core"],
+                    "blocks": [{"block_id": 1, "beats": [{
                         "beat_id": "1A",
                         "text": script,
                         "beat_type": "setup",
-                    }],
+                    }]}],
                     "error": None,
                 })
-            assert output_type is ProfessionalB2Output
+            assert output_type is ProfessionalB2BatchOutput
             attempts.append(instructions)
             block = json.loads(input_text)["blocks"][0]
             if block_type == "close" and len(attempts) > 1:
@@ -639,7 +640,7 @@ def test_professional_schema_boundary_matches_current_contract(
                     prompt="A quiet still-life photograph",
                     video_prompt=None, reference=False, audio=False,
                 )
-            return ProfessionalB2Output.model_validate({
+            return ProfessionalB2BatchOutput.model_validate({
                 "pipeline_stage": "B2",
                 "narrative_core": {
                     "central_question": "What?", "final_answer": "Answer."
@@ -660,7 +661,8 @@ def test_professional_schema_boundary_matches_current_contract(
     else:
         assert len(attempts) == 2
         assert len(rejected) == 1
-        assert "LAST beat of a close" in attempts[1]
+        assert "VALIDATION FAILED: B2 batch 1/1" in attempts[1]
+        assert "Correct only this batch's block IDs: 1." in attempts[1]
         assert (beat.visual_type, beat.prompt, beat.reference, beat.audio) == (
             "avatar", None, False, True
         )
@@ -689,19 +691,20 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
                     }],
                     "error": None,
                 })
-            if output_type is B12Output:
-                return B12Output.model_validate({
-                    "pipeline_stage": "B1.2", "block_id": 1,
-                    "beats": [{
+            if output_type is WholeB12Output:
+                return WholeB12Output.model_validate({
+                    "pipeline_stage": "B1.2",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": [{"block_id": 1, "beats": [{
                         "beat_id": "1A", "text": script, "beat_type": "action"
-                    }],
+                    }]}],
                     "error": None,
                 })
-            assert output_type is ProfessionalB2Output
+            assert output_type is ProfessionalB2BatchOutput
             attempts.append(instructions)
             if len(attempts) == 2:
-                assert "media_image and media_video ALWAYS require audio=false" in instructions
-                assert "nonempty prompt" in instructions
+                assert "VALIDATION FAILED: B2 batch 1/1" in instructions
+                assert "Correct only this batch's block IDs: 1." in instructions
             block = payload["blocks"][0]
             block["beats"][0].update(
                 visual_type="media_image" if len(attempts) == 1 else "media_video",
@@ -713,7 +716,7 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
                 reference=False,
                 audio=len(attempts) == 1,
             )
-            return ProfessionalB2Output.model_validate({
+            return ProfessionalB2BatchOutput.model_validate({
                 "pipeline_stage": "B2", "narrative_core": payload["narrative_core"],
                 "blocks": [block], "error": None,
             })

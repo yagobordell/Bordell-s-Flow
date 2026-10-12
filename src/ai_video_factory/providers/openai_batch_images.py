@@ -24,6 +24,7 @@ from typing import Any
 
 from PIL import Image
 
+from .grid_numbering import parse_grid_marker
 from .image_grids import GridPlanError, plan_image_jobs
 from .openai_images import OpenAIImageClient, OpenAIImageRequestRejected
 from .professional_image_state import finished_in_place_sha
@@ -42,7 +43,6 @@ _PROFESSIONAL_IMAGE_PREFIX = (
     "authentic everyday environment, documentary feel, not polished, not cinematic, "
     "not luxury editorial."
 )
-_NUMBERED_PROFESSIONAL_PROMPT = re.compile(r"^([1-9]\.\s+)(.+)$", flags=re.DOTALL)
 _GRID_IMAGE_QUALITY = "high"
 _DEFAULT_MAX_PARALLEL_IMAGES = 6
 # Tolerate spaces, punctuation after the marker, case and line breaks.
@@ -124,14 +124,13 @@ def effective_image_prompt(
     """Apply application-owned image styling after B2 has described the scene."""
     if visual_style == "profesional":
         scene = description.strip()
-        numbered = _NUMBERED_PROFESSIONAL_PROMPT.match(scene)
-        if numbered is not None:
-            return (
-                numbered.group(1)
-                + _PROFESSIONAL_IMAGE_PREFIX
-                + " "
-                + numbered.group(2).strip()
+        marker = parse_grid_marker(scene)
+        if marker is not None:
+            prefix = (
+                f"{marker.sequence_id}{marker.panel_number}. "
+                if marker.style == "lettered" else f"{marker.panel_number}. "
             )
+            return prefix + _PROFESSIONAL_IMAGE_PREFIX + " " + marker.body.strip()
         return _PROFESSIONAL_IMAGE_PREFIX + " " + scene
     if visual_style != "casero":
         raise ValueError("Unknown B2 visual style")

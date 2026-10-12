@@ -17,42 +17,57 @@ El motor actual carga sus documentos de instrucciones desde
 the runner does not require checksum updates. A transport note for Responses API
 Structured Outputs is appended at runtime.
 
-- B1.1 runs once against the complete, unmodified script. The runtime resolves unique
-  verbatim `first_words` / `last_words` anchors into contiguous block text and refuses any
-  gap, duplicate, overlap, normalized text, or ambiguous anchor.
-- B1.2 runs independently for each single materialized block. It emits 1A, 1B, ... 1AA,
-  2A, ... IDs and enforces 40 words and 13–100 decoded characters per beat (excluding
-  leading/trailing whitespace). A sole beat in a block of at most 12 stripped characters
-  is the unavoidable exception because B1.2 cannot merge across blocks. Validation
-  ignores whitespace and punctuation differences when checking the ordered beat text
-  against the block; other character changes remain errors.
-- B1.2 responses with beats over 100 or at most 12 characters (outside that exception)
-  receive one automatic Responses API Structured Outputs correction call for that block.
-  The model receives the original block, validation error and rejected response; it
-  splits/merges only adjacent immutable source slices and renumbers beat IDs. The corrected
-  response must reconstruct the original block character for character. Rejected responses
-  are stored in `B1.2/block_<id>/rejected_attempt_<n>.json`, and corrections are included
-  in B1.2 usage, cost and timing. If the correction is still invalid, the block fails
-  without starting B2.
-- B2 runs independently on each completed B1.2 block, preserves all upstream text,
-  IDs and metadata, and assigns exactly one of `avatar`, `avatar_media`, `media_image`,
-  `media_video` with the documented description/null rules.
-- If a B2 response fails output validation, that block is retried once with the
-  validation error and rejected response included; rejected responses are saved under
-  `B2/block_<id>/rejected_attempt_<n>.json` and retry calls are included in costs.
-- Per-block results are collected in ascending block ID, regardless of call completion
-  order. B1.2 workers finish as a parallel wave before any B2 worker begins; B2 workers
-  then run as a parallel wave. Both waves have the same bounded concurrency limit.
+- B1.1 runs once against the complete, unmodified script. The runtime resolves
+  unique verbatim source anchors into contiguous blocks with no gaps, overlaps,
+  duplication or content alteration.
+- B1.2 receives the **entire original script and every materialized B1.1 block**
+  in **one** Structured Outputs call. It directs the rhythm of the complete YouTube
+  narration using the blocks' types and emotional transitions. Beats are narrative
+  pulses, not mandatory cuts or isolated visual assets. Frozen block boundaries
+  and exact source slices are preserved, with at most 40 whitespace-separated
+  words and 100 stripped characters per beat (no minimum character limit).
+- B1.2 first segments the complete video in one response. The application
+  restores exact source punctuation and whitespace, then verifies that the
+  canonical beat texts reconstruct every block and the entire original script
+  **exactly**. If validation fails, Responses API retries identify the concrete
+  errors across blocks and request only the affected B1.1 block groups; the
+  application merges those groups and revalidates the complete plan, allowing up
+  to two correction attempts per failing block. The authoritative request and
+  result are stored in `B1.2/input.json` and `B1.2/output.json`, rejected
+  attempts in `B1.2/rejected_attempt_<n>.json`. Once fully validated, the
+  application persists each block's beats under `B1.2/block_<id>/output.json`
+  for downstream checkpoints and `B1.2/merged_output.json` for full-video readers.
+- Professional B2 directs consecutive batches of up to four B1.2 blocks in one
+  Responses API conversation. The raw script is not sent; each batch includes
+  frozen source beats, the narrative core, the original avatar reference, and
+  any CTA-reserved beat groups. Each batch is validated and
+  accepted before the next is requested. The application validates cumulative
+  audio runs and visual grids across accepted batches; if validation finds
+  specific failing beats, B2 returns only those beat groups and the application
+  merges them while preserving all other decisions and earlier corrections.
+  The final B2 plan covers every beat and keeps the 120-character maximum for
+  consecutive `audio=true` narration across block and batch boundaries.
+  Rejected responses are stored in `B2/rejected_attempt_<n>.json`. Validated
+  `B2/block_<id>/output.json` and `B2/merged_output.json` continue to serve
+  existing downstream components.
+- **Casero B2 remains per-block and parallel.** It preserves upstream narration
+  and assigns the existing four visual types under its own unchanged rules.
+  Professional B2.1 remains a full-video audit of the frozen visual carriers.
+- `--from B1.2` and `--from B2` still consume validated checkpoints, but
+  incomplete per-block outputs are **not** stitched together into a supposedly
+  global B1.2 or professional B2 decision. Replanning those stages requires
+  a new whole-video call. Resuming professional B2 reuses complete CTA detector
+  and director checkpoints; if any director output is missing, it reuses the
+  detector groups and regenerates all CTA directors after B2.
 
 ## Professional B2: demonstrator identity, animation prompts and speaking intent
 
-The professional bot has two mandatory presenter-return points:
-the **first** beat of an `intro` block and the **last** beat of a `close`
-block reuse the original avatar image with `visual_type: "avatar"`,
-`prompt: null`, `video_prompt: null`, `reference: false` and
-`audio: true`. The professional output schema validates both assignments
-and its automatic correction retry can repair a noncompliant output.
-All other beats retain neutral visual choice.
+The professional bot keeps exactly one mandatory final presenter-return point:
+the **last** beat of every `close` block reuses the original avatar image with
+`visual_type: "avatar"`, `prompt: null`, `video_prompt: null`,
+`reference: false` and `audio: true`. The first beat of `intro` is
+**not** forced to use the avatar; its carrier is selected editorially. The
+professional output schema enforces the closing anchor.
 
 The opt-in `profesional` bot chooses `visual_type` independently from casting:
 a still or video can show the selected avatar demonstrating a presenter-led
@@ -132,15 +147,24 @@ person and setting stay continuous while neighboring images emphasize
 different framing/details instead of duplicating nearly identical views.
 The professional image-grid prompt explicitly preserves each panel's
 distinct shot composition rather than normalizing all panels to one angle.
-Because B2 workers operate one block at a time, it uses the global framing
-rule everywhere but can directly compare adjacent prompts only within
-each block, not across unseen neighboring blocks.
+Professional B2 directs the video through one sequential Responses API
+conversation, in batches of up to four blocks. A lettered logical grid uses a
+stable uppercase label plus a one-based frame number at the start of each
+prompt (for example, `A1. ...`, `A2. ...`). Beats carrying the same label may be
+nonconsecutive and interleaved with other grid labels or ordinary/avatar beats;
+the planner collects them by label, validates complete ordered numbering, and
+allows up to twenty panels per sequence. Still-only sequences are packed into
+physical grids of up to nine panels; sequences containing video use 2x2 grids
+to preserve native 1080p panels. Lettered groups remain block-local and are
+split at CTA boundaries. Existing numeric consecutive runs remain supported
+for saved plans and legacy B2 output.
 
 **Strict professional audio/type contract:** `media_image` MUST have
 `audio: false` (ordinary master narration may still play as voice-over).
-Generated full-screen synchronized speech must use `media_video` with
-`audio: true` and is routed through A2V; `media_video` with
-`audio: false` uses observational I2V. The professional Pydantic model
+The current professional B2 contract reserves `audio: true` for the
+unchanged original `avatar` and `avatar_media`. Both `media_image` and
+`media_video` require `audio: false`; silent generated `media_video`
+uses observational I2V. The professional Pydantic model
 rejects invalid speaking stills, allowing the existing automatic B2
 schema-correction retry to request a corrected result. Video planning
 also rejects legacy saved plans containing `media_image + audio:true`
@@ -217,8 +241,10 @@ silenciosamente.
 Los estados de trabajo y los manifiestos verificables residen en
 `.video_factory_work/<avatar>/<guion>/`. Las salidas visibles
 se publican en `data/<avatar>/<guion>/outputs/` y `media/`.
-Los bots guardan sus `input.json` y `output.json` por bloque;
-`visual_plan.json` conserva la identidad y el orden de los beats.
+B1.2 y B2 Profesional guardan además sus solicitudes y respuestas
+**globales** en la raíz de cada etapa, conservando `output.json` por bloque
+para los consumidores de checkpoints. `visual_plan.json` conserva la
+identidad y el orden de los beats.
 Los checks SHA-256 impiden reanudar con otro guion o reutilizar
 resultados de pago de una solicitud distinta. `--rerun` archiva
 expresamente la ejecución anterior antes de empezar una nueva.
@@ -266,9 +292,9 @@ the exact URL (including query parameters). For final publication, check the
 actual sales page on a phone and avoid shrinking or cropping the quiet zone.
 
 The runner prints exactly one combined time/cost line as soon as each stage
-finishes: B1.1 immediately after its validated output, B1.2 after all parallel
-blocks and its merged output, then B2 after all parallel blocks and its merged
-output. Once the visual plan and final report are saved, it prints the run
+finishes: B1.1 after its validated output, B1.2 after the single complete
+whole-video result and its materialized block checkpoints, then B2 after one
+whole-video professional result or the parallel Casero block results. Once the visual plan and final report are saved, it prints the run
 total. Durations are monotonic wall-clock seconds; stage duration is **not**
 the sum of simultaneous per-block calls. Every printed line is flushed
 immediately so redirected or piped runs can follow progress.
@@ -529,8 +555,9 @@ independiente: el runner no despliega GPUs.
 
 ## CTA ebook en Profesional: detector + director + merge protegido
 
-Tras B1.2, el **merged B1.2 completo** alimenta a CTA Detector en paralelo
-con el B2 Profesional habitual. El detector devuelve exclusivamente grupos
+Tras B1.2, el **merged B1.2 completo** alimenta a CTA Detector. Cuando hay
+portada de ebook, B2 Profesional espera a disponer de los IDs de grupos CTA
+reservados para planificar la progresión visual global de entrada y salida. El detector devuelve exclusivamente grupos
 cronológicos de IDs de beats completos que promocionan el ebook; nunca cambia
 texto ni segmenta beats. El bot **B2 CTA Profesional** recibe cada grupo, la
 imagen original del avatar y la portada persistente del ebook, y asigna con

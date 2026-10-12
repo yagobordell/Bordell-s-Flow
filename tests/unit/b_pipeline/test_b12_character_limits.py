@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_video_factory.bots.contracts import B11Output, B12Output, Beat, MaterializedBlock
+from ai_video_factory.bots.contracts import (
+    B11Output,
+    B12Output,
+    Beat,
+    MaterializedBlock,
+    WholeB12Output,
+)
 from ai_video_factory.bots.workflow import (
     BPipelineValidationError,
     run_b_pipeline,
@@ -69,11 +75,16 @@ class RepairProvider:
         self.calls: list[dict[str, object]] = []
 
     async def generate_structured_with_response(self, **kwargs):
-        assert kwargs["output_type"] is B12Output
+        assert kwargs["output_type"] is WholeB12Output
         assert kwargs["model"] == "test-model"
         self.calls.append(kwargs)
         result = self.responses.pop(0)
-        return result, SimpleNamespace(id=f"response_{len(self.calls)}")
+        payload = json.loads(kwargs["input_text"])
+        return WholeB12Output.model_validate({
+            "pipeline_stage": "B1.2", "narrative_core": payload["narrative_core"],
+            "blocks": [{"block_id": 1, "beats": [beat.model_dump() for beat in result.beats]}],
+            "error": None,
+        }), SimpleNamespace(id=f"response_{len(self.calls)}")
 
 
 @pytest.mark.parametrize(
@@ -132,16 +143,16 @@ def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> N
         )
     )
     assert len(provider.calls) == len(metered) == 2
-    assert [call[0] for call in rejected] == [1]
+    assert [call[0] for call in rejected] == [0]
     assert [call[1] for call in rejected] == [1]
     assert "maximum 100" in rejected[0][2]
-    assert "automatic beat-length correction" in provider.calls[1]["instructions"]
-    assert "Previous invalid B1.2 response" in provider.calls[1]["instructions"]
-    assert "NO minimum character count" in provider.calls[1]["instructions"]
+    assert "Correct the COMPLETE whole-video beat segmentation" in provider.calls[1]["instructions"]
+    assert "max 40 words" in provider.calls[1]["instructions"]
+    assert "no minimum length" in provider.calls[1]["instructions"]
     assert "13 characters" not in provider.calls[1]["instructions"]
     assert all(json.loads(call["input_text"])["blocks"][0]["text"] == script
                for call in provider.calls)
-    assert len(saved) == 1 and saved[0][0] == "B1.2"
+    assert len(saved) == 2 and all(item[0] == "B1.2" for item in saved)
     assert len(stages) == 1 and stages[0][0] == "B1.2"
     assert result.b2 == ()
     assert [beat.beat_id for beat in result.b12[0].beats] == ["1A", "1B"]
@@ -196,7 +207,7 @@ def test_repaired_text_must_reconstruct_original_including_punctuation() -> None
         _output(script), _output(FIRST, altered_second), _output(FIRST, altered_second)
     )
     rejected = []
-    with pytest.raises(BPipelineValidationError, match="reconstruct the original block exactly"):
+    with pytest.raises(BPipelineValidationError, match="does not reconstruct source exactly"):
         asyncio.run(
             run_b_pipeline(
                 script,
@@ -209,8 +220,8 @@ def test_repaired_text_must_reconstruct_original_including_punctuation() -> None
             )
         )
     assert [item[1] for item in rejected] == [1, 2, 3]
-    assert "first difference at character" in rejected[-1][2]
-    assert "expected" in rejected[-1][2] and "received" in rejected[-1][2]
+    assert "does not reconstruct source exactly" in rejected[-1][2]
+    assert rejected[-1][0] == 0
 
 
 def test_correction_may_preserve_valid_short_beats() -> None:
@@ -228,7 +239,7 @@ def test_correction_may_preserve_valid_short_beats() -> None:
     )
     assert len(provider.calls) == 2
     assert [beat.text for beat in result.b12[0].beats] == [FIRST, SHORT, SECOND]
-    assert "NO minimum character count" in provider.calls[1]["instructions"]
+    assert "no minimum length" in provider.calls[1]["instructions"]
 
 
 def test_unrelated_b12_validation_failure_is_repaired() -> None:

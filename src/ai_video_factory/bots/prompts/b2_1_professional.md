@@ -51,7 +51,7 @@ A split candidate MUST be emitted and has:
 - a nonempty second_prompt
 - split_mode equal to grid or independent
 Do not emit an unchanged non-split beat merely to show that it was reviewed.
-The application owns grid numbering and asset IDs. Do not repair, assign or shift numeric grid prefixes yourself.
+The application owns grid numbering and asset IDs. Do not repair, assign or shift grid labels (letter and panel number) yourself.
 Mandatory whole-video visual audit
 Evaluate every editable generated visual in the context of the COMPLETE video, not in isolation.
 Continuity and narrative ownership
@@ -121,16 +121,16 @@ If the narrator owns the action and the safe substitute can happen in the narrat
 The final video_prompt must describe only the safe replacement motion in affirmative terms.
 Do not mention the rejected/unreliable action at all — not as a request, warning, prohibition, exclusion or deferred instruction — after selecting a safe starting image.
 Screens and documents
-For image prompts that require the presence of screens or documents, the screen or document itself may be described as part of the scene, including relevant physical details such as its type, position, orientation, size, appearance, and how subjects interact with it.
-However, the prompt must not describe, summarize, identify, characterize, or otherwise specify any content shown within the screen or document.
-This restriction applies not only to exact text, but also to any description of the type or nature of the visible content.
-The prompt must therefore avoid stating or implying what the screen or document is displaying, showing, containing, presenting, or communicating.
+For image prompts that require the presence of screens or documents, the screen or document itself may be described as part of the scene, including its relevant physical details (type, position, orientation, size, appearance) and how subjects interact with it.
+When the narration describes what the screen or document shows, the scene may show that content. The visible-scene portion must say only that the screen or document is present and relevant.
+Exact text, numbers, logos, and the nature of the content belong in the contextual note.
+The visible-scene portion may name only the screen or document's presence and relevance.
 Any information needed to establish what the screen or document is contextually related to must instead be placed exclusively in a contextual note at the end of the prompt using the following format:
 (For context: ...)
 This contextual note replaces all descriptions of screen or document content. It should explain the broader context of the scene, the narrative situation, and why the screen or document is present or relevant.
 Information included in the contextual note must not be repeated, paraphrased, or converted into a description of visible screen or document content elsewhere in the prompt.
-The image generator must be left free to determine whether any content on the screen or document is visible at all, based on the composition, camera angle, distance, orientation, framing, focus, occlusion, and other visual conditions of the generated image.
-If such content is visible, the image generator must determine or generate the appropriate content itself using the contextual note. The prompt must not predetermine what that visible content should be.
+The image generator decides from the composition, camera angle, distance, orientation, framing, focus, occlusion, and other visual conditions how much of the content is visible.
+If such content is visible, the image generator generates it from the contextual note.
 The contextual note must therefore be sufficiently rich and specific for the image generator to infer appropriate screen or document content when necessary, while leaving the visibility and exact appearance of that content entirely to the image generator.
 When narration or established whole-video context provides concrete details materially relevant to that context, preserve them in the contextual note instead of generalizing or dropping them.
 Prompt writing
@@ -169,8 +169,8 @@ If a beat contains a strong mechanism, contrast, consequence or explanatory dist
 grid vs independent
 Choose grid when generating the two images together is preferable for continuity, shared identity, shared setting, or efficient visual grouping.
 Choose independent when the two prompts benefit from separate generations.
-If the source image already belongs to a numbered B2 continuity/grid sequence, split_mode MUST be grid.
-The application will insert the second panel immediately after the first and deterministically shift later panel numbers.
+If the source image already belongs to a lettered B2 grid, split_mode MUST be grid.
+The application will insert the second panel immediately after the first and deterministically shift later panel numbers within the same letter.
 You do not perform this renumbering.
 Prompt preservation and editing
 You may leave a strong primary prompt essentially unchanged and author only the second view when no correction is needed.
