@@ -191,9 +191,12 @@ def materialize_blocks(script: str, blocks: list[BlockMeta]) -> list[Materialize
     start_candidates: list[list[int]] = []
     last_candidates: list[list[tuple[int, int]]] = []
     for block in blocks:
-        first, last = block.span.first_words, block.span.last_words
-        if first[0].isspace() or last[-1].isspace():
-            raise BPipelineValidationError("B1.1 anchors must begin/end at substantive text")
+        # Model anchors occasionally include boundary whitespace. Strip only
+        # these lookup strings; block text still comes byte-for-byte from script.
+        first = block.span.first_words.strip()
+        last = block.span.last_words.strip()
+        if not first or not last:
+            raise BPipelineValidationError("B1.1 anchors must contain substantive text")
         first_positions = [
             start for start, _ in _anchor_occurrences(normalized_script, source_offsets, first)
         ]
