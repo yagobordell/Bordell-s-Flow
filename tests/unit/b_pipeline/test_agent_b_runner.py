@@ -144,6 +144,7 @@ def test_partial_block_drafts_assemble_a_single_global_plan(tmp_path):
                         "video_prompt": None, "audio": False, "reference": False}]}
     assert p.save_block_draft(2, second_block, expected_revision=1) == 2
     assert p.status()["drafted_block_ids"] == [1, 2]
+    assert [x["label"] for x in p.status()["sequence_index"]["A"]] == ["A1", "A2"]
     assert p.finalize_drafts(expected_revision=2) == 3
     p.freeze(expected_revision=3)
     assert [b["block_id"] for b in p.frozen_plan()["blocks"]] == [1, 2]
