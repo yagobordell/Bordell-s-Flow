@@ -970,6 +970,7 @@ async def run_b_pipeline(
     visual_style: Literal["casero", "profesional"] = "casero",
     enable_casero_cta: bool = False,
     agent_b_project_dir: Path | None = None,
+    agent_b_model: str | None = None,
     avatar_image: bytes | None = None,
     ebook_image: bytes | None = None,
     previous_cta_groups: tuple[tuple[str, ...], ...] | None = None,
@@ -1186,7 +1187,7 @@ async def run_b_pipeline(
                 agent_b_project_dir,
                 materialized,
                 b11.narrative_core.model_dump(mode="json"),
-                model=model,
+                model=agent_b_model or model,
             )
             b12_view, b2_view = legacy_consumer_views(unified, b11)
             merged_for_cta = {
