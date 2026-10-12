@@ -17,10 +17,10 @@ from ai_video_factory.bots.contracts import (
     ProfessionalVisualBeat,
 )
 from ai_video_factory.bots.professional_cta import (
+    ProfessionalCTADetection,
     ProfessionalCTAVisualBeat,
 )
 from ai_video_factory.bots.professional_cta_workflow import validate_cta_detection
-from ai_video_factory.bots.professional_cta import ProfessionalCTADetection
 
 _VISUAL_FIELDS = (
     "beat_id", "text", "beat_type", "visual_type",
