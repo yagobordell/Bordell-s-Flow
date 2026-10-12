@@ -53,7 +53,7 @@ async def run_agent_b(
                       instructions=bundle.starting_instructions(), tools=tools.sdk_tools())
     session = sdk.SQLiteSession(project.identity_sha256, str(project.root / "session.sqlite3"))
     prompt = (
-        "Plan the complete English narration as ONE professional audiovisual plan. "
+        "Plan the supplied narration verbatim as ONE professional audiovisual plan. "
         "Read the full source by calling read_script; inspect B1.1 metadata using "
         "read_project_context and read_group. Decide cut boundaries and visuals together, "
         "respecting suspense, viewer attention and logical A1/A2 continuity across blocks. "
