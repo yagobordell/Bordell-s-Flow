@@ -1,0 +1,84 @@
+{
+  "schema_version": "b-pipeline-v1",
+  "visual_style": "profesional",
+  "narrative_core": {
+    "central_question": "Why does the number match?",
+    "final_answer": "Matching caller ID does not prove identity."
+  },
+  "blocks": [
+    {
+      "block_id": 1,
+      "type": "intro",
+      "emotional_entry": "interruption",
+      "emotional_exit": "recognition",
+      "beats": [
+        {
+          "beat_id": "1A",
+          "text": "Your phone rings. ",
+          "beat_type": "action",
+          "visual_type": "media_image",
+          "prompt": "A1. A close photograph of a phone vibrating on a kitchen table.",
+          "video_prompt": null,
+          "reference": false,
+          "audio": false
+        },
+        {
+          "beat_id": "1B",
+          "text": "You look at the screen. ",
+          "beat_type": "action",
+          "visual_type": "media_image",
+          "prompt": "A2. The same kitchen and phone from the caller's point of view.",
+          "video_prompt": null,
+          "reference": false,
+          "audio": false
+        }
+      ]
+    },
+    {
+      "block_id": 2,
+      "type": "development",
+      "emotional_entry": "apparent credibility",
+      "emotional_exit": "doubt",
+      "beats": [
+        {
+          "beat_id": "2A",
+          "text": "The bank's logo. ",
+          "beat_type": "action",
+          "visual_type": "media_image",
+          "prompt": "B1. A person in a quiet back office handles printed paperwork.",
+          "video_prompt": null,
+          "reference": false,
+          "audio": false
+        },
+        {
+          "beat_id": "2B",
+          "text": "The caller sounds convincing. ",
+          "beat_type": "action",
+          "visual_type": "media_image",
+          "prompt": "B2. In the same back office, the person turns toward a window.",
+          "video_prompt": null,
+          "reference": false,
+          "audio": false
+        }
+      ]
+    },
+    {
+      "block_id": 3,
+      "type": "development",
+      "emotional_entry": "inspection",
+      "emotional_exit": "realization",
+      "beats": [
+        {
+          "beat_id": "3A",
+          "text": "You pick up the card. ",
+          "beat_type": "action",
+          "visual_type": "media_image",
+          "prompt": "A3. Back in the kitchen, the original person compares the phone and a bank card.",
+          "video_prompt": null,
+          "reference": false,
+          "audio": false
+        }
+      ]
+    }
+  ]
+}
