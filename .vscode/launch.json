@@ -1,0 +1,46 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Agent B — preflight (offline, no API)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.pipeline.run_agent_b_preview",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "args": [
+        "--preflight",
+        "--input",
+        "${workspaceFolder}/examples/agent_b_preview_phone.json",
+        "--project",
+        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone",
+        "--model",
+        "gpt-5.1"
+      ]
+    },
+    {
+      "name": "Agent B — real planning (uses OpenAI API)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.pipeline.run_agent_b_preview",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "args": [
+        "--input",
+        "${workspaceFolder}/examples/agent_b_preview_phone.json",
+        "--project",
+        "${workspaceFolder}/.video_factory_work/agent_b_preview_phone",
+        "--model",
+        "gpt-5.1",
+        "--max-attempts",
+        "3",
+        "--max-turns",
+        "60",
+        "--max-tools",
+        "120"
+      ]
+    }
+  ]
+}
