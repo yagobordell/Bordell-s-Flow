@@ -14,6 +14,7 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib.resources import files
+from pathlib import Path
 from time import perf_counter
 from typing import Literal
 
@@ -824,6 +825,7 @@ class BPipelineResult:
     visual_style: Literal["casero", "profesional"] = "casero"
     b2_correction_counts: dict[int, int] = field(default_factory=dict)
     b2_response_ids: dict[int, str] = field(default_factory=dict)
+    unified_visual_plan: dict[str, object] | None = None
 
     def merged_b12_output(self) -> dict[str, object]:
         """Application-owned complete B1.2 join, ordered by frozen block ID."""
@@ -870,6 +872,8 @@ class BPipelineResult:
 
     def visual_plan(self) -> dict[str, object]:
         """Application-owned reviewed B2 plan, without camera-replanning."""
+        if self.unified_visual_plan is not None:
+            return copy.deepcopy(self.unified_visual_plan)
         if self.b11.narrative_core is None:
             raise BPipelineValidationError("B1.1 narrative core is missing")
         if self.visual_style == "profesional":
@@ -965,6 +969,7 @@ async def run_b_pipeline(
     max_parallel_calls: int = 8,
     visual_style: Literal["casero", "profesional"] = "casero",
     enable_casero_cta: bool = False,
+    agent_b_project_dir: Path | None = None,
     avatar_image: bytes | None = None,
     ebook_image: bytes | None = None,
     previous_cta_groups: tuple[tuple[str, ...], ...] | None = None,
@@ -1008,6 +1013,14 @@ async def run_b_pipeline(
         raise ValueError("max_parallel_calls must be at least 1")
     if visual_style not in {"casero", "profesional"}:
         raise ValueError("Unknown B2 visual style")
+    if agent_b_project_dir is not None and (
+        visual_style != "profesional" or start_from != "B1.1"
+        or stop_after not in {"B2", "B2.1"}
+        or previous_b12 is not None or previous_b2 is not None
+    ):
+        raise ValueError(
+            "Agent B requires a new professional B1.1 run ending at B2 or B2.1"
+        )
     image_url: str | None = None
     if stop_after in {"B2", "B2.1"}:
         if visual_style == "profesional" and not avatar_image:
@@ -1158,6 +1171,66 @@ async def run_b_pipeline(
         if b11.narrative_core is None or b11.blocks is None:
             raise BPipelineValidationError("B1.1 checkpoint is missing required fields")
         materialized = materialize_blocks(script, b11.blocks)
+
+    if agent_b_project_dir is not None:
+        from ai_video_factory.bots.agent_b.integration import (
+            AgentBIntegrationError,
+            assert_cta_detector_match,
+            legacy_consumer_views,
+        )
+        from ai_video_factory.bots.agent_b.runner import run_agent_b
+
+        agent_started = perf_counter()
+        try:
+            unified = await run_agent_b(
+                agent_b_project_dir,
+                materialized,
+                b11.narrative_core.model_dump(mode="json"),
+                model=model,
+            )
+            b12_view, b2_view = legacy_consumer_views(unified, b11)
+            merged_for_cta = {
+                "schema_version": "b-pipeline-merged-v1",
+                "pipeline_stage": "B1.2",
+                "narrative_core": b11.narrative_core.model_dump(mode="json"),
+                "blocks": [
+                    {"block_id": item.block_id, "beats": [
+                        beat.model_dump(mode="json") for beat in item.beats or []
+                    ]}
+                    for item in b12_view
+                ],
+            }
+            detector_groups = await detect_professional_ctas(
+                merged_for_cta,
+                provider=provider,
+                model=model,
+                semaphore=asyncio.Semaphore(max_parallel_calls),
+                on_input=on_input,
+                on_output=on_output,
+                on_api_response=on_api_response,
+                on_call_duration=on_call_duration,
+            )
+            verified_groups = assert_cta_detector_match(unified, detector_groups)
+            if verified_groups and (not avatar_image or not ebook_image):
+                raise AgentBIntegrationError(
+                    "Detected ebook CTA requires both pinned presenter and ebook images."
+                )
+            result = BPipelineResult(
+                b11=b11, b12=b12_view, b2=b2_view,
+                cta_groups=verified_groups, visual_style="profesional",
+                unified_visual_plan=unified,
+            )
+        finally:
+            if on_stage_duration is not None:
+                on_stage_duration("B2", perf_counter() - agent_started)
+        if on_stage_complete is not None:
+            on_stage_complete("B2", len(materialized), None)
+        if stop_after == "B2.1":
+            if on_stage_duration is not None:
+                on_stage_duration("B2.1", 0.0)
+            if on_stage_complete is not None:
+                on_stage_complete("B2.1", 1, None)
+        return result
 
     semaphore = asyncio.Semaphore(max_parallel_calls)
     if start_from == "B2":
