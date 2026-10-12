@@ -1,4 +1,4 @@
-"""B1.1 → independent B1.2/B2 per-block workers, with exact source integrity.
+"""B1.1 → whole-video B1.2 / professional B2, preserving per-block checkpoints.
 
 This module preserves the new string beat IDs and four visual formats exactly.
 Downstream GPU clients must adopt these contracts before an end-to-end video
@@ -39,6 +39,10 @@ from .contracts import (
     BlockMeta,
     MaterializedBlock,
     ProfessionalB2Output,
+    WholeB12Input,
+    WholeB12Output,
+    WholeProfessionalB2Input,
+    WholeProfessionalB2Output,
 )
 from .cta import CTAPlacement, validate_placement
 from .professional_cta import ProfessionalCTAVisualBeat
@@ -957,6 +961,73 @@ async def _call_stage[OutputT: BaseModel](
             on_call_duration(stage, block_id, perf_counter() - started)
 
 
+
+def validate_whole_beats(
+    result: WholeB12Output,
+    core: object,
+    materialized: list[MaterializedBlock],
+    script: str,
+) -> list[B12Output]:
+    """Validate the global response, then recover immutable per-block checkpoints."""
+    _require_success("B1.2", result.error)
+    if result.narrative_core != core or not result.blocks:
+        raise BPipelineValidationError("B1.2 altered the frozen narrative core")
+    if len(result.blocks) != len(materialized):
+        raise BPipelineValidationError("B1.2 changed the frozen block count")
+    outputs: list[B12Output] = []
+    for actual, block in zip(result.blocks, materialized, strict=True):
+        if actual.block_id != block.block_id:
+            raise BPipelineValidationError("B1.2 altered block IDs or order")
+        part = B12Output(
+            pipeline_stage="B1.2", block_id=block.block_id,
+            beats=actual.beats, error=None,
+        )
+        validate_beats(part, block)
+        if "".join(beat.text for beat in actual.beats) != block.text:
+            raise BPipelineValidationError(
+                f"B1.2 block {block.block_id} does not reconstruct source exactly"
+            )
+        outputs.append(part)
+    if "".join(block.text for block in materialized) != script:
+        raise BPipelineValidationError("Whole B1.2 input blocks do not reconstruct script")
+    return outputs
+
+
+def validate_whole_professional_b2(
+    result: WholeProfessionalB2Output,
+    source: WholeProfessionalB2Input,
+) -> list[ProfessionalB2Output]:
+    """Verify the complete visual assignment before storing per-block outputs."""
+    _require_success("B2", result.error)
+    if result.narrative_core != source.narrative_core or not result.blocks:
+        raise BPipelineValidationError("B2 altered the narrative core")
+    if len(result.blocks) != len(source.blocks):
+        raise BPipelineValidationError("B2 changed the frozen block count")
+    if "".join(beat.text for block in source.blocks for beat in block.beats) != source.plain_script_for_recording:
+        raise BPipelineValidationError("B2 source beats do not reconstruct full script")
+    outputs: list[ProfessionalB2Output] = []
+    for actual, expected in zip(result.blocks, source.blocks, strict=True):
+        if actual.block_id != expected.block_id:
+            raise BPipelineValidationError("B2 changed block IDs or order")
+        supplied = B2Input(
+            narrative_core=source.narrative_core,
+            current_block_id=expected.block_id,
+            blocks=(expected,),
+        )
+        part = ProfessionalB2Output(
+            pipeline_stage="B2", narrative_core=result.narrative_core,
+            blocks=[actual], error=None,
+        )
+        part = repair_frozen_b2_text(part, supplied)
+        validate_visuals(part, supplied)
+        outputs.append(part)
+    overflow = _overlong_avatar_run(outputs)
+    if overflow is not None:
+        raise BPipelineValidationError(_avatar_run_error(*overflow, professional=True))
+    _professional_grid_preflight(_professional_plan(outputs))
+    return outputs
+
+
 async def run_b_pipeline(
     script: str,
     *,
@@ -1173,136 +1244,76 @@ async def run_b_pipeline(
                 raise BPipelineValidationError("B1.2 checkpoint block IDs are not consecutive")
             validate_beats(output, block)
     else:
-        # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
-        async def b12_one(block: MaterializedBlock) -> B12Output:
-            if previous_partial_b12 and block.block_id in previous_partial_b12:
-                saved = previous_partial_b12[block.block_id]
-                validate_beats(saved, block)
-                if on_output is not None:
-                    on_output("B1.2", block.block_id, saved.model_dump())
-                return saved
-            b12_input = B12Input(
-                narrative_core=b11.narrative_core,
-                current_block_id=block.block_id,
-                blocks=(block,),
-            )
-            last_response_id: str | None = None
+        # One complete B1.2 call calibrates narrative pulses against the full arc.
+        # Incomplete old per-block checkpoints cannot be stitched into a global plan.
+        b12_input = WholeB12Input(
+            plain_script_for_recording=script,
+            narrative_core=b11.narrative_core,
+            blocks=list(materialized),
+        )
+        b12_response_id: str | None = None
 
-            def remember_response(response_id: str) -> None:
-                nonlocal last_response_id
-                last_response_id = response_id
+        def remember_b12(response_id: str) -> None:
+            nonlocal b12_response_id
+            b12_response_id = response_id
 
-            async def call_b12(
-                feedback: str = "", previous_response_id: str | None = None,
-            ) -> B12Output:
-                async with semaphore:
-                    return await _call_stage(
-                        "B1.2",
-                        block.block_id,
-                        b12_input.model_dump(),
-                        provider=provider,
-                        model=model,
-                        prompt="b1_2.md",
+        b12_started = perf_counter()
+        try:
+            feedback = ""
+            previous_response_id: str | None = None
+            for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+                candidate: WholeB12Output | None = None
+                try:
+                    candidate = await _call_stage(
+                        "B1.2", None, b12_input.model_dump(),
+                        provider=provider, model=model, prompt="b1_2.md",
                         instructions_suffix="\n\n" + feedback if feedback else "",
                         correction_feedback=feedback or None,
                         previous_response_id=previous_response_id,
-                        on_response_id=remember_response,
-                        output_type=B12Output,
+                        on_response_id=remember_b12,
+                        output_type=WholeB12Output,
                         on_input=on_input,
                         on_api_response=on_api_response,
                         on_call_duration=on_call_duration,
                     )
-
-            feedback = ""
-            previous_response_id: str | None = None
-            for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
-                candidate: B12Output | None = None
-                try:
-                    candidate = await call_b12(feedback, previous_response_id)
-                    # A declared invalid upstream input is not correctable by B1.2.
-                    if candidate.error is not None:
-                        _require_success("B1.2", candidate.error)
-                    validate_beats(candidate, block)
-                    if attempt > 1:
-                        reconstructed = "".join(beat.text for beat in candidate.beats or [])
-                        if reconstructed != block.text:
-                            mismatch = next(
-                                (
-                                    offset for offset, (actual, expected) in enumerate(
-                                        zip(reconstructed, block.text, strict=False)
-                                    ) if actual != expected
-                                ),
-                                min(len(reconstructed), len(block.text)),
-                            )
-                            raise BPipelineValidationError(
-                                "B1.2 corrected beats do not reconstruct the original block "
-                                f"exactly; first difference at character {mismatch}: "
-                                f"expected {block.text[mismatch:mismatch + 30]!r}, "
-                                f"received {reconstructed[mismatch:mismatch + 30]!r}"
-                            )
-                    output = candidate
+                    b12_results = validate_whole_beats(
+                        candidate, b11.narrative_core, materialized, script,
+                    )
                     break
                 except (ValidationError, BPipelineValidationError, RuntimeError) as error:
                     if isinstance(error, RuntimeError) and not is_schema_failure(error):
                         raise
                     if candidate is not None and candidate.error is not None:
-                        # Re-run the upstream stage instead of modifying frozen input.
                         raise
                     rejected = candidate.model_dump() if candidate is not None else {
                         "unparsed_response": True, "validation_error": str(error),
                     }
                     if on_rejected_b12_output is not None:
-                        on_rejected_b12_output(
-                            block.block_id, attempt, str(error), rejected,
-                        )
+                        on_rejected_b12_output(0, attempt, str(error), rejected)
                     if attempt > MAX_VALIDATION_RETRIES:
                         raise BPipelineValidationError(
-                            f"B1.2 block {block.block_id} failed validation after "
-                            f"{MAX_VALIDATION_RETRIES} retries: {error}"
+                            f"Whole-video B1.2 failed after {MAX_VALIDATION_RETRIES} retries: {error}"
                         ) from error
                     previous_response_id = (
-                        last_response_id
-                        if getattr(provider, "supports_response_continuation", False)
+                        b12_response_id if getattr(provider, "supports_response_continuation", False)
                         else None
                     )
                     feedback = validation_feedback(
-                        "B1.2", error, block_id=block.block_id,
+                        "B1.2 whole video", error,
                         previous=candidate.model_dump() if candidate else None,
                         continued=previous_response_id is not None,
                         instructions=(
-                            "B1.2 automatic beat-length correction when lengths are invalid. "
-                            "Previous invalid B1.2 response: correct this block only. "
-                            "The input block text is immutable: choose boundary positions "
-                            "within that exact source string; each beat.text is a verbatim "
-                            "contiguous slice, never rewritten or normalized. "
-                            "Keep every source character in order, including punctuation, "
-                            "accents, newlines and separator whitespace. "
-                            "Return consecutive beat IDs. Every beat must contain content "
-                            "and have at most 40 words and 100 characters after stripping "
-                            "only boundary whitespace; there is NO minimum character count. "
-                            "Split overlong beats at natural source boundaries without "
-                            "manufacturing fragments. Before submitting, concatenate all "
-                            "beat.text values and verify byte-for-byte-equivalent text "
-                            "to the supplied decoded block string."
+                            "Correct the COMPLETE whole-video beat segmentation. "
+                            "Preserve every B1.1 block, ID, and source character. "
+                            "Every beat must be a contiguous verbatim slice including "
+                            "punctuation and whitespace, max 40 words and 100 stripped "
+                            "characters, with no minimum length. Preserve global rhythm."
                         ),
                     )
             if on_output is not None:
-                on_output("B1.2", block.block_id, output.model_dump())
-            return output
-
-        b12_started = perf_counter()
-        try:
-            b12_outcomes = await asyncio.gather(
-                *(b12_one(block) for block in materialized),
-                return_exceptions=True,
-            )
-            b12_failures = [
-                item for item in b12_outcomes if isinstance(item, BaseException)
-            ]
-            if b12_failures:
-                # Successful block outputs are already persisted for --from B1.2.
-                raise b12_failures[0]
-            b12_results = [item for item in b12_outcomes if isinstance(item, B12Output)]
+                on_output("B1.2", None, candidate.model_dump())
+                for item in b12_results:
+                    on_output("B1.2", item.block_id, item.model_dump())
         finally:
             if on_stage_duration is not None:
                 on_stage_duration("B1.2", perf_counter() - b12_started)
@@ -1554,64 +1565,156 @@ async def run_b_pipeline(
             return await b2_one(meta, block, b12, suffix)
         return await b2_one(meta, block, b12)
 
+    async def b2_whole_professional(
+        downstream_feedback: str = "",
+    ) -> list[ProfessionalB2Output]:
+        # One director chooses the carrier for every pulse in full-video context.
+        # Keep existing per-block outputs for B2.1, CTA merge, TTS and checkpoints.
+        reserved_groups = (
+            await cta_detection_task if cta_detection_task is not None
+            else previous_cta_groups
+        )
+        frozen_blocks = [
+            B2InputBlock(
+                block_id=meta.block_id, type=meta.type,
+                emotional_entry=meta.emotional_entry, emotional_exit=meta.emotional_exit,
+                span=meta.span, beats=validate_beats(b12, block),
+            )
+            for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
+        ]
+        request = WholeProfessionalB2Input(
+            plain_script_for_recording=script, narrative_core=b11.narrative_core,
+            blocks=frozen_blocks,
+            cta_groups=[list(group) for group in reserved_groups]
+            if reserved_groups is not None else None,
+        )
+        feedback = downstream_feedback
+        for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+            candidate: WholeProfessionalB2Output | None = None
+            try:
+                # Each complete retry is sent with the original presenter image.
+                candidate = await _call_stage(
+                    "B2", None, request.model_dump(),
+                    provider=provider, model=model, prompt="b2_professional.md",
+                    instructions_suffix="\n\n" + feedback if feedback else "",
+                    output_type=WholeProfessionalB2Output,
+                    input_image_url=image_url,
+                    on_input=on_input, on_api_response=on_api_response,
+                    on_call_duration=on_call_duration,
+                )
+                parts = validate_whole_professional_b2(candidate, request)
+                if on_output is not None:
+                    on_output("B2", None, candidate.model_dump())
+                    for item in parts:
+                        on_output("B2", item.blocks[0].block_id, item.model_dump())
+                return parts
+            except (ValidationError, BPipelineValidationError, GridPlanError, RuntimeError) as error:
+                if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                    raise
+                if candidate is not None and candidate.error is not None:
+                    raise
+                if on_rejected_b2_output is not None:
+                    on_rejected_b2_output(
+                        0, attempt, str(error),
+                        candidate.model_dump() if candidate is not None
+                        else {"unparsed_response": True, "validation_error": str(error)},
+                    )
+                if attempt > MAX_VALIDATION_RETRIES:
+                    raise BPipelineValidationError(
+                        f"Whole professional B2 failed after {MAX_VALIDATION_RETRIES} retries: {error}"
+                    ) from error
+                feedback = validation_feedback(
+                    "B2 profesional whole video", error,
+                    previous=candidate.model_dump() if candidate else None,
+                    continued=False,
+                    instructions=(
+                        "Correct the COMPLETE visual plan. Preserve all source text, "
+                        "blocks, beat IDs, and beat types. Keep valid carrier choices "
+                        "and correct only invalid visual/audio/reference assignments "
+                        "or prompts. Enforce the GLOBAL 120-character audio=true cap, "
+                        "the final close avatar, and valid block-local grid numbering."
+                    ),
+                )
+
     b2_started = perf_counter()
     try:
-        b2_outcomes = await asyncio.gather(
-            *(
-                b2_selected(meta, block, b12)
-                for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
-                if (not retry_ids or meta.block_id in retry_ids)
-                and (not previous_partial_b2 or meta.block_id not in previous_partial_b2)
-            ),
-            return_exceptions=True,
-        )
-        b2_failures = [item for item in b2_outcomes if isinstance(item, BaseException)]
-        if b2_failures:
-            # Finish every independent block before allowing a stage failure.
-            raise b2_failures[0]
-        generated_b2 = [
-            item for item in b2_outcomes
-            if isinstance(item, (B2Output, ProfessionalB2Output))
-        ]
-        if retry_ids:
-            generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
-            b2_results = [
-                generated_by_id.get(block_id, previous_by_id[block_id])
-                for block_id in range(1, len(materialized) + 1)
-            ]
+        if visual_style == "profesional":
+            # A selective grid retry must preserve global visual coherence:
+            # rerun the entire director, using the failed block as feedback.
+            feedback = ""
+            if retry_ids:
+                feedback = (
+                    "Correct downstream visual continuity in the complete video: "
+                    + "; ".join(
+                        f"block {key}: {value}"
+                        for key, value in sorted((retry_b2_feedback or {}).items())
+                    )
+                )
+                for target in retry_ids:
+                    if b2_correction_counts.get(target, 0) >= MAX_VALIDATION_RETRIES:
+                        raise BPipelineValidationError(
+                            f"B2 block {target} exhausted its downstream retry budget"
+                        )
+                    b2_correction_counts[target] = b2_correction_counts.get(target, 0) + 1
+            b2_results = await b2_whole_professional(feedback)
         else:
-            generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
-            b2_results = [
-                generated_by_id.get(block_id)
-                or (previous_partial_b2 or {}).get(block_id)
-                for block_id in range(1, len(materialized) + 1)
+            b2_outcomes = await asyncio.gather(
+                *(
+                    b2_selected(meta, block, b12)
+                    for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
+                    if (not retry_ids or meta.block_id in retry_ids)
+                    and (not previous_partial_b2 or meta.block_id not in previous_partial_b2)
+                ),
+                return_exceptions=True,
+            )
+            b2_failures = [item for item in b2_outcomes if isinstance(item, BaseException)]
+            if b2_failures:
+                # Finish every independent block before allowing a stage failure.
+                raise b2_failures[0]
+            generated_b2 = [
+                item for item in b2_outcomes
+                if isinstance(item, (B2Output, ProfessionalB2Output))
             ]
-            if any(item is None for item in b2_results):
-                raise BPipelineValidationError("B2 partial recovery is missing a block")
-            if previous_partial_b2:
-                for block_id, saved in previous_partial_b2.items():
-                    if block_id < 1 or block_id > len(materialized):
-                        raise BPipelineValidationError("B2 partial recovery has invalid block IDs")
-                    meta, block, b12 = (
-                        b11.blocks[block_id - 1], materialized[block_id - 1],
-                        b12_results[block_id - 1],
-                    )
-                    expected = B2Input(
-                        narrative_core=b11.narrative_core, current_block_id=block_id,
-                        blocks=(B2InputBlock(
-                            block_id=meta.block_id, type=meta.type,
-                            emotional_entry=meta.emotional_entry,
-                            emotional_exit=meta.emotional_exit, span=meta.span,
-                            beats=validate_beats(b12, block),
-                        ),),
-                    )
-                    validate_visuals(saved, expected)
-                    if on_output is not None:
-                        on_output("B2", block_id, saved.model_dump())
+            if retry_ids:
+                generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
+                b2_results = [
+                    generated_by_id.get(block_id, previous_by_id[block_id])
+                    for block_id in range(1, len(materialized) + 1)
+                ]
+            else:
+                generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
+                b2_results = [
+                    generated_by_id.get(block_id)
+                    or (previous_partial_b2 or {}).get(block_id)
+                    for block_id in range(1, len(materialized) + 1)
+                ]
+                if any(item is None for item in b2_results):
+                    raise BPipelineValidationError("B2 partial recovery is missing a block")
+                if previous_partial_b2:
+                    for block_id, saved in previous_partial_b2.items():
+                        if block_id < 1 or block_id > len(materialized):
+                            raise BPipelineValidationError("B2 partial recovery has invalid block IDs")
+                        meta, block, b12 = (
+                            b11.blocks[block_id - 1], materialized[block_id - 1],
+                            b12_results[block_id - 1],
+                        )
+                        expected = B2Input(
+                            narrative_core=b11.narrative_core, current_block_id=block_id,
+                            blocks=(B2InputBlock(
+                                block_id=meta.block_id, type=meta.type,
+                                emotional_entry=meta.emotional_entry,
+                                emotional_exit=meta.emotional_exit, span=meta.span,
+                                beats=validate_beats(b12, block),
+                            ),),
+                        )
+                        validate_visuals(saved, expected)
+                        if on_output is not None:
+                            on_output("B2", block_id, saved.model_dump())
+
 
         # Parallel workers cannot see presenter runs crossing block boundaries.
         # Fix one eligible block at a time without re-running any other block.
-        while (overflow := _overlong_avatar_run(b2_results)) is not None:
+        while visual_style != "profesional" and (overflow := _overlong_avatar_run(b2_results)) is not None:
             run, total = overflow
             offset = 0
             candidates: list[tuple[int, int, int, str]] = []
@@ -1692,7 +1795,9 @@ async def run_b_pipeline(
             b2_results[index] = await b2_one(
                 b11.blocks[index], materialized[index], b12_results[index], suffix,
             )
-        if visual_style == "profesional" and stop_after == "B2.1":
+        if visual_style == "profesional":
+            _professional_grid_preflight(_professional_plan(b2_results))
+        if visual_style == "casero" and stop_after == "B2.1":
             # B2.1 must see a valid immutable numbered grid assignment.
             # Repair invalid B2 numbering before B2.1 or any paid image work.
             while True:

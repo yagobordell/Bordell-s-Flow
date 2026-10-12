@@ -2490,7 +2490,7 @@ class BotArtifacts:
     def _folder(self, stage: str, block_id: int | None) -> Path:
         if stage not in (*_STAGES, "CTA", "CTA Detector", "B2 CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage in {"B1.1", "B2.1", "CTA", "CTA Detector"}:
+        if stage in {"B1.1", "B2.1", "CTA", "CTA Detector"} or (stage in {"B1.2", "B2"} and block_id is None):
             if block_id is not None:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
@@ -2526,7 +2526,7 @@ class BotArtifacts:
         self, block_id: int, attempt: int, error: str, payload: dict[str, object]
     ) -> None:
         _write(
-            self._folder("B1.2", block_id) / f"rejected_attempt_{attempt}.json",
+            self._folder("B1.2", block_id or None) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
@@ -2534,7 +2534,7 @@ class BotArtifacts:
         self, block_id: int, attempt: int, error: str, payload: dict[str, object]
     ) -> None:
         _write(
-            self._folder("B2", block_id) / f"rejected_attempt_{attempt}.json",
+            self._folder("B2", block_id or None) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
@@ -2927,9 +2927,9 @@ async def main() -> None:
             resume_expected_calls = {
                 stage: prior_counts[stage]
                 + (
-                    (block_count - len(previous_partial_b12)
+                    (1
                      if stage == "B1.2" else
-                     block_count - len(previous_partial_b2)
+                     (1 if visual_style == "profesional" else block_count - len(previous_partial_b2))
                      if stage == "B2" else
                      1 if stage == "B2.1" else
                      block_count)
@@ -3096,11 +3096,11 @@ async def main() -> None:
                 "CTA Detector": timings.call_count("CTA Detector"),
                 "B2 CTA": timings.call_count("B2 CTA"),
                 "B1.2": (
-                    max(report_blocks, timings.call_count("B1.2"))
+                    max(1, timings.call_count("B1.2"))
                     if report_blocks is not None else None
                 ) if stop_index >= 1 else 0,
                 "B2": (
-                    max(report_blocks, timings.call_count("B2"))
+                    max(1 if visual_style == "profesional" else report_blocks, timings.call_count("B2"))
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
                 "B2.1": (
@@ -3125,7 +3125,7 @@ async def main() -> None:
                 )
                 if stop_index >= 2:
                     expected_calls["B2"] = max(
-                        expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
+                        expected_calls["B2"] or 0, 1 if visual_style == "profesional" else report_blocks, timings.call_count("B2")
                     )
                 if visual_style == "profesional" and stop_index >= 3:
                     expected_calls["B2.1"] = max(
