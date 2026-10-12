@@ -1,0 +1,2 @@
+# Standalone Agent B planning preview dependency; not activated by the production lock.
+openai-agents==0.23.1
