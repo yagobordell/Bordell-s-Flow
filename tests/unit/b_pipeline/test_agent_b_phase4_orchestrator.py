@@ -78,7 +78,7 @@ def test_opt_in_orchestrator_skips_b12_b2_b21_creative_calls(tmp_path, monkeypat
         agent_b_project_dir=tmp_path,
     ))
     assert calls == ["B1.1", "CTA Detector"]
-    assert result.visual_plan() == _unified(b11)
+    assert result.visual_plan() == {**_unified(b11), "planning_origin": "agent_b"}
     assert len(result.b12) == len(result.b2) == 1
     assert result.b2[0].blocks[0].span.last_words == "A phone rings."
 
