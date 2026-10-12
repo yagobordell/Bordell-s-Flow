@@ -56,7 +56,8 @@ jobs:
             tests/unit/b_pipeline/test_agent_b_foundation.py \
             tests/unit/b_pipeline/test_agent_b_runner.py \
             tests/unit/b_pipeline/test_agent_b_preview_cli.py \
-            tests/unit/b_pipeline/test_agent_b_grid_continuity.py
+            tests/unit/b_pipeline/test_agent_b_grid_continuity.py \
+            tests/unit/b_pipeline/test_agent_b_phase3_preview.py
   windows-preview:
     name: Agent B Windows VS Code setup smoke
     runs-on: windows-latest
