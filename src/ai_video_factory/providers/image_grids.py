@@ -119,7 +119,7 @@ def _grid_prompt(
             )
     if logical_panel_labels:
         prompt += (
-            "\\n\\nLogical continuity identities: " + "; ".join(logical_panel_labels)
+            "\n\nLogical continuity identities: " + "; ".join(logical_panel_labels)
             + ". These labels name recurring visual stories across the entire video; "
             "they are NOT positions in this physical grid. Do not render the labels "
             "as visible text and never depict earlier panels as extra cells."
