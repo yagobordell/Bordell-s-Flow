@@ -247,7 +247,7 @@ def test_correction_merges_short_beats() -> None:
     assert [beat.text.strip() for beat in result.b12[0].beats] == [
         (FIRST + SHORT).strip(), SECOND.strip(),
     ]
-    assert "no minimum character count" in provider.calls[1]["instructions"]
+    assert "22 stripped characters" in provider.calls[1]["instructions"]
 
 
 def test_unrelated_b12_validation_failure_is_repaired() -> None:
