@@ -22,7 +22,7 @@ def test_planner_covers_every_second_without_oversized_jobs(seconds: float) -> N
     assert result[0][0] == 0.0
     assert result[-1][1] == seconds
     assert forced == max(0, len(result) - 1)
-    for (start, end), next_part in zip(result, result[1:]):
+    for (start, end), next_part in zip(result, result[1:], strict=False):
         assert start < end
         assert end - start <= vertical.MAX_SEGMENT + 0.0001
         assert next_part[0] == end
