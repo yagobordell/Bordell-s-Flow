@@ -48,31 +48,89 @@ class OpenAISttClient:
         words = raw.get("words")
         if not isinstance(words, list) or not words:
             raise OpenAISttError("OpenAI STT returned no word timestamps")
-        normalized: list[dict[str, Any]] = []
-        previous_start = 0.0
+        # Whisper occasionally omits or corrupts ONE word timestamp in an
+        # otherwise valid transcript. Recover only bounded gaps using adjacent
+        # timestamps, keeping every spoken token in its original order.
+        def timestamp(value: Any) -> float | None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            number = float(value)
+            return number if math.isfinite(number) and number >= 0 else None
+
+        parsed: list[dict[str, Any]] = []
         for index, entry in enumerate(words):
             if not isinstance(entry, dict):
-                raise OpenAISttError("Malformed OpenAI STT word")
-            word, start, end = entry.get("word"), entry.get("start"), entry.get("end")
-            if (
-                not isinstance(word, str) or not word.strip()
-                or isinstance(start, bool) or isinstance(end, bool)
-                or not isinstance(start, (int, float))
-                or not isinstance(end, (int, float))
-                or not math.isfinite(start) or not math.isfinite(end)
-                or start < 0 or end < 0
-            ):
-                raise OpenAISttError(f"Invalid OpenAI STT word timing at index {index}")
-            # Whisper can return a slightly non-monotonic word boundary or an
-            # end before its start. Repair those local anomalies instead of
-            # discarding the complete otherwise usable transcript.
-            safe_start = max(float(start), previous_start)
-            safe_end = max(float(end), safe_start)
-            normalized.append({"word": word, "start": safe_start, "end": safe_end})
+                raise OpenAISttError(f"Malformed OpenAI STT word at index {index}")
+            word = entry.get("word")
+            if not isinstance(word, str) or not word.strip():
+                raise OpenAISttError(f"Invalid OpenAI STT word at index {index}")
+            parsed.append({
+                "word": word,
+                "start": timestamp(entry.get("start")),
+                "end": timestamp(entry.get("end")),
+            })
+
+        normalized: list[dict[str, Any]] = []
+        repairs: list[dict[str, Any]] = []
+        previous_start = 0.0
+        # Never infer a word's position across a long pause or an unanchored
+        # region: such a transcript needs another real STT response.
+        max_gap = 2.0
+        for index, entry in enumerate(parsed):
+            start, end = entry["start"], entry["end"]
+            recovered_fields: list[str] = []
+            if start is None:
+                lower = normalized[-1]["end"] if normalized else 0.0
+                upper = end
+                if upper is None:
+                    upper = next(
+                        (later["start"] for later in parsed[index + 1:]
+                         if later["start"] is not None),
+                        None,
+                    )
+                if (
+                    upper is None or upper < lower
+                    or upper - lower > max_gap
+                ):
+                    raise OpenAISttError(
+                        f"Unrecoverable OpenAI STT start at index {index}: "
+                        "no bounded neighboring timestamps"
+                    )
+                start = lower
+                recovered_fields.append("start")
+            safe_start = max(start, previous_start)
+            if end is None:
+                next_start = next(
+                    (later["start"] for later in parsed[index + 1:]
+                     if later["start"] is not None),
+                    None,
+                )
+                if (
+                    next_start is not None and next_start >= safe_start
+                    and next_start - safe_start <= max_gap
+                ):
+                    end = next_start
+                elif entry["start"] is not None:
+                    # Zero-length words are already supported by the timeline;
+                    # an unknown end must never shift a later known start.
+                    end = safe_start
+                else:
+                    raise OpenAISttError(
+                        f"Unrecoverable OpenAI STT end at index {index}: "
+                        "no bounded neighboring timestamps"
+                    )
+                recovered_fields.append("end")
+            safe_end = max(end, safe_start)
+            normalized.append({
+                "word": entry["word"], "start": safe_start, "end": safe_end,
+            })
+            if recovered_fields:
+                repairs.append({"index": index, "fields": recovered_fields})
             previous_start = safe_start
         return {
             "model": self.model,
             "text": raw.get("text"),
             "language": raw.get("language"),
             "words": normalized,
+            **({"timing_repairs": repairs} if repairs else {}),
         }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import shutil
 import struct
 import subprocess
@@ -28,7 +29,7 @@ from ai_video_factory.compositor.static_preview import (
     build_stt_beat_timeline,
     generate_static_preview,
 )
-from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.openai_stt import OpenAISttClient, OpenAISttError
 from scripts.pipeline import run_b_pipeline as runner
 
 
@@ -157,6 +158,101 @@ def test_openai_stt_uses_word_timestamps_and_repairs_local_timing_anomalies(
     calls.create = lambda **_kwargs: {"words": [{"word": "x", "start": 1.0, "end": 0.5}]}
     repaired = client.transcribe(audio)
     assert repaired["words"] == [{"word": "x", "start": 1.0, "end": 1.0}]
+
+
+@pytest.mark.parametrize(
+    ("broken", "expected"),
+    [
+        ({"word": "final", "start": None, "end": 1.4}, (1.0, 1.4)),
+        ({"word": "final", "start": -0.15, "end": 1.4}, (1.0, 1.4)),
+        ({"word": "final", "start": float("nan"), "end": 1.4}, (1.0, 1.4)),
+        ({"word": "final", "start": 1.1, "end": None}, (1.1, 1.6)),
+        ({"word": "final", "start": None, "end": None}, (1.0, 1.6)),
+    ],
+)
+def test_openai_stt_recovers_isolated_missing_word_timing(
+    tmp_path: Path, broken: dict, expected: tuple[float, float],
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 96000)
+    fake = _FakeTranscriptions()
+    fake.create = lambda **_kwargs: {"words": [
+        {"word": "antes", "start": 0.5, "end": 1.0},
+        broken,
+        {"word": "despues", "start": 1.6, "end": 1.9},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=fake),
+    ))
+    transcript = client.transcribe(audio)
+    assert [word["word"] for word in transcript["words"]] == [
+        "antes", "final", "despues",
+    ]
+    assert (transcript["words"][1]["start"], transcript["words"][1]["end"]) == expected
+    assert transcript["timing_repairs"] == [{
+        "index": 1,
+        "fields": (
+            ["start", "end"] if broken["start"] is None and broken["end"] is None
+            else ["start"] if broken["start"] is None
+            or (isinstance(broken["start"], float) and
+                (broken["start"] < 0 or not math.isfinite(broken["start"])))
+            else ["end"]
+        ),
+    }]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"word": "x", "start": None, "end": None},
+        {"word": "x", "start": -99.0, "end": None},
+        {"word": "x", "start": None, "end": 12.0},
+    ],
+)
+def test_openai_stt_refuses_unbounded_word_timing(
+    tmp_path: Path, broken: dict,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    fake = _FakeTranscriptions()
+    fake.create = lambda **_kwargs: {"words": [broken]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=fake),
+    ))
+    with pytest.raises(OpenAISttError, match="Unrecoverable"):
+        client.transcribe(audio)
+
+
+def test_cached_stt_repairs_are_not_billed_twice(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 96000)
+    calls = _FakeTranscriptions()
+    def transcript(**_kwargs):
+        calls.calls += 1
+        return {"words": [
+            {"word": "antes", "start": 0.5, "end": 1.0},
+            {"word": "final", "start": None, "end": 1.4},
+        ]}
+    calls.create = transcript
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    run = tmp_path / "audio" / "runs" / "test"
+    (run / "blocks" / "block_1").mkdir(parents=True)
+    item = {"block_id": 1, "file": "audio.wav", "sha256": _sha(audio)}
+    first = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    second = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    assert first == second
+    assert calls.calls == 1
+    persisted = json.loads(
+        (run / "blocks" / "block_1" / "stt.json").read_text(encoding="utf-8")
+    )
+    assert persisted["timing_repairs"] == [{"index": 1, "fields": ["start"]}]
+    assert persisted["source_audio_sha256"] == item["sha256"]
 
 
 def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -> None:
