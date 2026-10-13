@@ -53,7 +53,9 @@ def test_portrait_input_keeps_subject_uncropped(tmp_path: Path) -> None:
         assert opened.getpixel((288, 512))[0] > 210
 
 
-@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="requires ffmpeg")
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="requires ffmpeg"
+)
 def test_real_offline_plan_is_resumable_and_mp3_safe(tmp_path: Path) -> None:
     image = tmp_path / "avatar.jpg"
     Image.new("RGB", (600, 800), (50, 90, 130)).save(image)
@@ -89,7 +91,9 @@ def test_real_offline_plan_is_resumable_and_mp3_safe(tmp_path: Path) -> None:
         vertical.main(flags)
 
 
-@pytest.mark.skipif(not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="requires ffmpeg")
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"), reason="requires ffmpeg"
+)
 def test_real_ffmpeg_portrait_composition_uses_master_audio(tmp_path: Path) -> None:
     clips = []
     for index in range(2):
