@@ -1141,6 +1141,8 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plan, audio, images = _case(tmp_path, monkeypatch)
+    audio["provider"] = "gemini"
+    audio["voice_source"] = "gemini"
     source = tmp_path / "worker-with-embedded-audio.mp4"
     subprocess.run([
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
@@ -1209,7 +1211,9 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert result["i2v_jobs"] == 1
     assert result["a2v_jobs"] == 2
     assert result["beat_count"] == 6
-    assert result["audio_source"] == "original_fish_pcm_master_only"
+    assert result["audio_source"] == "verified_original_pcm_master_only"
+    assert result["audio_provider"] == "gemini"
+    assert result["voice_source"] == "gemini"
     timing = result["composition_timings_seconds"]
     assert set(timing) == {
         "segment_preparation", "final_encoding",

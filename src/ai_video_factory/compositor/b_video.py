@@ -410,7 +410,12 @@ def render_b2_ltx_video(
         "a2v_jobs": sum(job.kind == "a2v" for job in jobs),
         "timeline_file": timeline_path.relative_to(output).as_posix(),
         "audio_file": audio["file"],
-        "audio_source": "original_fish_pcm_master_only",
+        # Describe the verified master without assuming Fish: professional
+        # narration may have been synthesized by Gemini, while legacy runs
+        # may use a different voice backend.
+        "audio_source": "verified_original_pcm_master_only",
+        "audio_provider": audio.get("provider") or "unknown",
+        "voice_source": audio.get("voice_source") or "unknown",
         "avatar_media_layout": "side_by_side_50_50",
         "media_image_motion": {"animated_beats": image_count},
         "composition_timings_seconds": {
