@@ -2289,8 +2289,14 @@ async def _run_audio_only(
                     raise RuntimeError("Professional B2 merged checkpoint is incomplete")
                 _validate_professional_audio_b2(core, blocks)
                 pending = unfinished_audio_runs(output)
-                nonce = _professional_audio_nonce(
-                    pending, resume=resume, previous_audio=previous_audio,
+                # The effective V1-V4 plan must identify the matching paid
+                # Gemini task. Picking an arbitrary pending nonce can create
+                # a third run or replay already-paid audio.
+                nonce = (
+                    "" if resume and pending
+                    else _professional_audio_nonce(
+                        pending, resume=resume, previous_audio=previous_audio,
+                    )
                 )
                 artifact = await generate_professional_audio(
                     core=core, blocks=blocks, output=output,
@@ -2299,6 +2305,7 @@ async def _run_audio_only(
                     voice_id=_run_voice_id(output),
                     source_sha256=hashlib.sha256(raw).hexdigest(),
                     generation_nonce=nonce,
+                    resume_pending_tasks=pending if resume and pending else None,
                     on_timing=prior_timing.record_call,
                     on_stage_duration=prior_timing.record_stage,
                     max_parallel_calls=max_parallel_calls,
