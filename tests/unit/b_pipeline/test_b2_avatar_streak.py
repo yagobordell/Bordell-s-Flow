@@ -245,7 +245,7 @@ class _B2Provider:
 
 
 def test_whole_video_retries_only_discretionary_beat_in_adjacent_block() -> None:
-    script, b11, b12 = _checkpoint("A" * 61, ["B" * 60, "C" * 13])
+    script, b11, b12 = _checkpoint("A" * 61, ["B" * 60, "C" * 22])
     provider = _B2Provider()
     rejected: list[tuple[int, str]] = []
     completed: list[str] = []
@@ -266,7 +266,7 @@ def test_whole_video_retries_only_discretionary_beat_in_adjacent_block() -> None
         block_id for block_id, _ in provider.calls
     ) == [1, 2, 2]
     assert rejected[0][0] == 2
-    assert "total 134 characters" in rejected[0][1]
+    assert "total 143 characters" in rejected[0][1]
     assert [beat.visual_type for beat in result.b2[1].blocks[0].beats] == [
         "media_image",
         "avatar",
