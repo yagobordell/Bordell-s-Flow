@@ -646,6 +646,109 @@ def test_real_bottom_left_ken_burns_alternates_second_media_image(
 
 
 
+def test_ffmpeg_preview_caps_threads_and_reports_memory_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import static_preview
+
+    plan, audio, images = _fixture_assets(tmp_path)
+    calls = []
+
+    def oom_ffmpeg(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(
+            returncode=1,
+            stderr=(
+                "[vf#0:0] Error while filtering: Cannot allocate memory\n"
+                "Task finished with error code: -12"
+            ),
+        )
+
+    monkeypatch.setattr(static_preview.subprocess, "run", oom_ffmpeg)
+    with pytest.raises(
+        static_preview.StaticPreviewResourceError, match="local memory",
+    ):
+        generate_static_preview(tmp_path, plan, audio, images)
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[command.index("-filter_threads") + 1] == "1"
+    assert command[command.index("-threads:v") + 1] == "2"
+    assert not (tmp_path / "preview" / "static_preview.mp4").exists()
+    assert not (tmp_path / "preview" / "static_preview.part.mp4").exists()
+
+
+def test_ffmpeg_preview_other_errors_still_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import static_preview
+
+    plan, audio, images = _fixture_assets(tmp_path)
+    monkeypatch.setattr(
+        static_preview.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stderr="FFmpeg fatal: broken decoding parameters",
+        ),
+    )
+    with pytest.raises(StaticPreviewError, match="broken decoding"):
+        generate_static_preview(tmp_path, plan, audio, images)
+
+
+def test_images_only_preview_oom_does_not_block_final_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor.static_preview import StaticPreviewResourceError
+
+    script = tmp_path / "input" / "roma.txt"
+    script.parent.mkdir()
+    script.write_text("Hola mundo. Adiós", encoding="utf-8")
+    output = tmp_path / "output" / "roma"
+    output.mkdir(parents=True)
+    plan, audio, images = _fixture_assets(output)
+    images["model_id"] = "gpt-image-2.5-flare"
+    (output / "B2").mkdir()
+    (output / "B2" / "merged_output.json").write_text("{}", encoding="utf-8")
+    (output / "visual_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (output / "images" / "manifest.json").write_text(
+        json.dumps(images), encoding="utf-8",
+    )
+    (output / "run_report.json").write_text(json.dumps({
+        "run": {
+            "script_sha256": _sha(script),
+            "status": "failed",
+            "audio_generation": {"status": "completed", **audio},
+        },
+        "api_costs": {"run_status": "failed"},
+        "timings": {"status": "failed"},
+    }), encoding="utf-8")
+    original = {
+        entry["file"]: (output / entry["file"]).read_bytes()
+        for entry in images["items"]
+    }
+    ltx_calls = []
+
+    async def preview_oom(*_args, **_kwargs):
+        raise StaticPreviewResourceError("FFmpeg Cannot allocate memory")
+
+    async def final_video(*_args, **_kwargs):
+        ltx_calls.append("final-video")
+        return {"status": "completed", "file": "video/final.mp4"}
+
+    monkeypatch.setattr(runner, "_render_preview", preview_oom)
+    monkeypatch.setattr(runner, "_video_if_ready", final_video)
+    monkeypatch.setattr(runner, "_publish_if_ready", lambda *_args: None)
+    asyncio.run(runner._run_images_only(script, tmp_path / "output"))
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert report["run"]["status"] == "completed"
+    assert report["run"]["video_preview"]["status"] == "deferred"
+    assert report["run"]["video_preview"]["reason"] == (
+        "ffmpeg_preview_memory_exhausted"
+    )
+    assert report["run"]["video_generation"]["status"] == "completed"
+    assert ltx_calls == ["final-video"]
+    assert all((output / rel).read_bytes() == data for rel, data in original.items())
+
+
 def test_images_only_auto_renders_from_existing_stt_and_saved_images(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
