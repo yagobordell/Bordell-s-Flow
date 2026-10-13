@@ -70,6 +70,37 @@ Ask internally:
 
 ### Beats versus visual changes
 
+- Every carrier covers at least 22 stripped narration characters of its beat. A beat shorter than that gets the same visual description as the adjacent beat, not a new visual idea.
+- Each carrier shows the subject that its own beat's narration names: the person, object, place, number, or action it mentions. Do not substitute a related or adjacent subject.
+- When a prompt shows a person, describe that person concretely: apparent age range, clothing, posture, and the action they are performing. Do not describe a person only as "a person", "someone", "anonymous", or "unidentified". Use only what the narration establishes or ordinary staging; do not invent story facts.
+- Show a revealed object, number, name, or outcome only in the beat where the narration first states it. Never show it on an earlier beat, even when the same scene continues.
+- Give each carrier a subject, setting, or prop that differs from the carriers around it, unless the narration continues that same subject or continuity requires it. Do not reuse one composition for different narrated moments.
+- When the narration describes a process or mechanism, compose the image around the path or sequence it describes: what moves, from where, to where. Do not compose it around equipment that merely belongs to the topic.
+- When the narration names an identifier the audience must recognize, show the object that carries it, framed so its role in the story is clear.
+- Do not add threats, pursuit, or dramatic actions that the narration does not state.
+- Within any run of adjacent beats, change at least one of: subject, shot scale, camera angle, or setting, unless the narration continues the same moment. Never give two consecutive carriers the same composition.
+- Give each item the narration enumerates, each step of a process, and each rule it states its own carrier that shows that item's action and object.
+- When the narration states a comparison, a check, or a result, show the objects being compared or the visible indicator of the result, not only a person looking at them.
+- When an analogy is introduced with an object, reuse that same object and visual role when the narration applies the analogy to the real case.
+- A recurring person keeps the same description (apparent age, clothing, appearance) in every beat where they appear.
+- Show emotion through an observable action or the situation that causes it, never through a posed expression or gesture alone.
+- Do not add an element the narration does not name. Choose the object or setting the beat names instead of a generic background object reused for different concepts.
+- When the narration names a concept, show that concept's own form. Do not substitute a generic object that only resembles it.
+- When the narration gives an amount, quantity, or scale, show the object that carries that figure or a composition that conveys its scale. Do not represent it with a single person.
+- When the narration describes an action performed on a device, a screen, or a printed element, show that action on the exact element it names.
+- Keep the same type of device and environment for the same role throughout the script.
+- Use one visual register per block: documentary photography, or one consistent diagram style. Do not mix photography, illustration, infographic, and stock within one explanation.
+- When a process has steps, show each step's own action and the object that passes from one step to the next.
+- When the narration attributes speech or an action to a character, show that character performing it.
+- When the narration asks the viewer to perform an action with an on-screen element, show that element in the frame.
+- Do not let one setting or subject dominate a block. Vary it when the narration moves to a new point.
+- Before writing a prompt, identify who performs the action the beat names, toward whom or what, and which object moves or is pressed. The frame must show that direction. A frame showing the reverse direction, or an action the narration denies, is wrong even when the topic is right.
+- Never give two consecutive carriers identical or near-identical prompts. When the narration keeps one action going across adjacent beats, the later carrier shows the next observable result or step of that same action.
+- A subject that recurs across consecutive beats must be sustained by the narration. Each recurrence adds one element the beat names that the previous carrier did not show.
+- Describe one place and one framing per carrier. When a beat relates two places, show the place it names.
+- When two parties in the story have similar roles, make their difference visible through setting, clothing, or tool.
+- Each step of a process shows an effect: the object that enters, changes, or leaves that step. Equipment that only belongs to the topic may establish the environment once; it does not stand for a step.
+- Use a symbolic or metaphorical prop only when the narration uses that metaphor, and show it with an observable action. A symbolic object standing alone does not carry the meaning.
 - Multiple consecutive beats may remain on the **same original avatar** only when they are a sustained direct-to-viewer passage or narration of something that cannot be shown.
 - A narrative pulse may deserve a deliberately distinct visual treatment; that decision is editorial, not automatic.
 - An extended rhetorical idea may continue over adjacent technical fragments produced by B1.2's **100-character/40-word caps**. Do not interpret a forced technical boundary as a fresh dramatic turn or mandatory cut.
@@ -194,6 +225,7 @@ Write **every non-null** `prompt` and `video_prompt` in **English**, as concise,
 
 Describe **one photographable instant** with the necessary:
 
+- the subject, action, and place that this beat's own narration names, not an adjacent or later one;
 - principal subject and correct participant identity/ownership;
 - one observable action, state, result, or relationship;
 - source-relevant environment and physical conditions;
@@ -202,7 +234,7 @@ Describe **one photographable instant** with the necessary:
 - continuity-critical props, identities, appearances, amounts, states, and spatial relationships;
 - visual emphasis directly relevant to the present beat.
 
-The application supplies the shared photographic style. **Do not add generic global-style boilerplate**, canned camera specifications, gratuitous production jargon, or unsupported details. A shorter precise prompt is better than a long generic one.
+The application supplies the shared photographic style. **Do not add generic global-style boilerplate** or gratuitous production jargon. Write each shot as a documentary or cinematic frame for its own beat: observational rather than posed, in a real and specific location, lit by a named natural or practical source, with the shot scale and viewpoint the beat needs. Do not add unsupported details. A shorter precise prompt is better than a long generic one. Avoid staged still lifes, arranged object displays, empty symbolic sets, and posed gestures; a frame with no person acting is valid only when the narration describes that object or place itself.
 
 One still frame must not depict multiple non-simultaneous stages of an action, a fabricated before/after collage, or a multi-panel storyboard. A simultaneous comparison is appropriate only if the actual beat requires it and the composition remains photographable.
 
@@ -213,6 +245,7 @@ For `media_video`:
 - `prompt` describes the **first observable, motion-ready frame only**.
 - `video_prompt` describes the **subsequent** physical motion in **one uninterrupted shot**: natural subject action, useful camera movement if warranted, and realistic temporal progression.
 - Keep the starting frame consistent with the established state; do not include a future result in that frame before the motion or narration earns it.
+- Use camera movement only when it reveals what the beat names or changes what the viewer attends to; otherwise keep the camera fixed. Movement is not a default.
 - Prefer physically plausible motion that is achievable by the video generator. Avoid fragile choreography requiring unusually precise hand-object interaction, exact evolving lettering or numerical interfaces, or implausible physics.
 - If an intended motion is unreliable, replace **only that fragile motion** with a nearby, source-faithful achievable action. Do not downgrade a fundamentally dynamic, useful beat to a still solely because the first proposed motion is unreliable.
 - Write the final motion affirmatively. Do not include lists of forbidden actions, rejected attempts, speech instructions, dialogue, lip-sync requests, or camera-address performance.
@@ -240,22 +273,6 @@ If such content is visible, the image generator must determine or generate the a
 This approach is required because the visibility of screen or document content cannot be guaranteed in a generated image. Specifying content that may not realistically be visible can force unnatural compositions, create contradictions with the selected camera angle or framing, or produce other visual inconsistencies.
 
 The contextual note must therefore be sufficiently rich and specific for the image generator to infer appropriate screen or document content when necessary, while leaving the visibility and exact appearance of that content entirely to the image generator.
-
-## 9. Lettered grids and logical image continuity
-
-Generated images that belong to one visual development share a **lettered grid**. For each `media_image` or `media_video` beat that belongs to a grid, write its grid label at the start of the image `prompt`, in the form `A1.`, `A2.`, `B1.`, and so on:
-
-- The letter names one logical visual development. Its panels are numbered `1`, `2`, `3`, … in narrative order.
-- Panels of one letter need not be consecutive beats. A letter may resume after other letters or avatar beats have appeared, but it stays inside one B1.1 block.
-- The first panel of a letter is `1`. Each later panel of the same letter takes the next number in narrative order (2, 3, 4, …). Never repeat a number under the same letter. Use a letter only for panels that share the same subject, object, place, state, or process. A new development in the same block takes the next unused letter.
-- A letter needs at least two panels inside its block and may hold at most twenty. A single image takes no letter label. A development with more than twenty panels continues under a new letter.
-- Keep one continuous development under a single letter for its whole length. Do not split it into several letters only to make a shorter grid. Start a new letter only when the subject, object, or development changes.
-- Do not label `avatar` beats. Label an `avatar_media` support image only with panels of the **same supported panel format**; do not mix `avatar_media` support panels with full-frame B-roll under one letter.
-- Do not continue a letter across a reserved CTA region boundary, because its visuals may later be replaced.
-- The application owns physical packing into grids, grid order, and asset IDs. Do not write physical-grid or global-camera instructions into an image prompt.
-- B2.1 may add one second still inside a long `media_image` beat. Do not count future B2.1 splits as separate beats or emit speculative extra images here.
-
-Group beats under one lettered grid when they show the same object, device, place, or subject developing across the narration, including beats that are not consecutive. Keep a beat outside every grid only when it is a distinct scene that does not continue an earlier development. Do not create a grid merely to add visual density or reduce production cost.
 
 ## 10. CTA reservation and downstream ownership
 

@@ -306,8 +306,46 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     length_errors = _beat_character_length_errors(restored_beats)
     if length_errors:
         raise BPipelineValidationError("; ".join(length_errors))
+    minimum_errors = _beat_minimum_character_errors(restored_beats, block.text, block.type)
+    if minimum_errors:
+        raise BPipelineValidationError("; ".join(minimum_errors))
     result.beats = restored_beats
     return restored_beats
+
+
+# Minimum stripped narration characters per beat, by B1.1 block type.
+B12_MINIMUM_BEAT_CHARACTERS = {
+    "intro": 22, "development": 30, "pivot": 22,
+    "correction": 22, "climax": 22, "close": 22,
+}
+B12_DEFAULT_MINIMUM_BEAT_CHARACTERS = 22
+
+
+def _b12_minimum_beat_characters(block_type: str) -> int:
+    return B12_MINIMUM_BEAT_CHARACTERS.get(block_type, B12_DEFAULT_MINIMUM_BEAT_CHARACTERS)
+
+
+def _beat_minimum_character_errors(
+    beats: list[Beat], block_text: str, block_type: str,
+) -> list[str]:
+    """Enforce the stripped narration minimum for every beat of a block.
+
+    A block shorter than its minimum cannot be split into compliant beats, so it is
+    exempt; its single beat is the whole block.
+    """
+    minimum = _b12_minimum_beat_characters(block_type)
+    if len(block_text.strip()) < minimum:
+        return []
+    errors: list[str] = []
+    for beat in beats:
+        characters = len(beat.text.strip())
+        if characters < minimum:
+            errors.append(
+                f"B1.2 beat {beat.beat_id} has {characters} characters "
+                f"(minimum {minimum} for {block_type} blocks); merge it with an adjacent "
+                "beat of the same block"
+            )
+    return errors
 
 
 def _beat_character_length_errors(beats: list[Beat]) -> list[str]:
@@ -1275,7 +1313,10 @@ def _b12_targeted_retry_feedback(
         "any unaffected block. Keep each beat at or below 40 words and 100 stripped "
         "characters. If a beat exceeds a limit, split that source passage into two "
         "or more consecutive beats and renumber the affected block's beat IDs "
-        "sequentially from its A suffix.",
+        "sequentially from its A suffix. Keep each beat at least "
+        f"{B12_MINIMUM_BEAT_CHARACTERS['development']} stripped characters in development "
+        f"blocks and {B12_DEFAULT_MINIMUM_BEAT_CHARACTERS} in other blocks; "
+        "merge any shorter beat with an adjacent beat of the same block.",
         "Preserve every source word exactly and do not move text across frozen B1.1 "
         "block boundaries. The application restores source punctuation and whitespace, "
         "then merges these groups into the previously accepted whole-video result and "
