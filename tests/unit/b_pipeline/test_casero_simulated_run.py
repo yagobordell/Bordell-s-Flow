@@ -22,7 +22,6 @@ from ai_video_factory.compositor import casero_subtitles
 from ai_video_factory.providers import avatar_cta_motion
 from scripts.pipeline import run_b_pipeline as runner
 
-
 FIRST = "Una lámpara encendida consume electricidad."
 SECOND = "Apagarla reduce el gasto cuando no se usa."
 THIRD = "Así, un gesto cotidiano evita desperdiciar energía."
