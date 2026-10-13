@@ -223,22 +223,22 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
     from ai_video_factory.bots.professional_cta import ProfessionalCTAVisuals
     from ai_video_factory.bots.workflow import run_b_pipeline
 
-    script = "First scene. Buy my ebook. Last scene."
+    script = "First scene shows the street. Buy my ebook using the link. Last scene shows a room."
     b11 = B11Output.model_validate({
         "pipeline_stage": "B1.1",
         "narrative_core": {"central_question": "Q", "final_answer": "A"},
         "blocks": [{
             "block_id": 1, "type": "development",
             "emotional_entry": "A", "emotional_exit": "B",
-            "span": {"first_words": "First scene.", "last_words": "Last scene."},
+            "span": {"first_words": "First scene shows", "last_words": "shows a room."},
         }], "error": None,
     })
     b12 = (B12Output.model_validate({
         "pipeline_stage": "B1.2", "block_id": 1, "error": None,
         "beats": [
-            {"beat_id": "1A", "text": "First scene. ", "beat_type": "claim"},
-            {"beat_id": "1B", "text": "Buy my ebook. ", "beat_type": "claim"},
-            {"beat_id": "1C", "text": "Last scene.", "beat_type": "claim"},
+            {"beat_id": "1A", "text": "First scene shows the street. ", "beat_type": "claim"},
+            {"beat_id": "1B", "text": "Buy my ebook using the link. ", "beat_type": "claim"},
+            {"beat_id": "1C", "text": "Last scene shows a room.", "beat_type": "claim"},
         ],
     }),)
     assert "".join(beat.text for beat in b12[0].beats) == script
