@@ -184,6 +184,17 @@ starting a Salad replica, the Gateway can return `502` even while Salad reports
 the instance as ready; the serial runtime can also be busy. The client reuses
 the exact same execution envelope and deterministic R2 output key.
 
+A remote worker/R2 TLS failure may surface as HTTP `500` with the specific
+`SSLV3_ALERT_BAD_RECORD_MAC` or `bad record mac` message. Only this class
+of HTTP `500` is automatically retried, with **at most two additional
+submissions** of the identical request envelope. Unrelated HTTP `500`
+errors fail immediately. If the TLS error persists, do not delete any
+`images` or R2 request objects; after checking the upscaler worker logs and
+R2 connectivity, use the same `--images-only` recovery command. It recovers
+any completed request-scoped R2 output before submitting further inference.
+A retry can consume GPU time if the previous request performed inference but
+did not successfully publish its output.
+
 If the recovery window is exhausted, the saved professional finishing state
 remains `upscale_submitting_unknown`. An **explicit** `--images-only` resume
 reconciles an already written, dimension-verified PNG from the exact R2 output
