@@ -58,6 +58,7 @@ from ai_video_factory.compositor.static_preview import (
     _verified_asset,
     build_stt_beat_timeline,
     generate_static_preview,
+    StaticPreviewResourceError,
 )
 from ai_video_factory.config import settings
 from ai_video_factory.inference.capacity_controller import (
@@ -1257,7 +1258,22 @@ async def _preview_if_ready(
             "reason": "grid_panels_not_cropped",
             "grid_count": images["grid_count"],
         }
-    return await _render_preview(output, plan, audio, images)
+    try:
+        return await _render_preview(output, plan, audio, images)
+    except StaticPreviewResourceError as exc:
+        # An optional local preview must not prevent the already-aligned
+        # images/audio from reaching the independent paid LTX workflow.
+        # Fail closed for every OTHER FFmpeg, STT or source-validation error.
+        print(
+            "  Static preview deferred: local FFmpeg memory exhausted; "
+            "continuing LTX generation with verified images and audio.",
+            flush=True,
+        )
+        return {
+            "status": "deferred",
+            "reason": "ffmpeg_preview_memory_exhausted",
+            "error": str(exc)[-1400:],
+        }
 
 
 def _ltx_transport_configured() -> bool:
