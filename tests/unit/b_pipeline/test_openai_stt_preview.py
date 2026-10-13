@@ -255,6 +255,49 @@ def test_cached_stt_repairs_are_not_billed_twice(tmp_path: Path) -> None:
     assert persisted["source_audio_sha256"] == item["sha256"]
 
 
+def test_response_invalid_stt_resumes_same_wav_without_repeated_tts(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 96000)
+    digest = _sha(audio)
+    item = {"block_id": 1, "file": "audio.wav", "sha256": digest}
+    run = tmp_path / "audio" / "runs" / "test"
+    (run / "blocks" / "block_1").mkdir(parents=True)
+    attempts = []
+
+    def response(**_kwargs):
+        attempts.append("stt")
+        if len(attempts) == 1:
+            return {"words": [
+                {"word": "x", "start": None, "end": None},
+            ]}
+        return {"words": [
+            {"word": "x", "start": 0.1, "end": 0.5},
+        ]}
+
+    fake = _FakeTranscriptions()
+    fake.create = response
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=fake),
+    ))
+    with pytest.raises(OpenAISttError, match="Unrecoverable"):
+        asyncio.run(_transcribe_block(
+            item, output=tmp_path, run_dir=run, stt_client=client,
+        ))
+    request = run / "blocks" / "block_1" / "stt_request.json"
+    assert json.loads(request.read_text(encoding="utf-8"))["status"] == "response_invalid"
+    assert _sha(audio) == digest
+
+    recovered = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    assert recovered["stt"]["word_count"] == 1
+    assert json.loads(request.read_text(encoding="utf-8"))["status"] == "completed"
+    assert _sha(audio) == digest
+    assert attempts == ["stt", "stt"]
+
+
 def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -> None:
     audio = tmp_path / "audio.wav"
     _wav(audio, 48000)
