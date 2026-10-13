@@ -54,6 +54,7 @@ from ai_video_factory.bots.workflow import (
 )
 from ai_video_factory.compositor.static_preview import (
     StaticPreviewError,
+    StaticPreviewResourceError,
     SttAlignmentError,
     _verified_asset,
     build_stt_beat_timeline,
@@ -77,6 +78,7 @@ from ai_video_factory.inference.salad_image_upscaler_start import (
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
+from ai_video_factory.providers.avatar_cta_motion import ensure_avatar_cta_motion
 from ai_video_factory.providers.avatar_library import (
     avatar_directory,
     ensure_avatar_meta,
@@ -292,6 +294,19 @@ def parse_args() -> argparse.Namespace:
             "without repeating the planning bots."
         ),
     )
+    subtitles = parser.add_mutually_exclusive_group()
+    subtitles.add_argument(
+        "--subtitles", dest="subtitles", action="store_true", default=None,
+        help="Burn single-line white/shadowed subtitles (casero only, no CTA captions).",
+    )
+    subtitles.add_argument(
+        "--no-subtitles", dest="subtitles", action="store_false",
+        help="Disable casero subtitles for this video.",
+    )
+    parser.add_argument(
+        "--cta-motion", choices=("automatic", "manual"),
+        help="One-time casero avatar motion selection (automatic or manual MP4).",
+    )
     parser.add_argument(
         "--generate-video",
         "--videos-only",
@@ -320,6 +335,16 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
+    if args.cta_motion is not None and (
+        args.from_stage != "B1.1" or args.videos_only or args.images_only
+        or args.publish_only or args.youtube_only or args.qr_only
+    ):
+        parser.error("--cta-motion is only for first-time casero avatar setup.")
+    if args.subtitles is not None and (
+        args.images_only or args.publish_only or args.youtube_only or args.qr_only
+        or args.regenerate_audio or args.resume_audio
+    ):
+        parser.error("--subtitles/--no-subtitles is only for video generation.")
     if args.replace_professional_voice and (
         args.voice_id is None or args.voice_audio is not None or args.default_voice
         or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
@@ -534,6 +559,31 @@ def select_visual_style(selected: str | None, *, interactive: bool | None = None
         if answer in {"q", "quit"}:
             raise SystemExit("Selección de estilo cancelada.")
         print("Introduce 1 o 2, o q para cancelar.")
+
+
+def select_casero_subtitles(
+    requested: bool | None, *, default: bool = False,
+) -> bool:
+    """Choose per-video subtitles, never a persistent avatar setting."""
+    if requested is not None:
+        return requested
+    if not sys.stdin.isatty():
+        return default
+    option = "[S/n]" if default else "[s/N]"
+    while True:
+        try:
+            answer = input(
+                f"¿Subtítulos blancos con sombra, una línea, sin CTA? {option}: "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise SystemExit("Selección de subtítulos cancelada.") from exc
+        if answer in {"s", "si", "sí", "y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        if answer == "":
+            return default
+        print("Responde s o n.")
 
 
 def _recover_avatar_layout(
@@ -1257,7 +1307,22 @@ async def _preview_if_ready(
             "reason": "grid_panels_not_cropped",
             "grid_count": images["grid_count"],
         }
-    return await _render_preview(output, plan, audio, images)
+    try:
+        return await _render_preview(output, plan, audio, images)
+    except StaticPreviewResourceError as exc:
+        # An optional local preview must not prevent the already-aligned
+        # images/audio from reaching the independent paid LTX workflow.
+        # Fail closed for every OTHER FFmpeg, STT or source-validation error.
+        print(
+            "  Static preview deferred: local FFmpeg memory exhausted; "
+            "continuing LTX generation with verified images and audio.",
+            flush=True,
+        )
+        return {
+            "status": "deferred",
+            "reason": "ffmpeg_preview_memory_exhausted",
+            "error": str(exc)[-1400:],
+        }
 
 
 def _ltx_transport_configured() -> bool:
@@ -1484,6 +1549,7 @@ async def _video_if_ready(
                 return generate_b2_ltx_video(
                     output, plan, audio, images, casero_cta_dir=cta_dir,
                     queue=queue, storage=storage,
+                    subtitles_enabled=bool(run.get("casero_subtitles", False)),
                     poll_seconds=settings.inference_client_poll_seconds,
                     timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
                     check_capacity=_require_ltx_capacity_controller,
@@ -1831,6 +1897,7 @@ async def _run_videos_only(
     script_file: Path, output_root: Path,
     *, results_root: Path = Path("data/results"),
     managed_target: Path | None = None,
+    subtitles: bool | None = None,
 ) -> None:
     """Resume durable LTX jobs without repeating OpenAI images, bots or Fish TTS."""
     root = output_root.resolve()
@@ -1848,6 +1915,25 @@ async def _run_videos_only(
     ):
         raise SystemExit("--generate-video requires a saved B2 plan and run report")
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    saved_style = report.get("run", {}).get("visual_style", "casero")
+    if saved_style != "casero" and subtitles is not None:
+        raise SystemExit("--subtitles is only available in casero")
+    if saved_style == "casero":
+        previous_choice = bool(report["run"].get("casero_subtitles", False))
+        existing_video = report["run"].get("video_generation", {})
+        completed = (
+            isinstance(existing_video, dict)
+            and existing_video.get("status") == "completed"
+        )
+        if completed and subtitles is not None and subtitles != previous_choice:
+            raise SystemExit(
+                "Cannot change subtitles on a completed run; create a new run"
+            )
+        # Video-only may be the first rendering step after a completed B2 preview.
+        chosen = previous_choice if completed else select_casero_subtitles(
+            subtitles, default=previous_choice,
+        )
+        report["run"]["casero_subtitles"] = chosen
     if report.get("run", {}).get("script_sha256") != hashlib.sha256(
         source.read_bytes()
     ).hexdigest():
@@ -2289,8 +2375,14 @@ async def _run_audio_only(
                     raise RuntimeError("Professional B2 merged checkpoint is incomplete")
                 _validate_professional_audio_b2(core, blocks)
                 pending = unfinished_audio_runs(output)
-                nonce = _professional_audio_nonce(
-                    pending, resume=resume, previous_audio=previous_audio,
+                # The effective V1-V4 plan must identify the matching paid
+                # Gemini task. Picking an arbitrary pending nonce can create
+                # a third run or replay already-paid audio.
+                nonce = (
+                    "" if resume and pending
+                    else _professional_audio_nonce(
+                        pending, resume=resume, previous_audio=previous_audio,
+                    )
                 )
                 artifact = await generate_professional_audio(
                     core=core, blocks=blocks, output=output,
@@ -2299,6 +2391,7 @@ async def _run_audio_only(
                     voice_id=_run_voice_id(output),
                     source_sha256=hashlib.sha256(raw).hexdigest(),
                     generation_nonce=nonce,
+                    resume_pending_tasks=pending if resume and pending else None,
                     on_timing=prior_timing.record_call,
                     on_stage_duration=prior_timing.record_stage,
                     max_parallel_calls=max_parallel_calls,
@@ -2732,6 +2825,7 @@ async def main() -> None:
             await _run_videos_only(
                 script_file, output_root, results_root=results_root,
                 managed_target=getattr(args, "managed_target", None),
+                subtitles=getattr(args, "subtitles", None),
             )
         finally:
             reset_active_video_scope(token)
@@ -2798,10 +2892,20 @@ async def main() -> None:
         visual_style = ensure_avatar_style(
             avatar_file, getattr(args, "visual_style", None), select_visual_style
         )
+        if visual_style == "casero" and args.from_stage == "B1.1":
+            # Managed avatar already has its final meta/ directory. Preflight
+            # the manual MP4 before voice activation or any paid CTA work.
+            ensure_avatar_cta_motion(
+                avatar_file, getattr(args, "cta_motion", None),
+            )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
         raise SystemExit("--replace-professional-voice is available only in Profesional")
+    if visual_style != "casero" and getattr(args, "subtitles", None) is not None:
+        raise SystemExit("--subtitles/--no-subtitles is only available in Casero.")
+    if visual_style != "casero" and getattr(args, "cta_motion", None) is not None:
+        raise SystemExit("--cta-motion is only available in Casero.")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
         raise SystemExit("--tts-provider solo está disponible en modo casero.")
     covers = None
@@ -2894,6 +2998,10 @@ async def main() -> None:
             )
         if visual_style in {"casero", "profesional"}:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
+            if visual_style == "casero" and managed_target is None:
+                ensure_avatar_cta_motion(
+                    avatar_file, getattr(args, "cta_motion", None),
+                )
             cover_selected = (
                 visual_style == "casero"
                 or bool(getattr(args, "ebook_cover", None))
@@ -3081,6 +3189,16 @@ async def main() -> None:
     }
     if visual_style == "casero":
         run_metadata["casero_cta_enabled"] = True
+        if args.from_stage == "B1.1":
+            run_metadata["casero_subtitles"] = (
+                select_casero_subtitles(getattr(args, "subtitles", None))
+                if stop_stage is None else bool(getattr(args, "subtitles", False))
+            )
+        else:
+            saved_choice = bool(previous_report.get("run", {}).get("casero_subtitles", False))
+            if getattr(args, "subtitles", None) not in {None, saved_choice}:
+                raise SystemExit("Subtitle selection differs from the original run")
+            run_metadata["casero_subtitles"] = saved_choice
     if stop_stage is not None:
         run_metadata["stopped_after"] = stop_stage
     if args.from_stage != "B1.1":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import shutil
 import struct
 import subprocess
@@ -28,7 +29,7 @@ from ai_video_factory.compositor.static_preview import (
     build_stt_beat_timeline,
     generate_static_preview,
 )
-from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.openai_stt import OpenAISttClient, OpenAISttError
 from scripts.pipeline import run_b_pipeline as runner
 
 
@@ -159,6 +160,211 @@ def test_openai_stt_uses_word_timestamps_and_repairs_local_timing_anomalies(
     assert repaired["words"] == [{"word": "x", "start": 1.0, "end": 1.0}]
 
 
+@pytest.mark.parametrize(
+    ("broken", "expected"),
+    [
+        ({"word": "final", "start": None, "end": 1.4}, (1.0, 1.4)),
+        ({"word": "final", "start": -0.15, "end": 1.4}, (1.0, 1.4)),
+        ({"word": "final", "start": float("nan"), "end": 1.4}, (1.0, 1.4)),
+        ({"word": "final", "start": 1.1, "end": None}, (1.1, 1.6)),
+        ({"word": "final", "start": None, "end": None}, (1.0, 1.6)),
+    ],
+)
+def test_openai_stt_recovers_isolated_missing_word_timing(
+    tmp_path: Path, broken: dict, expected: tuple[float, float],
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 96000)
+    fake = _FakeTranscriptions()
+    fake.create = lambda **_kwargs: {"words": [
+        {"word": "antes", "start": 0.5, "end": 1.0},
+        broken,
+        {"word": "despues", "start": 1.6, "end": 1.9},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=fake),
+    ))
+    transcript = client.transcribe(audio)
+    assert [word["word"] for word in transcript["words"]] == [
+        "antes", "final", "despues",
+    ]
+    assert (transcript["words"][1]["start"], transcript["words"][1]["end"]) == expected
+    assert transcript["timing_repairs"] == [{
+        "index": 1,
+        "fields": (
+            ["start", "end"] if broken["start"] is None and broken["end"] is None
+            else ["start"] if broken["start"] is None
+            or (isinstance(broken["start"], float) and
+                (broken["start"] < 0 or not math.isfinite(broken["start"])))
+            else ["end"]
+        ),
+    }]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        {"word": "x", "start": None, "end": None},
+        {"word": "x", "start": -99.0, "end": None},
+        {"word": "x", "start": None, "end": 12.0},
+    ],
+)
+def test_openai_stt_refuses_unbounded_word_timing(
+    tmp_path: Path, broken: dict,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    fake = _FakeTranscriptions()
+    fake.create = lambda **_kwargs: {"words": [broken]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=fake),
+    ))
+    with pytest.raises(OpenAISttError, match="Unrecoverable"):
+        client.transcribe(audio)
+
+
+def test_cached_stt_repairs_are_not_billed_twice(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 96000)
+    calls = _FakeTranscriptions()
+    def transcript(**_kwargs):
+        calls.calls += 1
+        return {"words": [
+            {"word": "antes", "start": 0.5, "end": 1.0},
+            {"word": "final", "start": None, "end": 1.4},
+        ]}
+    calls.create = transcript
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    run = tmp_path / "audio" / "runs" / "test"
+    (run / "blocks" / "block_1").mkdir(parents=True)
+    item = {"block_id": 1, "file": "audio.wav", "sha256": _sha(audio)}
+    first = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    second = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    assert first == second
+    assert calls.calls == 1
+    persisted = json.loads(
+        (run / "blocks" / "block_1" / "stt.json").read_text(encoding="utf-8")
+    )
+    assert persisted["timing_repairs"] == [{"index": 1, "fields": ["start"]}]
+    assert persisted["source_audio_sha256"] == item["sha256"]
+
+
+def test_invalid_paid_stt_response_is_preserved_without_second_post(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 96000)
+    digest = _sha(audio)
+    item = {"block_id": 1, "file": "audio.wav", "sha256": digest}
+    run = tmp_path / "audio" / "runs" / "test"
+    folder = run / "blocks" / "block_1"
+    folder.mkdir(parents=True)
+    calls = _FakeTranscriptions()
+
+    def invalid(**_kwargs):
+        calls.calls += 1
+        return {"words": [{"word": None, "start": 0.1, "end": 0.3}]}
+
+    calls.create = invalid
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    for _ in range(2):
+        with pytest.raises(OpenAISttError, match="non-text word"):
+            asyncio.run(_transcribe_block(
+                item, output=tmp_path, run_dir=run, stt_client=client,
+            ))
+    assert calls.calls == 1
+    raw = json.loads((folder / "stt_response.json").read_text(encoding="utf-8"))
+    assert raw["source_audio_sha256"] == digest
+    assert raw["response"]["words"][0]["word"] is None
+    request = json.loads((folder / "stt_request.json").read_text(encoding="utf-8"))
+    assert request["status"] == "response_invalid"
+    assert _sha(audio) == digest
+
+
+@pytest.mark.parametrize("blank", ["  ", "\t", "...", "—", "!?"])
+def test_whisper_nonlexical_word_is_skipped_and_reported(
+    tmp_path: Path, blank: str,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    calls.create = lambda **_kwargs: {"words": [
+        {"word": "Hola", "start": 0.1, "end": 0.3},
+        {"word": blank, "start": None, "end": None},
+        {"word": "mundo", "start": 0.4, "end": 0.7},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    transcript = client.transcribe(audio)
+    assert [entry["word"] for entry in transcript["words"]] == ["Hola", "mundo"]
+    assert transcript["skipped_nonlexical_indices"] == [1]
+    assert [entry["start"] for entry in transcript["words"]] == [0.1, 0.4]
+
+
+def test_whisper_nonlexical_at_original_error_index_348(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    calls.create = lambda **_kwargs: {"words": [
+        *({"word": "Hola", "start": i / 1000, "end": (i + 1) / 1000}
+          for i in range(348)),
+        {"word": " ", "start": None, "end": None},
+        {"word": "mundo", "start": 0.35, "end": 0.37},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    transcript = client.transcribe(audio)
+    assert len(transcript["words"]) == 349
+    assert transcript["words"][-1]["word"] == "mundo"
+    assert transcript["skipped_nonlexical_indices"] == [348]
+
+
+@pytest.mark.parametrize("invalid", [None, 6, {"text": "mundo"}])
+def test_whisper_nontext_word_is_rejected_not_silently_dropped(
+    tmp_path: Path, invalid: object,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    calls.create = lambda **_kwargs: {"words": [
+        {"word": "Hola", "start": 0.1, "end": 0.3},
+        {"word": invalid, "start": 0.4, "end": 0.7},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    with pytest.raises(OpenAISttError, match="non-text word"):
+        client.transcribe(audio)
+
+
+def test_stt_raw_cache_rejects_changed_source_hash(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    checkpoint = tmp_path / "stt_response.json"
+    client.transcribe_durable(
+        audio, response_path=checkpoint, source_audio_sha256="first",
+    )
+    with pytest.raises(OpenAISttError, match="differs from source"):
+        client.transcribe_durable(
+            audio, response_path=checkpoint, source_audio_sha256="second",
+        )
+    assert calls.calls == 1
+
+
 def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -> None:
     audio = tmp_path / "audio.wav"
     _wav(audio, 48000)
@@ -187,10 +393,12 @@ def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -
     state = json.loads(request.read_text(encoding="utf-8"))
     state["status"] = "request_started_unknown"
     request.write_text(json.dumps(state), encoding="utf-8")
-    with pytest.raises(FishAudioWorkflowError, match="reconcile"):
-        asyncio.run(_transcribe_block(
-            item, output=tmp_path, run_dir=run, stt_client=client
-        ))
+    # A complete raw provider response is safe to replay even if the task
+    # manifest was interrupted after the paid call.
+    restored = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    assert restored["stt"]["word_count"] == 1
     assert calls.calls == 1
 
 
@@ -436,6 +644,109 @@ def test_real_bottom_left_ken_burns_alternates_second_media_image(
     assert _sha(source) == images["items"][1]["sha256"]
     assert abs(artifact["rendered_duration_seconds"] - 1.9) < 0.15
 
+
+
+def test_ffmpeg_preview_caps_threads_and_reports_memory_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import static_preview
+
+    plan, audio, images = _fixture_assets(tmp_path)
+    calls = []
+
+    def oom_ffmpeg(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(
+            returncode=1,
+            stderr=(
+                "[vf#0:0] Error while filtering: Cannot allocate memory\n"
+                "Task finished with error code: -12"
+            ),
+        )
+
+    monkeypatch.setattr(static_preview.subprocess, "run", oom_ffmpeg)
+    with pytest.raises(
+        static_preview.StaticPreviewResourceError, match="local memory",
+    ):
+        generate_static_preview(tmp_path, plan, audio, images)
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[command.index("-filter_threads") + 1] == "1"
+    assert command[command.index("-threads:v") + 1] == "2"
+    assert not (tmp_path / "preview" / "static_preview.mp4").exists()
+    assert not (tmp_path / "preview" / "static_preview.part.mp4").exists()
+
+
+def test_ffmpeg_preview_other_errors_still_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import static_preview
+
+    plan, audio, images = _fixture_assets(tmp_path)
+    monkeypatch.setattr(
+        static_preview.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1, stderr="FFmpeg fatal: broken decoding parameters",
+        ),
+    )
+    with pytest.raises(StaticPreviewError, match="broken decoding"):
+        generate_static_preview(tmp_path, plan, audio, images)
+
+
+def test_images_only_preview_oom_does_not_block_final_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor.static_preview import StaticPreviewResourceError
+
+    script = tmp_path / "input" / "roma.txt"
+    script.parent.mkdir()
+    script.write_text("Hola mundo. Adiós", encoding="utf-8")
+    output = tmp_path / "output" / "roma"
+    output.mkdir(parents=True)
+    plan, audio, images = _fixture_assets(output)
+    images["model_id"] = "gpt-image-2.5-flare"
+    (output / "B2").mkdir()
+    (output / "B2" / "merged_output.json").write_text("{}", encoding="utf-8")
+    (output / "visual_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (output / "images" / "manifest.json").write_text(
+        json.dumps(images), encoding="utf-8",
+    )
+    (output / "run_report.json").write_text(json.dumps({
+        "run": {
+            "script_sha256": _sha(script),
+            "status": "failed",
+            "audio_generation": {"status": "completed", **audio},
+        },
+        "api_costs": {"run_status": "failed"},
+        "timings": {"status": "failed"},
+    }), encoding="utf-8")
+    original = {
+        entry["file"]: (output / entry["file"]).read_bytes()
+        for entry in images["items"]
+    }
+    ltx_calls = []
+
+    async def preview_oom(*_args, **_kwargs):
+        raise StaticPreviewResourceError("FFmpeg Cannot allocate memory")
+
+    async def final_video(*_args, **_kwargs):
+        ltx_calls.append("final-video")
+        return {"status": "completed", "file": "video/final.mp4"}
+
+    monkeypatch.setattr(runner, "_render_preview", preview_oom)
+    monkeypatch.setattr(runner, "_video_if_ready", final_video)
+    monkeypatch.setattr(runner, "_publish_if_ready", lambda *_args: None)
+    asyncio.run(runner._run_images_only(script, tmp_path / "output"))
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert report["run"]["status"] == "completed"
+    assert report["run"]["video_preview"]["status"] == "deferred"
+    assert report["run"]["video_preview"]["reason"] == (
+        "ffmpeg_preview_memory_exhausted"
+    )
+    assert report["run"]["video_generation"]["status"] == "completed"
+    assert ltx_calls == ["final-video"]
+    assert all((output / rel).read_bytes() == data for rel, data in original.items())
 
 
 def test_images_only_auto_renders_from_existing_stt_and_saved_images(

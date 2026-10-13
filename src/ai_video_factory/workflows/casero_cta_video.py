@@ -17,6 +17,7 @@ from ai_video_factory.compositor.static_preview import (
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.inference.storage import sha256_file
+from ai_video_factory.providers.avatar_cta_motion import motion_source
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     cached_inference_response,
@@ -81,8 +82,12 @@ def cta_assets(directory: Path) -> dict[str, Any]:
     tts = _read(directory/"tts_state.json")
     stt = _read(directory/"stt_state.json")
     image = _read(directory/"image_state.json")
+    source = motion_source(directory)
     v2_motion = directory/"motion_v2_state.json"
-    motion = _read(v2_motion if v2_motion.is_file() else directory/"motion_state.json")
+    motion = _read(
+        directory/"motion_manual_state.json" if source["mode"] == "manual"
+        else v2_motion if v2_motion.is_file() else directory/"motion_state.json"
+    )
     for state in (tts, stt, image, motion):
         if state.get("status") != "completed":
             raise CTACompositionError("Incomplete casero CTA media asset")
@@ -98,6 +103,12 @@ def cta_assets(directory: Path) -> dict[str, Any]:
         files[key] = file
     if not (0 < tts["half_seconds"] <= LTX_A2V_RECOMMENDED_MAX_SECONDS):
         raise CTACompositionError("CTA first-half speech exceeds pinned LTX A2V duration")
+    if source["mode"] == "manual":
+        if identity.get("manual_motion_sha256") != source["sha256"]:
+            raise CTACompositionError("Manual motion differs from cached CTA identity")
+        required = float(tts["half_seconds"]) + 1.5
+        if abs(float(motion.get("duration_seconds", 0)) - required) > 1e-5:
+            raise CTACompositionError("Saved manual motion duration differs from CTA speech")
     return {**identity, "files": files, "half_seconds": float(tts["half_seconds"]),
             "duration_seconds": float(tts["duration_seconds"])}
 
@@ -152,6 +163,12 @@ def current_cta_ready(directory: Path) -> bool:
     file = directory/file_name
     if file.is_symlink() or not file.is_file() or sha256_file(file) != digest:
         raise CTACompositionError("Stored reusable CTA is missing or modified")
+    source = motion_source(directory)
+    if source["mode"] == "manual":
+        if ready.get("manual_motion_sha256") != source["sha256"]:
+            raise CTACompositionError("Completed CTA has a different manual motion")
+    elif "manual_motion_sha256" in ready:
+        raise CTACompositionError("Completed CTA was created with manual motion")
     return (
         ready.get("schema_version") == _RUN_SCHEMA
         and ready.get("width") == _WIDTH
@@ -283,6 +300,12 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
             and previous.get("width") == _WIDTH
             and previous.get("height") == _HEIGHT
         ):
+            source = motion_source(directory)
+            if source["mode"] == "manual":
+                if previous.get("manual_motion_sha256") != source["sha256"]:
+                    raise CTACompositionError("Cached CTA belongs to another manual motion")
+            elif "manual_motion_sha256" in previous:
+                raise CTACompositionError("Cached CTA motion source changed")
             return path
         # A verified v1/v2 completion is intentionally retained on disk but is
         # not reused by a current run: new production video is Full HD/run-v2.
@@ -347,8 +370,10 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
     if not upgrade_legacy:
         completion["width"] = _WIDTH
         completion["height"] = _HEIGHT
-    if v2_motion:
+    if v2_motion and motion_source(directory)["mode"] == "automatic":
         completion["motion_copy_sha256"] = sha256_file(directory / "motion_copy.json")
+    if motion_source(directory)["mode"] == "manual":
+        completion["manual_motion_sha256"] = motion_source(directory)["sha256"]
     if upgrade_legacy:
         # Preserve the original finished video until a verified replacement exists.
         # Never remove old files, paid media or the old completion reference mid-render.

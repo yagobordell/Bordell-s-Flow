@@ -11,6 +11,7 @@ import json
 import math
 import shutil
 import subprocess
+import time
 import wave
 from collections import Counter
 from collections.abc import Callable
@@ -789,6 +790,7 @@ def generate_b2_ltx_video(
     check_a2v_worker: Callable[[], None] | None = None,
     check_i2v_worker: Callable[[], None] | None = None,
     casero_cta_dir: Path | None = None,
+    subtitles_enabled: bool = False,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -954,6 +956,7 @@ def generate_b2_ltx_video(
             "waiting for a Salad worker/result",
             flush=True,
         )
+        wait_started = time.perf_counter()
         response = executor.execute(
             job.request,
             metadata={
@@ -961,6 +964,7 @@ def generate_b2_ltx_video(
                 "run_id": digest,
             },
         )
+        wait_seconds = time.perf_counter() - wait_started
         print(
             f"  LTX {job.kind.upper()} job={job.request.job_id}: "
             "inference completed; verifying MP4",
@@ -970,9 +974,20 @@ def generate_b2_ltx_video(
         if part.is_symlink():
             raise B2VideoError("Refusing linked temporary LTX clip")
         part.unlink(missing_ok=True)
+        transfer_times: dict[str, float] = {
+            "wait_for_result": round(wait_seconds, 3),
+        }
         try:
+            download_started = time.perf_counter()
             executor.download_output(response, part)
+            transfer_times["mp4_download"] = round(
+                time.perf_counter() - download_started, 3,
+            )
+            verification_started = time.perf_counter()
             _probe_video(part, job)
+            transfer_times["mp4_verification"] = round(
+                time.perf_counter() - verification_started, 3,
+            )
             if job.kind == "a2v":
                 sidecar = job.request.sidecar_outputs["metadata"]
                 meta = run_dir / "clips" / f"{job.request.job_id}.metadata.json"
@@ -1011,11 +1026,16 @@ def generate_b2_ltx_video(
             sha256=sha256_file(clip),
             duration_seconds=job.duration_seconds,
             replayed=response.replayed,
+            transfer_timings_seconds=transfer_times,
         )
         _save_json(manifest_path, manifest)
 
     if manifest.get("status") == "completed":
         _verified_asset(output, manifest.get("file"), manifest.get("sha256"))
+        if plan.get("visual_style") == "casero":
+            saved = manifest.get("subtitles", {})
+            if bool(saved.get("enabled", False)) != subtitles_enabled:
+                raise B2VideoError("Saved casero subtitle preference differs from completed video")
         if plan.get("visual_style") == "profesional" and plan.get("ebook_cta_groups"):
             website = (
                 manifest.get("professional_ebook_qr", {})
@@ -1031,14 +1051,16 @@ def generate_b2_ltx_video(
                 "Completed video predates CTA insertion; reconcile prior publication"
             )
         return manifest
-    result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
+    # Compose professional CTA overlays during the mandatory final x264 pass.
+    # No second full-video re-encode and no change to paid LTX identities.
     if plan.get("visual_style") == "profesional" and plan.get("ebook_cta_groups"):
-        from ai_video_factory.compositor.professional_cta_qr import (
-            apply_professional_ebook_qr,
+        result = render_b2_ltx_video(
+            output, run_dir, timeline, jobs, manifest, images, audio,
+            cta_plan=plan,
         )
-
-        result = apply_professional_ebook_qr(
-            output, run_dir, result, timeline, plan,
+    else:
+        result = render_b2_ltx_video(
+            output, run_dir, timeline, jobs, manifest, images, audio,
         )
     if casero_cta_dir is not None:
         finish_cta(casero_cta_dir, cta_submitted, executor)
@@ -1051,6 +1073,13 @@ def generate_b2_ltx_video(
         result.update(inserted)
         result["duration_seconds"] += inserted["cta_insertion"]["cta_duration_seconds"]
         result["audio_source"] = "verified_original_pcm_with_per_avatar_casero_cta"
+    if subtitles_enabled:
+        if plan.get("visual_style") != "casero":
+            raise B2VideoError("Optional subtitles are exclusive to casero")
+        from ai_video_factory.compositor.casero_subtitles import burn_casero_subtitles
+        result.update(burn_casero_subtitles(output, run_dir, result, audio))
+    elif plan.get("visual_style") == "casero":
+        result["subtitles"] = {"enabled": False}
     manifest.update(result)
     manifest["status"] = "completed"
     _save_json(manifest_path, manifest)

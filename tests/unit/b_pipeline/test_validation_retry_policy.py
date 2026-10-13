@@ -232,7 +232,7 @@ def test_failed_whole_b12_never_persists_a_partial_segmentation() -> None:
 
     provider = AlwaysBad()
     saved = {}
-    with pytest.raises(BPipelineValidationError, match="after 2 retries"):
+    with pytest.raises(BPipelineValidationError, match="after 2 targeted retries each"):
         asyncio.run(run_b_pipeline(
             SOURCE, provider=provider, start_from="B1.2", stop_after="B1.2",
             previous_b11=valid_b11(),

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from .grid_numbering import MAX_GRID_SEQUENCE_PANELS, parse_grid_marker
+
 _SHAPES = {
     2: (2, 2), 3: (2, 2), 4: (2, 2),
     5: (3, 2), 6: (3, 2),
@@ -229,7 +230,8 @@ def plan_image_jobs(
                     finish_legacy()
                     if marker is not None and marker.style == "lettered":
                         raise GridPlanError(
-                            f"Lettered B2 grid asset {source['beat_id']} cannot use independent generation"
+                            f"Lettered B2 grid asset {source['beat_id']} cannot use "
+                            "independent generation"
                         )
                     continue
                 if marker is None:
@@ -239,7 +241,8 @@ def plan_image_jobs(
                     finish_legacy()
                     if visual_style != "profesional":
                         raise GridPlanError("Lettered grids are supported only for professional B2")
-                    assert marker.sequence_id is not None
+                    if marker.sequence_id is None:
+                        raise GridPlanError("Lettered grid marker has no sequence ID")
                     lettered_members.setdefault(
                         (block["block_id"], marker.sequence_id), []
                     ).append((source, marker.panel_number))
@@ -274,7 +277,8 @@ def plan_image_jobs(
         if len(members) > MAX_GRID_SEQUENCE_PANELS:
             raise GridPlanError(
                 f"Lettered B2 grid {label} in block {block_id} has {len(members)} panels; "
-                f"the maximum is {MAX_GRID_SEQUENCE_PANELS}, so continue the development under a new letter"
+                f"the maximum is {MAX_GRID_SEQUENCE_PANELS}, so continue the development "
+                "under a new letter"
             )
         if numbers != expected:
             details = ", ".join(
@@ -282,7 +286,8 @@ def plan_image_jobs(
             )
             raise GridPlanError(
                 f"Lettered B2 grid {label} in block {block_id} must number its panels "
-                f"1, 2, ..., {len(members)} in narrative order without restarting; got [{details}]. "
+                f"1, 2, ..., {len(members)} in narrative order without restarting; "
+                f"got [{details}]. "
                 "A new development in the same block needs the next unused letter"
             )
         cta_ids = {asset.get("cta_group_id") for asset, _number in members}
@@ -375,7 +380,9 @@ def plan_image_jobs(
                     **asset,
                     "row": index // columns,
                     "column": index % columns,
-                    "source": asset.get("source") or ("numbered" if key(asset) in numbered else "filler"),
+                    "source": asset.get("source") or (
+                        "numbered" if key(asset) in numbered else "filler"
+                    ),
                 }
                 for index, asset in enumerate(selected)
             ]
@@ -383,7 +390,8 @@ def plan_image_jobs(
             chain_id = (
                 f"{anchor['block_id']}:{label}"
                 if label is not None else
-                f"{logical_run[0]['block_id']}:{logical_run[0].get('asset_id', logical_run[0]['beat_id'])}"
+                f"{logical_run[0]['block_id']}:"
+                f"{logical_run[0].get('asset_id', logical_run[0]['beat_id'])}"
             )
             grids.append({
                 "continuity_chain_id": chain_id,
@@ -410,7 +418,9 @@ def plan_image_jobs(
                     "panel_width": panel_width, "panel_height": panel_height,
                     "width": columns * panel_width, "height": rows * panel_height,
                     "numbered_beat_ids": [asset["beat_id"] for asset in run],
-                    "numbered_asset_ids": [asset.get("asset_id", asset["beat_id"]) for asset in run],
+                    "numbered_asset_ids": [
+                        asset.get("asset_id", asset["beat_id"]) for asset in run
+                    ],
                     **({"sequence_id": label} if label is not None else {}),
                 },
                 "panels": panels,
@@ -429,7 +439,10 @@ def plan_image_jobs(
                 {"size": f"{_AVATAR_MEDIA_PANEL_WIDTH}x{_AVATAR_MEDIA_PANEL_HEIGHT}"}
                 if asset["visual_type"] == "avatar_media"
                 else {"size": "1920x1088", "video_source": True}
-                if visual_style == "profesional" and asset["visual_type"] in {"media_video", "avatar"}
+                if (
+                    visual_style == "profesional"
+                    and asset["visual_type"] in {"media_video", "avatar"}
+                )
                 else {}
             ),
         }
@@ -439,7 +452,11 @@ def plan_image_jobs(
     def job_position(job: dict[str, Any]) -> int:
         if job.get("grid") is None:
             return positions[key(job)]
-        return min(positions[key(panel)] for panel in job["panels"] if panel.get("source") != BLACK_PANEL_SOURCE)
+        return min(
+            positions[key(panel)]
+            for panel in job["panels"]
+            if panel.get("source") != BLACK_PANEL_SOURCE
+        )
 
     jobs.sort(key=job_position)
     return jobs

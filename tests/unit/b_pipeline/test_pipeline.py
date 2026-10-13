@@ -296,6 +296,53 @@ def test_block_materialization_preserves_leading_separator_and_trailing_spaces()
     assert [block.text for block in materialized] == ["  Uno.\n\n", "Dos.  "]
 
 
+def test_block_materialization_accepts_outer_anchor_whitespace_without_source_changes() -> None:
+    candidate = b11()
+    assert candidate.blocks is not None
+    candidate.blocks[0].span.first_words = "  \nUno.  "
+    candidate.blocks[0].span.last_words = "\tUno. \r\n"
+    candidate.blocks[1].span.first_words = "\t Dos.\n "
+    candidate.blocks[1].span.last_words = "  Dos. \t"
+    materialized = materialize_blocks(SCRIPT, candidate.blocks)
+    assert [block.text for block in materialized] == ["  Uno.\n\n", "Dos.  "]
+    assert "".join(block.text for block in materialized) == SCRIPT
+    # Parsing must not rewrite persisted B1.1 metadata or the raw script.
+    assert candidate.blocks[0].span.first_words == "  \nUno.  "
+
+
+@pytest.mark.parametrize("field", ("first_words", "last_words"))
+def test_block_materialization_rejects_whitespace_only_anchors(field: str) -> None:
+    candidate = b11()
+    assert candidate.blocks is not None
+    setattr(candidate.blocks[0].span, field, " \t\n ")
+    with pytest.raises(BPipelineValidationError, match="contain substantive text"):
+        materialize_blocks(SCRIPT, candidate.blocks)
+
+
+def test_b11_outer_anchor_whitespace_does_not_trigger_paid_retry() -> None:
+    class ModelWithPaddedAnchors(FakeProvider):
+        async def generate_structured(self, **kwargs):
+            output = await super().generate_structured(**kwargs)
+            if kwargs["output_type"] is B11Output:
+                assert output.blocks is not None
+                output.blocks[0].span.first_words = "\t Uno. "
+                output.blocks[0].span.last_words = "Uno. \n"
+            return output
+
+    provider = ModelWithPaddedAnchors()
+    rejected = []
+    result = asyncio.run(
+        run_b_pipeline(
+            SCRIPT, provider=provider, stop_after="B1.1",
+            on_rejected_output=lambda *args: rejected.append(args),
+        )
+    )
+    assert rejected == []
+    assert len(provider.calls) == 1
+    assert result.b11.blocks is not None
+    assert result.b11.blocks[0].span.last_words == "Uno. \n"
+
+
 def test_block_materialization_resolves_repeated_and_wrapped_anchors() -> None:
     blocks = [
         BlockMeta.model_validate(
@@ -340,7 +387,7 @@ def test_beat_ids_excel_sequence_and_length_rule() -> None:
         pipeline_stage="B1.2", block_id=1,
         beats=[Beat(beat_id="1A", text=block.text, beat_type="claim")], error=None,
     )
-    with pytest.raises(BPipelineValidationError, match="length"):
+    with pytest.raises(BPipelineValidationError, match="maximum 40"):
         validate_beats(output, block)
 
 

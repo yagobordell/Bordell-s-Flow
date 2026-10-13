@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +13,7 @@ from PIL import Image
 from ai_video_factory.compositor.professional_cta_qr import (
     ProfessionalCTAOverlayError,
     apply_professional_ebook_qr,
+    build_professional_cta_mux_overlay,
     professional_cta_website_windows,
     professional_cta_windows,
 )
@@ -211,3 +215,201 @@ def test_qr_word_timing_does_not_change_paid_ltx_run_fingerprint(tmp_path):
         {"sha256": "unchanged-audio"}, {}, avatar, i2v_profile=None,
     )
     assert with_url_timing == baseline
+
+
+def test_fused_overlay_uses_existing_cta_timing_and_raster(tmp_path):
+    output = tmp_path
+    run_dir = tmp_path / "video" / "runs" / "test"
+    run_dir.mkdir(parents=True)
+    qr = output / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    inputs, graph, metadata = build_professional_cta_mux_overlay(
+        output, run_dir, _timeline(),
+        {**_plan(), "avatar": {"qr": {"sha256": sha256_file(qr)}}},
+    )
+    assert inputs == [
+        "-loop", "1", "-i", str(qr),
+        "-loop", "1", "-i", str(run_dir / "ebook_cta_website.png"),
+    ]
+    assert "[0:v]setpts=N/(24*TB),fps=24,format=yuv420p[base]" in graph
+    assert "[2:v]scale=280:280:flags=neighbor,format=rgba[qr]" in graph
+    assert "[3:v]format=rgba[website]" in graph
+    assert r"between(t\,10.000000\,125.000000)" in graph
+    assert r"gte(t\,12.370000)*lt(t\,35.000000)" in graph
+    assert metadata["website_overlay"]["text"] == "zellenne.com"
+    assert metadata["website_overlay"]["windows_seconds"] == [
+        [12.37, 35.0], [179.125, 185.0],
+    ]
+
+
+def test_fused_overlay_without_spoken_qr_uses_only_one_image(tmp_path):
+    qr = tmp_path / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    inputs, graph, metadata = build_professional_cta_mux_overlay(
+        tmp_path, run_dir, _timeline(first_qr=False, second_qr=False),
+        {**_plan(), "avatar": {"qr": {"sha256": sha256_file(qr)}}},
+    )
+    assert inputs == ["-loop", "1", "-i", str(qr)]
+    assert "[3:v]" not in graph
+    assert metadata["website_overlay"]["windows_seconds"] == []
+    assert not (run_dir / "ebook_cta_website.png").exists()
+
+
+def test_fused_overlay_rejects_mismatched_qr_before_encoding(tmp_path):
+    qr = tmp_path / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    with pytest.raises(ProfessionalCTAOverlayError, match="does not match"):
+        build_professional_cta_mux_overlay(
+            tmp_path, tmp_path, _timeline(),
+            {**_plan(), "avatar": {"qr": {"sha256": "0" * 64}}},
+        )
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="FFmpeg and FFprobe are required for audiovisual parity smoke",
+)
+def test_fused_professional_cta_encodes_once_with_exact_audio_and_frames(tmp_path):
+    qr = tmp_path / "qr.png"
+    Image.new("RGB", (100, 100), "white").save(qr)
+    base = tmp_path / "base.mp4"
+    soundtrack = tmp_path / "master.wav"
+    destination = tmp_path / "fused.mp4"
+
+    subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-f", "lavfi", "-i", "color=c=gray:s=1920x1080:r=24:d=2",
+        "-an", "-frames:v", "48", "-c:v", "libx264",
+        "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(base),
+    ], check=True, capture_output=True)
+
+    import wave
+
+    with wave.open(str(soundtrack), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(48000)
+        audio.writeframes(b"\\x00\\x00" * 48000 * 2)
+
+    timeline = {
+        "duration_seconds": 2.0,
+        "beats": [
+            {
+                "beat_id": "1A", "start_seconds": 0.0, "end_seconds": 1.0,
+                "qr_spoken_seconds": [0.5],
+            },
+            {"beat_id": "1B", "start_seconds": 1.0, "end_seconds": 2.0},
+        ],
+    }
+    plan = {
+        "ebook_cta_groups": [["1A"]],
+        "avatar": {"qr": {"sha256": sha256_file(qr)}},
+    }
+    prepared = build_professional_cta_mux_overlay(
+        tmp_path, tmp_path, timeline, plan,
+    )
+    assert prepared is not None
+    inputs, graph, metadata = prepared
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-i", str(base), "-i", str(soundtrack), *inputs,
+        "-filter_complex", graph, "-map", "[v]", "-map", "1:a:0",
+        "-frames:v", "48", "-r", "24", "-c:v", "libx264",
+        "-preset", "veryfast", "-crf", "19",
+        "-video_track_timescale", "12288",
+        "-c:a", "aac", "-b:a", "192k", "-t", "2.0",
+        "-movflags", "+faststart", str(destination),
+    ]
+    subprocess.run(command, check=True, capture_output=True)
+    report = subprocess.run([
+        "ffprobe", "-v", "error", "-show_entries",
+        "stream=codec_type,nb_frames,avg_frame_rate:format=duration",
+        "-of", "json", str(destination),
+    ], check=True, capture_output=True, text=True)
+    data = json.loads(report.stdout)
+    assert [stream["codec_type"] for stream in data["streams"]] == ["video", "audio"]
+    assert int(data["streams"][0]["nb_frames"]) == 48
+    assert data["streams"][0]["avg_frame_rate"] == "24/1"
+    assert float(data["format"]["duration"]) == pytest.approx(2.0, abs=0.05)
+    assert metadata["website_overlay"]["windows_seconds"] == [[0.5, 1.0]]
+
+    def white_text_pixels(position: str) -> int:
+        frame = tmp_path / f"frame_{position}.png"
+        subprocess.run([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            "-ss", position, "-i", str(destination), "-frames:v", "1",
+            str(frame),
+        ], check=True, capture_output=True)
+        with Image.open(frame) as image:
+            region = image.convert("RGB").crop((700, 855, 1220, 965))
+            return sum(
+                r > 235 and g > 235 and b > 235
+                for r, g, b in region.getdata()
+            )
+
+    assert white_text_pixels("0.75") > white_text_pixels("0.25") + 150
+    assert white_text_pixels("0.75") > white_text_pixels("1.25") + 150
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="FFmpeg and FFprobe required for actual compositor integration",
+)
+def test_professional_compositor_fuses_cta_with_final_encode(tmp_path):
+    import wave
+
+    from ai_video_factory.compositor.b_video import render_b2_ltx_video
+
+    avatar = tmp_path / "avatar.png"
+    media = tmp_path / "image.png"
+    qr = tmp_path / "qr.png"
+    audio_path = tmp_path / "master.wav"
+    Image.new("RGB", (1280, 720), (80, 80, 80)).save(avatar)
+    Image.new("RGB", (1280, 720), (100, 100, 100)).save(media)
+    Image.new("RGB", (100, 100), (255, 255, 255)).save(qr)
+    with wave.open(str(audio_path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(48000)
+        stream.writeframes(b"\\x00\\x00" * 48000)
+
+    timeline = {
+        "duration_seconds": 1.0,
+        "beats": [{
+            "beat_id": "1A", "block_id": 1,
+            "visual_type": "media_image",
+            "start_seconds": 0.0, "end_seconds": 1.0,
+            "qr_spoken_seconds": [0.25],
+        }],
+    }
+    images = {"items": [{
+        "block_id": 1, "beat_id": "1A", "file": media.name,
+        "sha256": sha256_file(media),
+    }]}
+    manifest = {
+        "avatar_file": avatar.name, "avatar_sha256": sha256_file(avatar),
+        "jobs": [],
+    }
+    audio = {"file": audio_path.name, "sha256": sha256_file(audio_path)}
+    plan = {
+        "ebook_cta_groups": [["1A"]],
+        "avatar": {"qr": {"sha256": sha256_file(qr)}},
+    }
+    run_dir = tmp_path / "video" / "runs" / "fused"
+    run_dir.mkdir(parents=True)
+    result = render_b2_ltx_video(
+        tmp_path, run_dir, timeline, [], manifest, images, audio,
+        cta_plan=plan,
+    )
+    assert result["file"] == "video/runs/fused/final.mp4"
+    assert not (run_dir / "with_ebook_qr.mp4").exists()
+    assert result["sha256"] == sha256_file(tmp_path / result["file"])
+    assert result["professional_ebook_qr"]["website_overlay"]["windows_seconds"] == [
+        [0.25, 1.0],
+    ]
+    assert result["fps"] == 24
+    assert result["beat_count"] == 1
+    assert result["rendered_duration_seconds"] == pytest.approx(1.0, abs=0.15)
+    assert result["composition_timings_seconds"]["final_encoding"] >= 0
