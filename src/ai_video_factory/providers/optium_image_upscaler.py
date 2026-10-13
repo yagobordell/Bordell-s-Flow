@@ -34,6 +34,7 @@ _DEFAULT_REQUEST_TIMEOUT_SECONDS = 3600.0
 _DEFAULT_SIGNED_URL_EXPIRY_SECONDS = 7200
 _DEFAULT_GATEWAY_RECOVERY_TIMEOUT_SECONDS = 900.0
 _DEFAULT_GATEWAY_RECOVERY_POLL_SECONDS = 10.0
+_MAX_TLS_RECORD_RETRIES = 2
 
 
 class ImageUpscalerError(RuntimeError):
@@ -117,6 +118,18 @@ class _UrllibRuntimeHttpClient:
         if not isinstance(decoded, dict):
             raise ImageUpscalerError("Image upscaler response must be a JSON object")
         return cast(Mapping[str, object], decoded)
+
+
+def _is_tls_record_error(error: ImageUpscalerError) -> bool:
+    """Only retry a broken TLS record; unrelated HTTP 500s are not transient."""
+    if error.status_code != 500:
+        return False
+    detail = str(error).casefold()
+    return (
+        "sslv3_alert_bad_record_mac" in detail
+        or "bad record mac" in detail
+        or "bad_record_mac" in detail
+    )
 
 
 def _safe_http_error_detail(error: HTTPError) -> str:
@@ -461,6 +474,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
         deadline = time.monotonic() + self._gateway_recovery_timeout_seconds
         last_error: ImageUpscalerError | None = None
         wait_for_output = False
+        tls_record_retries = 0
 
         while True:
             if last_error is not None:
@@ -495,6 +509,22 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                             "Retrying the same deterministic request until it recovers.",
                             exc.status_code,
                         )
+                    last_error = exc
+                    continue
+                if _is_tls_record_error(exc):
+                    # The worker can fail an R2 GET/PUT on a corrupted TLS
+                    # record after accepting our POST. Keep the identical
+                    # execution envelope, signed URLs and R2 output key.
+                    # Cap retries to avoid repeatedly charging GPU time if
+                    # the remote TLS connection stays broken.
+                    if tls_record_retries >= _MAX_TLS_RECORD_RETRIES:
+                        raise
+                    tls_record_retries += 1
+                    logger.warning(
+                        "Image upscaler encountered remote TLS record corruption; "
+                        "retrying the same request (%s/%s) without clearing R2.",
+                        tls_record_retries, _MAX_TLS_RECORD_RETRIES,
+                    )
                     last_error = exc
                     continue
                 raise

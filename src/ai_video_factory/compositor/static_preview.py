@@ -44,6 +44,10 @@ class StaticPreviewError(RuntimeError):
     """A required artifact is missing or cannot be aligned without guessing."""
 
 
+class StaticPreviewResourceError(StaticPreviewError):
+    """The optional local preview exhausted FFmpeg's memory budget."""
+
+
 class SttAlignmentError(StaticPreviewError):
     """A transcript's words differ from its corresponding B2 block."""
 
@@ -775,18 +779,31 @@ def generate_static_preview(
     try:
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            # FFmpeg defaults to a large CPU-dependent filter thread pool.
+            # The per-frame perspective timeline can otherwise exhaust RAM
+            # on a Windows workstation with many media_image subshots.
+            "-filter_threads", "1",
             "-f", "concat", "-safe", "0", "-i", str(concat),
             "-i", str(output / audio["file"]),
             "-map", "0:v:0", "-map", "1:a:0",
             *filter_args,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
-            "-c:a", "aac", "-b:a", "192k",
+            "-threads:v", "2", "-c:a", "aac", "-b:a", "192k",
             "-t", f"{timeline['duration_seconds']:.9f}",
             "-movflags", "+faststart", str(temporary),
         ]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise StaticPreviewError("FFmpeg static preview failed: " + result.stderr[-1400:])
+            stderr = result.stderr or ""
+            if any(marker in stderr.lower() for marker in (
+                "cannot allocate memory", "out of memory",
+                "not enough memory", "cannot allocate buffer",
+            )):
+                raise StaticPreviewResourceError(
+                    "FFmpeg static preview exhausted local memory with bounded "
+                    "filter and encoder threads: " + stderr[-1400:]
+                )
+            raise StaticPreviewError("FFmpeg static preview failed: " + stderr[-1400:])
         probe = subprocess.run(
             [
                 "ffprobe", "-v", "error", "-show_entries",

@@ -191,9 +191,12 @@ def materialize_blocks(script: str, blocks: list[BlockMeta]) -> list[Materialize
     start_candidates: list[list[int]] = []
     last_candidates: list[list[tuple[int, int]]] = []
     for block in blocks:
-        first, last = block.span.first_words, block.span.last_words
-        if first[0].isspace() or last[-1].isspace():
-            raise BPipelineValidationError("B1.1 anchors must begin/end at substantive text")
+        # Model anchors occasionally include boundary whitespace. Strip only
+        # these lookup strings; block text still comes byte-for-byte from script.
+        first = block.span.first_words.strip()
+        last = block.span.last_words.strip()
+        if not first or not last:
+            raise BPipelineValidationError("B1.1 anchors must contain substantive text")
         first_positions = [
             start for start, _ in _anchor_occurrences(normalized_script, source_offsets, first)
         ]
@@ -626,7 +629,10 @@ def _b21_numbered_groups(
     ]
     for label, members in lettered.items():
         members.sort(key=lambda item: item[0])
-        beat_ids = [beat_id for _position, _number, beat_id in sorted(members, key=lambda item: item[1])]
+        beat_ids = [
+            beat_id
+            for _position, _number, beat_id in sorted(members, key=lambda item: item[1])
+        ]
         groups.append((members[0][0], label, beat_ids))
     groups.sort(key=lambda item: item[0])
     return [(label, beat_ids) for _start, label, beat_ids in groups]
@@ -2478,7 +2484,11 @@ async def run_b_pipeline(
                         ) from error
                     validation_retries += 1
                     failed_groups = _professional_b2_failed_beat_groups(error)
-                    if failed_groups is not None and candidate_is_complete and candidate is not None:
+                    if (
+                        failed_groups is not None
+                        and candidate_is_complete
+                        and candidate is not None
+                    ):
                         partial_base = candidate.model_copy(deep=True)
                         partial_beat_groups = failed_groups
                         feedback = _professional_b2_partial_feedback(
