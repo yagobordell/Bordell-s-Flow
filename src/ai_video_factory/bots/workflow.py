@@ -1443,7 +1443,8 @@ def validate_whole_professional_b2(
             )
         )
     _renumber_lettered_panels(outputs)
-    # Wording and repetition are checked on the accumulated plan so a failing group can be retried alone.
+    # Wording and repetition are checked on the accumulated plan so a failing
+    # group can be retried alone.
     rule_errors = _b2_prompt_rule_errors(outputs) + _b2_repetition_errors(outputs)
     if rule_errors:
         raise BPipelineValidationError(_B2_VISUAL_RULES_PREFIX + " || ".join(rule_errors))
@@ -1648,7 +1649,8 @@ def _b2_wording_partial_feedback(
         "Required correction:",
         "Rewrite only the visible-frame prompt of the beats listed below so each one follows "
         "the wording rules named in the failure: no label before the frame, no reference to "
-        "another shot, no negation or absence wording in the visible frame, no photographic-quality "
+        "another shot, no negation or absence wording in the visible frame, "
+        "no photographic-quality "
         "or atmosphere wording, and an apparent age range plus clothing for every person or hand. "
         "For a repetition, change the visible object, action, or place so the frame differs from "
         "the earlier beat named in the failure, without changing the narration.",

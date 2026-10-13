@@ -89,7 +89,7 @@ class RepairProvider:
 
 @pytest.mark.parametrize(
     ("length", "valid"),
-    [(1, True), (12, True), (13, True), (100, True), (101, False)],
+    [(1, False), (12, False), (13, False), (22, True), (100, True), (101, False)],
 )
 def test_beat_character_boundaries(length: int, valid: bool) -> None:
     first = "x" * length + " "
@@ -113,11 +113,10 @@ def test_short_sole_beat_of_a_frozen_block_is_valid() -> None:
     assert validate_beats(_output("  Sí.  "), _block("  Sí.  "))
 
 
-def test_short_beat_in_multibeat_block_is_not_rejected_by_character_count() -> None:
+def test_short_beat_in_multibeat_block_is_rejected_by_minimum() -> None:
     assert len(SHORT.strip()) <= 12
-    assert validate_beats(
-        _output(FIRST, SHORT, SECOND), _block(FIRST + SHORT + SECOND)
-    )
+    with pytest.raises(BPipelineValidationError, match="minimum 22"):
+        validate_beats(_output(FIRST, SHORT, SECOND), _block(FIRST + SHORT + SECOND))
 
 
 def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> None:
@@ -148,7 +147,7 @@ def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> N
     assert "maximum 100" in rejected[0][2]
     assert "Correct only source block groups: 1." in provider.calls[1]["instructions"]
     assert "at or below 40 words and 100 stripped" in provider.calls[1]["instructions"]
-    assert "no minimum character count" in provider.calls[1]["instructions"]
+    assert "22 stripped characters" in provider.calls[1]["instructions"]
     assert "13 characters" not in provider.calls[1]["instructions"]
     assert all(json.loads(call["input_text"])["blocks"][0]["text"] == script
                for call in provider.calls)
@@ -159,9 +158,11 @@ def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> N
     assert "".join(beat.text for beat in result.b12[0].beats) == script
 
 
-def test_short_beat_does_not_trigger_character_repair() -> None:
+def test_short_beat_triggers_character_repair() -> None:
     script = FIRST + SHORT + SECOND
-    provider = RepairProvider(_output(FIRST, SHORT, SECOND))
+    provider = RepairProvider(
+        _output(FIRST, SHORT, SECOND), _output(FIRST + SHORT, SECOND)
+    )
     result = asyncio.run(
         run_b_pipeline(
             script,
@@ -172,10 +173,10 @@ def test_short_beat_does_not_trigger_character_repair() -> None:
             previous_b11=_b11(script),
         )
     )
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == 2
     assert "".join(beat.text for beat in result.b12[0].beats) == script
     assert [beat.text.strip() for beat in result.b12[0].beats] == [
-        FIRST.strip(), SHORT.strip(), SECOND.strip(),
+        (FIRST + SHORT).strip(), SECOND.strip(),
     ]
     assert all(len(beat.text.strip()) <= 100 for beat in result.b12[0].beats)
 
@@ -228,9 +229,9 @@ def test_repaired_text_restores_source_punctuation_without_extra_retry() -> None
     assert result.b12[0].beats[-1].text.endswith(".")
 
 
-def test_correction_may_preserve_valid_short_beats() -> None:
+def test_correction_merges_short_beats() -> None:
     script = FIRST + SHORT + SECOND
-    provider = RepairProvider(_output(script), _output(FIRST, SHORT, SECOND))
+    provider = RepairProvider(_output(script), _output(FIRST + SHORT, SECOND))
     result = asyncio.run(
         run_b_pipeline(
             script,
@@ -244,9 +245,9 @@ def test_correction_may_preserve_valid_short_beats() -> None:
     assert len(provider.calls) == 2
     assert "".join(beat.text for beat in result.b12[0].beats) == script
     assert [beat.text.strip() for beat in result.b12[0].beats] == [
-        FIRST.strip(), SHORT.strip(), SECOND.strip(),
+        (FIRST + SHORT).strip(), SECOND.strip(),
     ]
-    assert "no minimum character count" in provider.calls[1]["instructions"]
+    assert "22 stripped characters" in provider.calls[1]["instructions"]
 
 
 def test_unrelated_b12_validation_failure_is_repaired() -> None:
