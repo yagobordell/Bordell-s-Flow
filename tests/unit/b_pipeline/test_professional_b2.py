@@ -87,7 +87,7 @@ def test_professional_prompt_has_no_stock_exclusions() -> None:
     assert "visual director and editor" in prompt
     assert "last beat of every `close` block" in prompt
     assert "`intro` — earn attention quickly" in prompt
-    assert "may hold at most twenty" in prompt
+    assert "up to four b1.1 blocks" in prompt
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
