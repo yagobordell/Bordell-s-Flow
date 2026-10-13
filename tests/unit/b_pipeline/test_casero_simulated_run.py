@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from ai_video_factory.bots.contracts import B11Output, B2Output, WholeB12Output
+from ai_video_factory.bots.contracts import B2Output, B11Output, WholeB12Output
 from ai_video_factory.bots.cta import CTAPlacement
 from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.compositor import casero_subtitles
