@@ -479,6 +479,78 @@ def test_multi_pending_gemini_does_not_guess_mismatched_plan_or_corrupted_wav(tm
         pv._matching_pending_gemini_nonce(**kwargs)
 
 
+def test_resuming_two_matching_paid_gemini_runs_never_creates_third(
+    tmp_path, monkeypatch,
+):
+    from ai_video_factory.providers.openai_stt import OpenAISttError
+
+    async def plan(**_kwargs):
+        return _v1(), [_v2()], [_v3()], [_v4()]
+
+    calls = {"speech": 0, "stt": 0}
+
+    class Speech:
+        async def generate_directed_speech(self, **_kwargs):
+            calls["speech"] += 1
+            return SimpleNamespace(content=_wav(48000))
+
+    async def stt(item, *, output, run_dir, stt_client):
+        calls["stt"] += 1
+        if calls["stt"] <= 2:
+            raise OpenAISttError("simulated invalid timestamp")
+        folder = run_dir / "blocks" / "block_1"
+        path = folder / "stt.json"
+        path.write_text(json.dumps({
+            "model": stt_client.model, "source_audio_sha256": item["sha256"],
+            "words": [{"word": "Hola", "start": 0.0, "end": 0.05}],
+        }), encoding="utf-8")
+        return {
+            **item, "stt": {
+                "file": path.relative_to(output).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "model": stt_client.model, "word_count": 1,
+            },
+        }
+
+    def join(paths, destination):
+        assert len(paths) == 1
+        destination.write_bytes(_wav(48000))
+        return {
+            "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "format": "wav", "bytes": destination.stat().st_size,
+            "duration_seconds": 0.1, "block_start_seconds": [0.0],
+            "block_end_seconds": [0.1], "block_durations_seconds": [0.1],
+        }
+
+    monkeypatch.setattr(pv, "plan_professional_voice", plan)
+    monkeypatch.setattr(pv, "_transcribe_block", stt)
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    args = dict(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=object(), model="test",
+        gemini_api_key="test", voice_id="Algenib",
+        source_sha256="a" * 64, speech_provider=Speech(),
+        stt_client=SimpleNamespace(model="whisper-1"),
+    )
+    for nonce in ("", "second-nonce"):
+        with pytest.raises(pv.VoicePlanError, match="1 incomplete blocks"):
+            asyncio.run(pv.generate_professional_audio(
+                **args, generation_nonce=nonce,
+            ))
+    pending = sorted(tmp_path.glob("audio/runs/gemini-*/task.json"))
+    assert len(pending) == 2
+    assert calls == {"speech": 2, "stt": 2}
+
+    artifact = asyncio.run(pv.generate_professional_audio(
+        **args, resume_pending_tasks=pending,
+    ))
+    assert artifact["status"] == "completed"
+    assert artifact["stt_complete"] is True
+    assert calls == {"speech": 2, "stt": 3}
+    assert len(list(tmp_path.glob("audio/runs/gemini-*/task.json"))) == 2
+    assert all(task.is_file() for task in pending)
+
+
 def test_failed_gemini_block_is_retryable_without_unknown_state(tmp_path, monkeypatch):
     async def plan(**_):
         return _v1(), [_v2()], [_v3()], [_v4()]
