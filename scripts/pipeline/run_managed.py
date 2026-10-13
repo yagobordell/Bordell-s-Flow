@@ -39,7 +39,8 @@ The persistent QR, voice, optional clone audio and one-time visual style
 are saved in data/<avatar>/meta/. A conflicting --style is refused.
 
 Options include --no-image, --no-video, --style, --from B2, --rerun,
---images-only, --generate-video, --resume-audio, --regenerate-audio,
+--images-only, --generate-video, --subtitles, --no-subtitles,
+--cta-motion automatic|manual, --resume-audio, --regenerate-audio,
 --publish-only, --youtube-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
 --sync-only exports existing verified media without API or GPU calls.
 For opted-in YouTube publication set YOUTUBE_ENABLED=true and provide per-run youtube.json.

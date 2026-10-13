@@ -228,6 +228,9 @@ def _collect(
             filename, block.get("sha256"),
         )
     add(script.stem + ".mp4", video.get("file"), video.get("sha256"))
+    subtitles = video.get("subtitles")
+    if isinstance(subtitles, dict) and subtitles.get("enabled") is True:
+        add(script.stem + ".srt", subtitles.get("srt_file"), subtitles.get("srt_sha256"))
     return Path(avatar["filename"]).stem, entries
 
 
