@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -32,19 +33,63 @@ class OpenAISttClient:
         self.client = client
         self.model = model
 
-    def transcribe(self, audio: Path) -> dict[str, Any]:
+    def _raw_transcript(self, audio: Path) -> dict[str, Any]:
         if audio.is_symlink() or not audio.is_file():
             raise OpenAISttError(f"Missing or linked source audio: {audio}")
         if not 0 < audio.stat().st_size <= _MAX_AUDIO_BYTES:
             raise OpenAISttError("OpenAI STT audio must be nonempty and at most 25 MiB")
         with audio.open("rb") as stream:
             response = self.client.audio.transcriptions.create(
-                file=stream,
-                model=self.model,
+                file=stream, model=self.model,
                 response_format="verbose_json",
                 timestamp_granularities=["word"],
             )
-        raw = response if isinstance(response, dict) else response.model_dump(mode="json")
+        return response if isinstance(response, dict) else response.model_dump(mode="json")
+
+    def transcribe(self, audio: Path) -> dict[str, Any]:
+        """Regular STT; persistent workflows use the durable-response variant."""
+        return self._normalize_raw(self._raw_transcript(audio))
+
+    def transcribe_durable(
+        self, audio: Path, *, response_path: Path, source_audio_sha256: str,
+    ) -> dict[str, Any]:
+        """Persist the paid response before parsing so validation is replayable."""
+        temporary = response_path.with_name(response_path.name + ".tmp")
+        if any(path.is_symlink() for path in (
+            response_path.parent, response_path, temporary,
+        )):
+            raise OpenAISttError("Refusing linked OpenAI STT response cache")
+        if response_path.is_file():
+            saved = json.loads(response_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(saved, dict)
+                or saved.get("schema_version") != "openai-stt-raw-v1"
+                or saved.get("source_audio_sha256") != source_audio_sha256
+                or saved.get("model") != self.model
+                or not isinstance(saved.get("response"), dict)
+            ):
+                raise OpenAISttError("Saved raw STT response differs from source or model")
+            return self._normalize_raw(saved["response"])
+        if response_path.exists() or temporary.exists():
+            raise OpenAISttError("Unexpected raw STT cache path or interrupted write")
+        raw = self._raw_transcript(audio)
+        response_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            temporary.write_text(
+                json.dumps({
+                    "schema_version": "openai-stt-raw-v1",
+                    "source_audio_sha256": source_audio_sha256,
+                    "model": self.model,
+                    "response": raw,
+                }, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(response_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return self._normalize_raw(raw)
+
+    def _normalize_raw(self, raw: dict[str, Any]) -> dict[str, Any]:
         words = raw.get("words")
         if not isinstance(words, list) or not words:
             raise OpenAISttError("OpenAI STT returned no word timestamps")
@@ -58,17 +103,29 @@ class OpenAISttClient:
             return number if math.isfinite(number) and number >= 0 else None
 
         parsed: list[dict[str, Any]] = []
+        skipped_nonlexical: list[int] = []
         for index, entry in enumerate(words):
             if not isinstance(entry, dict):
                 raise OpenAISttError(f"Malformed OpenAI STT word at index {index}")
             word = entry.get("word")
-            if not isinstance(word, str) or not word.strip():
-                raise OpenAISttError(f"Invalid OpenAI STT word at index {index}")
+            if not isinstance(word, str):
+                raise OpenAISttError(
+                    f"Invalid OpenAI STT word at index {index}: "
+                    f"non-text word ({type(word).__name__})"
+                )
+            # Only nonspoken pseudo-words are skipped; all lexical content
+            # still enters strict downstream B2/STT alignment.
+            if not any(character.isalnum() for character in word):
+                skipped_nonlexical.append(index)
+                continue
             parsed.append({
+                "source_index": index,
                 "word": word,
                 "start": timestamp(entry.get("start")),
                 "end": timestamp(entry.get("end")),
             })
+        if not parsed:
+            raise OpenAISttError("OpenAI STT returned no spoken word timestamps")
 
         normalized: list[dict[str, Any]] = []
         repairs: list[dict[str, Any]] = []
@@ -76,7 +133,8 @@ class OpenAISttClient:
         # Never infer a word's position across a long pause or an unanchored
         # region: such a transcript needs another real STT response.
         max_gap = 2.0
-        for index, entry in enumerate(parsed):
+        for position, entry in enumerate(parsed):
+            index = entry["source_index"]
             start, end = entry["start"], entry["end"]
             recovered_fields: list[str] = []
             if start is None:
@@ -84,7 +142,7 @@ class OpenAISttClient:
                 upper = end
                 if upper is None:
                     upper = next(
-                        (later["start"] for later in parsed[index + 1:]
+                        (later["start"] for later in parsed[position + 1:]
                          if later["start"] is not None),
                         None,
                     )
@@ -101,7 +159,7 @@ class OpenAISttClient:
             safe_start = max(start, previous_start)
             if end is None:
                 next_start = next(
-                    (later["start"] for later in parsed[index + 1:]
+                    (later["start"] for later in parsed[position + 1:]
                      if later["start"] is not None),
                     None,
                 )
@@ -133,4 +191,6 @@ class OpenAISttClient:
             "language": raw.get("language"),
             "words": normalized,
             **({"timing_repairs": repairs} if repairs else {}),
+            **({"skipped_nonlexical_indices": skipped_nonlexical}
+               if skipped_nonlexical else {}),
         }
