@@ -133,8 +133,12 @@ async def _transcribe_block(
     directory = run_dir / "blocks" / f"block_{item['block_id']}"
     transcript_path = directory / "stt.json"
     request_path = directory / "stt_request.json"
+    raw_response_path = directory / "stt_response.json"
     audio_path = output / item["file"]
-    if transcript_path.is_symlink() or request_path.is_symlink():
+    if (
+        transcript_path.is_symlink() or request_path.is_symlink()
+        or raw_response_path.is_symlink()
+    ):
         raise FishAudioWorkflowError("Refusing linked Fish STT state")
     model = stt_client.model
     if transcript_path.is_file():
@@ -151,7 +155,10 @@ async def _transcribe_block(
     else:
         if request_path.is_file():
             previous = _read_json(request_path)
-            if previous.get("status") == "request_started_unknown":
+            if (
+                previous.get("status") == "request_started_unknown"
+                and not raw_response_path.is_file()
+            ):
                 raise FishAudioWorkflowError(
                     f"OpenAI STT submission for block {item['block_id']} may be billed; "
                     f"reconcile {request_path} before retrying"
@@ -172,7 +179,14 @@ async def _transcribe_block(
             "model": model,
         })
         try:
-            transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+            if isinstance(stt_client, OpenAISttClient):
+                transcript = await asyncio.to_thread(
+                    stt_client.transcribe_durable, audio_path,
+                    response_path=raw_response_path,
+                    source_audio_sha256=item["sha256"],
+                )
+            else:
+                transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
         except OpenAISttError as exc:
             # The STT response was received but failed local validation. This
             # is retryable; it is not an ambiguous paid POST outcome.

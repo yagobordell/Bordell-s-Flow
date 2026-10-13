@@ -11,7 +11,8 @@ from ai_video_factory.bots.contracts import (
     B11Output,
     B12Output,
     B21Output,
-    ProfessionalB2Output,
+    ProfessionalB2BatchOutput,
+    WholeProfessionalB2Output,
 )
 from ai_video_factory.bots.workflow import (
     BPipelineValidationError,
@@ -264,20 +265,36 @@ def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
             input_image_url=None,
         ):
             payload = json.loads(input_text)
-            if output_type is ProfessionalB2Output:
-                block = payload["blocks"][0]
-                for beat in block["beats"]:
-                    beat.update(
-                        visual_type="media_image",
-                        prompt=f"Visual treatment for {beat['beat_id']}.",
-                        video_prompt=None,
-                        reference=False,
-                        audio=False,
-                    )
-                return ProfessionalB2Output.model_validate({
+            if output_type is WholeProfessionalB2Output:
+                for block in payload["blocks"]:
+                    for beat in block["beats"]:
+                        beat.update(
+                            visual_type="media_image",
+                            prompt=f"Visual treatment for {beat['beat_id']}.",
+                            video_prompt=None,
+                            reference=False,
+                            audio=False,
+                        )
+                return WholeProfessionalB2Output.model_validate({
                     "pipeline_stage": "B2",
                     "narrative_core": payload["narrative_core"],
-                    "blocks": [block],
+                    "blocks": payload["blocks"],
+                    "error": None,
+                })
+            if output_type is ProfessionalB2BatchOutput:
+                for block in payload["blocks"]:
+                    for beat in block["beats"]:
+                        beat.update(
+                            visual_type="media_image",
+                            prompt=f"Visual treatment for {beat['beat_id']}.",
+                            video_prompt=None,
+                            reference=False,
+                            audio=False,
+                        )
+                return ProfessionalB2BatchOutput.model_validate({
+                    "pipeline_stage": "B2",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": payload["blocks"],
                     "error": None,
                 })
             if output_type is B21Output:

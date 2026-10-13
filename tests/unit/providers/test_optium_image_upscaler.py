@@ -510,6 +510,129 @@ def test_upscaler_retries_transient_gateway_error_with_same_request(
     assert runtime.calls[0] == runtime.calls[1]
     assert storage.objects == {}
 
+@pytest.mark.parametrize(
+    "tls_error",
+    [
+        "[SSL: SSLV3_ALERT_BAD_RECORD_MAC] sslv3 alert bad record mac (_ssl.c:2559)",
+        "[SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC] bad record mac",
+    ],
+)
+def test_upscaler_recovers_tls_500_with_identical_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tls_error: str,
+) -> None:
+    storage = FakeStorage()
+    delegate = FakeRuntimeClient(storage)
+
+    class TransientTlsRuntime:
+        def __init__(self) -> None:
+            self.calls: list[Mapping[str, object]] = []
+
+        def post_json(self, url, payload, *, headers, timeout_seconds):
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                raise ImageUpscalerError(
+                    f"Image upscaler returned HTTP 500: {tls_error}",
+                    status_code=500,
+                )
+            return delegate.post_json(
+                url, payload, headers=headers, timeout_seconds=timeout_seconds,
+            )
+
+    runtime = TransientTlsRuntime()
+    monkeypatch.setattr(
+        "ai_video_factory.providers.optium_image_upscaler.time.sleep",
+        lambda _seconds: None,
+    )
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="salad-secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        gateway_recovery_poll_seconds=0.01,
+        http_client=runtime,
+    )
+    result = provider.upscale(_png(64, 36), target_width=192, target_height=108)
+
+    assert result == _png(192, 108)
+    assert len(runtime.calls) == 2
+    assert runtime.calls[0] == runtime.calls[1]
+    assert len(delegate.calls) == 1
+    assert storage.objects == {}
+
+
+def test_upscaler_does_not_retry_unrelated_http_500(tmp_path: Path) -> None:
+    class FatalRuntime:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def post_json(self, *_args, **_kwargs):
+            self.calls += 1
+            raise ImageUpscalerError("Image upscaler HTTP 500: internal", status_code=500)
+
+    runtime = FatalRuntime()
+    storage = FakeStorage()
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="salad-secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        http_client=runtime,
+    )
+    with pytest.raises(ImageUpscalerError, match="internal"):
+        provider.upscale(_png(64, 36), target_width=192, target_height=108)
+    assert runtime.calls == 1
+    assert storage.objects
+    assert storage.deleted == []
+
+
+def test_upscaler_persistent_tls_500_stops_and_preserves_r2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PersistentTlsRuntime:
+        def __init__(self) -> None:
+            self.calls: list[Mapping[str, object]] = []
+
+        def post_json(self, _url, payload, **_kwargs):
+            self.calls.append(payload)
+            raise ImageUpscalerError(
+                "HTTP 500: [SSL: SSLV3_ALERT_BAD_RECORD_MAC] bad record mac",
+                status_code=500,
+            )
+
+    runtime = PersistentTlsRuntime()
+    storage = FakeStorage()
+    monkeypatch.setattr(
+        "ai_video_factory.providers.optium_image_upscaler.time.sleep",
+        lambda _seconds: None,
+    )
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="salad-secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        gateway_recovery_poll_seconds=0.01,
+        http_client=runtime,
+    )
+    source = _png(64, 36)
+    with pytest.raises(ImageUpscalerError, match="BAD_RECORD_MAC"):
+        provider.upscale(source, target_width=192, target_height=108)
+    assert len(runtime.calls) == 3
+    assert runtime.calls[0] == runtime.calls[1] == runtime.calls[2]
+    assert storage.objects
+    assert storage.deleted == []
+
+    # A paid output may appear after the final error. The next explicit
+    # --images-only run must reconcile it without another POST.
+    output_key = next(key for key in storage.objects if key.endswith("/input.png"))
+    output_key = output_key.rsplit("/", 1)[0] + "/output.png"
+    storage.objects[output_key] = _png(192, 108)
+    assert provider.upscale(source, target_width=192, target_height=108) == _png(192, 108)
+    assert len(runtime.calls) == 3
+    assert storage.objects == {}
+
+
 def test_upscaler_recovers_previous_gateway_result_from_r2_without_post(
     tmp_path: Path,
 ) -> None:

@@ -1402,6 +1402,89 @@ async def regenerate_professional_audio_block(
     return attempt_number
 
 
+def _matching_pending_gemini_nonce(
+    *, output: Path, pending_tasks: list[Path], payload: dict[str, Any],
+    source_sha256: str, voice_id: str,
+    voice_blocks: list[dict[str, Any]],
+) -> str:
+    """Match unfinished paid tasks to the exact current B2/V1-V4 plan.
+
+    Preserve every candidate. Prefer the one with the most verified WAVs and
+    transcripts, breaking ties by task update time and stable run ID.
+    """
+    runs = output / "audio" / "runs"
+    candidates: list[tuple[int, int, int, str, str]] = []
+    for task_path in pending_tasks:
+        if (
+            task_path.is_symlink() or task_path.parent.is_symlink()
+            or task_path.parent.parent != runs
+            or not task_path.parent.name.startswith("gemini-")
+        ):
+            raise VoicePlanError(
+                f"Professional audio has an unsafe or non-Gemini pending task: {task_path}"
+            )
+        state = _read(task_path)
+        nonce = state.get("generation_nonce")
+        if not isinstance(nonce, str):
+            raise VoicePlanError(f"Pending Gemini task has no nonce: {task_path}")
+        expected_sha = _fingerprint({**payload, "generation_nonce": nonce})
+        if (
+            state.get("fingerprint") != expected_sha
+            or task_path.parent.name != f"gemini-{expected_sha[:24]}"
+            or state.get("run_id") != task_path.parent.name
+            or state.get("source_sha256") != source_sha256
+            or state.get("voice") != voice_id
+            or state.get("model") != DEFAULT_GEMINI_TTS_MODEL
+        ):
+            continue
+        verified_wavs = 0
+        verified_stt = 0
+        for block in voice_blocks:
+            folder = task_path.parent / "blocks" / f"block_{block['block_id']}"
+            block_task = folder / "task.json"
+            if block_task.is_symlink() or folder.is_symlink():
+                raise VoicePlanError(f"Linked Gemini voice block: {folder}")
+            if not block_task.is_file():
+                continue
+            saved = _read(block_task)
+            if saved.get("status") not in {"tts_completed", "completed"}:
+                continue
+            wav = folder / "audio.wav"
+            sha = saved.get("sha256")
+            if (
+                not isinstance(sha, str) or wav.is_symlink()
+                or not wav.is_file()
+                or hashlib.sha256(wav.read_bytes()).hexdigest() != sha
+            ):
+                raise VoicePlanError(
+                    f"Pending Gemini task has unverified paid WAV: {wav}"
+                )
+            verified_wavs += 1
+            transcript_path = folder / "stt.json"
+            if transcript_path.is_symlink():
+                raise VoicePlanError(f"Linked Gemini STT: {transcript_path}")
+            if transcript_path.is_file():
+                stt = _read(transcript_path)
+                if (
+                    stt.get("source_audio_sha256") == sha
+                    and stt.get("model") == "whisper-1"
+                    and isinstance(stt.get("words"), list)
+                    and stt["words"]
+                ):
+                    verified_stt += 1
+        candidates.append((
+            verified_wavs, verified_stt, task_path.stat().st_mtime_ns,
+            task_path.parent.name, nonce,
+        ))
+    if not candidates:
+        raise VoicePlanError(
+            "No pending Gemini task matches the current B2/V1-V4 plan and "
+            "source/voice identity; preserved all paid artifacts. Inspect "
+            "audio/runs/*/task.json before another provider call"
+        )
+    return max(candidates)[-1]
+
+
 async def generate_professional_audio(
     *, core: dict[str, Any], blocks: list[dict[str, Any]], output: Path,
     provider: Any, model: str, gemini_api_key: str, voice_id: str,
@@ -1412,6 +1495,7 @@ async def generate_professional_audio(
     speech_provider: GeminiTtsSpeechProvider | None = None,
     generation_nonce: str = "",
     source_sha256: str = "",
+    resume_pending_tasks: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Publish professional block WAVs and an existing-timeline-compatible artifact."""
     if not blocks or not gemini_api_key:
@@ -1447,6 +1531,13 @@ async def generate_professional_audio(
     payload["compiler_version"] = "professional-v4-sovereign-group-v4"
     if grouped_plan:
         payload["voice_groups"] = groups
+    if resume_pending_tasks:
+        generation_nonce = _matching_pending_gemini_nonce(
+            output=output, pending_tasks=resume_pending_tasks,
+            payload=payload, source_sha256=source_sha256,
+            voice_id=voice_id, voice_blocks=voice_blocks,
+        )
+        payload["generation_nonce"] = generation_nonce
     fingerprint = _fingerprint(payload)
     run_dir = output / "audio" / "runs" / ("gemini-" + fingerprint[:24])
     manifest = run_dir / "task.json"
@@ -1520,7 +1611,7 @@ async def generate_professional_audio(
                         fingerprint=speech_fingerprint, model=DEFAULT_GEMINI_TTS_MODEL,
                         voice_id=voice_id, folder=folder,
                     )
-                    if not generation_nonce else None
+                    if not generation_nonce or resume_pending_tasks else None
                 )
                 if reused_digest is not None:
                     state["status"] = "tts_completed"

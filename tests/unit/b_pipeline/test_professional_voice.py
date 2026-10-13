@@ -403,6 +403,154 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     assert speech.calls == 2
 
 
+def test_multi_pending_gemini_prefers_verified_paid_wav_and_keeps_other_tasks(tmp_path):
+    payload = {
+        "blocks": [_block()], "v1": _v1().model_dump(by_alias=True),
+        "v2": [_v2().model_dump(by_alias=True)],
+        "v3": [_v3().model_dump(by_alias=True)],
+        "v4": [_v4().model_dump(by_alias=True)],
+        "voice": "Algenib", "model": pv.DEFAULT_GEMINI_TTS_MODEL,
+        "source_sha256": "a" * 64, "generation_nonce": "",
+        "compiler_version": "professional-v4-sovereign-group-v4",
+    }
+    tasks = []
+    for nonce, with_audio in [("", False), ("second-nonce", True)]:
+        fingerprint = pv._fingerprint({**payload, "generation_nonce": nonce})
+        folder = tmp_path / "audio" / "runs" / f"gemini-{fingerprint[:24]}"
+        folder.mkdir(parents=True)
+        task = folder / "task.json"
+        task.write_text(json.dumps({
+            "status": "incomplete", "fingerprint": fingerprint,
+            "run_id": folder.name, "generation_nonce": nonce,
+            "source_sha256": "a" * 64, "voice": "Algenib",
+            "model": pv.DEFAULT_GEMINI_TTS_MODEL,
+        }), encoding="utf-8")
+        if with_audio:
+            block = folder / "blocks" / "block_1"
+            block.mkdir(parents=True)
+            wav = block / "audio.wav"
+            wav.write_bytes(b"verified paid waveform")
+            (block / "task.json").write_text(json.dumps({
+                "status": "tts_completed",
+                "sha256": hashlib.sha256(wav.read_bytes()).hexdigest(),
+            }), encoding="utf-8")
+        tasks.append(task)
+    chosen = pv._matching_pending_gemini_nonce(
+        output=tmp_path, pending_tasks=tasks, payload=payload,
+        source_sha256="a" * 64, voice_id="Algenib",
+        voice_blocks=[_block()],
+    )
+    assert chosen == "second-nonce"
+    assert all(task.is_file() for task in tasks)
+    assert len(list((tmp_path / "audio" / "runs").glob("gemini-*"))) == 2
+
+
+def test_multi_pending_gemini_does_not_guess_mismatched_plan_or_corrupted_wav(tmp_path):
+    payload = {
+        "generation_nonce": "", "voice": "Algenib",
+        "model": pv.DEFAULT_GEMINI_TTS_MODEL, "source_sha256": "a" * 64,
+    }
+    fingerprint = pv._fingerprint(payload)
+    run = tmp_path / "audio" / "runs" / f"gemini-{fingerprint[:24]}"
+    run.mkdir(parents=True)
+    task = run / "task.json"
+    task.write_text(json.dumps({
+        "status": "incomplete", "fingerprint": fingerprint,
+        "run_id": run.name, "generation_nonce": "",
+        "source_sha256": "a" * 64, "voice": "Algenib",
+        "model": pv.DEFAULT_GEMINI_TTS_MODEL,
+    }), encoding="utf-8")
+    kwargs = dict(
+        output=tmp_path, pending_tasks=[task], payload=payload,
+        source_sha256="a" * 64, voice_id="Algenib",
+        voice_blocks=[_block()],
+    )
+    with pytest.raises(pv.VoicePlanError, match="No pending Gemini task matches"):
+        pv._matching_pending_gemini_nonce(
+            **{**kwargs, "payload": {**payload, "v4": "changed"}},
+        )
+    folder = run / "blocks" / "block_1"
+    folder.mkdir(parents=True)
+    (folder / "audio.wav").write_bytes(b"corrupted")
+    (folder / "task.json").write_text(json.dumps({
+        "status": "tts_completed", "sha256": "0" * 64,
+    }), encoding="utf-8")
+    with pytest.raises(pv.VoicePlanError, match="unverified paid WAV"):
+        pv._matching_pending_gemini_nonce(**kwargs)
+
+
+def test_resuming_two_matching_paid_gemini_runs_never_creates_third(
+    tmp_path, monkeypatch,
+):
+    from ai_video_factory.providers.openai_stt import OpenAISttError
+
+    async def plan(**_kwargs):
+        return _v1(), [_v2()], [_v3()], [_v4()]
+
+    calls = {"speech": 0, "stt": 0}
+
+    class Speech:
+        async def generate_directed_speech(self, **_kwargs):
+            calls["speech"] += 1
+            return SimpleNamespace(content=_wav(48000))
+
+    async def stt(item, *, output, run_dir, stt_client):
+        calls["stt"] += 1
+        if calls["stt"] <= 2:
+            raise OpenAISttError("simulated invalid timestamp")
+        folder = run_dir / "blocks" / "block_1"
+        path = folder / "stt.json"
+        path.write_text(json.dumps({
+            "model": stt_client.model, "source_audio_sha256": item["sha256"],
+            "words": [{"word": "Hola", "start": 0.0, "end": 0.05}],
+        }), encoding="utf-8")
+        return {
+            **item, "stt": {
+                "file": path.relative_to(output).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "model": stt_client.model, "word_count": 1,
+            },
+        }
+
+    def join(paths, destination):
+        assert len(paths) == 1
+        destination.write_bytes(_wav(48000))
+        return {
+            "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "format": "wav", "bytes": destination.stat().st_size,
+            "duration_seconds": 0.1, "block_start_seconds": [0.0],
+            "block_end_seconds": [0.1], "block_durations_seconds": [0.1],
+        }
+
+    monkeypatch.setattr(pv, "plan_professional_voice", plan)
+    monkeypatch.setattr(pv, "_transcribe_block", stt)
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    args = dict(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=object(), model="test",
+        gemini_api_key="test", voice_id="Algenib",
+        source_sha256="a" * 64, speech_provider=Speech(),
+        stt_client=SimpleNamespace(model="whisper-1"),
+    )
+    for nonce in ("", "second-nonce"):
+        with pytest.raises(pv.VoicePlanError, match="1 incomplete blocks"):
+            asyncio.run(pv.generate_professional_audio(
+                **args, generation_nonce=nonce,
+            ))
+    pending = sorted(tmp_path.glob("audio/runs/gemini-*/task.json"))
+    assert len(pending) == 2
+    assert calls == {"speech": 2, "stt": 2}
+
+    artifact = asyncio.run(pv.generate_professional_audio(
+        **args, resume_pending_tasks=pending,
+    ))
+    assert artifact["status"] == "completed"
+    assert artifact["stt_complete"] is True
+    assert calls == {"speech": 2, "stt": 3}
+    assert len(list(tmp_path.glob("audio/runs/gemini-*/task.json"))) == 2
+    assert all(task.is_file() for task in pending)
+
+
 def test_failed_gemini_block_is_retryable_without_unknown_state(tmp_path, monkeypatch):
     async def plan(**_):
         return _v1(), [_v2()], [_v3()], [_v4()]

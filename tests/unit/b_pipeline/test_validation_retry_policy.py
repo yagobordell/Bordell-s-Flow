@@ -1,4 +1,4 @@
-"""Regression tests for contextual retry budgets and per-block isolation."""
+"""Regression tests for contextual retry budgets and global stage isolation."""
 import asyncio
 import json
 from collections import Counter
@@ -10,7 +10,8 @@ from ai_video_factory.bots.contracts import (
     B2Output,
     B11Output,
     B12Output,
-    ProfessionalB2Output,
+    WholeB12Output,
+    WholeProfessionalB2Output,
 )
 from ai_video_factory.bots.workflow import BPipelineValidationError, run_b_pipeline
 
@@ -102,31 +103,34 @@ class OneInvalidB12:
         self.calls = Counter()
 
     async def generate_structured(self, **kwargs):
+        assert kwargs["output_type"] is WholeB12Output
         data = json.loads(kwargs["input_text"])
-        block_id = data["current_block_id"]
-        self.calls[block_id] += 1
-        beat = data["blocks"][0]["text"]
-        return B12Output.model_validate({
-            "pipeline_stage": "B1.2", "block_id": block_id,
-            "beats": [{
-                "beat_id": (
-                    "1X" if block_id == 1 and self.calls[block_id] == 1
-                    else f"{block_id}A"
-                ),
-                "text": beat, "beat_type": "claim",
-            }],
+        self.calls["whole"] += 1
+        return WholeB12Output.model_validate({
+            "pipeline_stage": "B1.2",
+            "narrative_core": data["narrative_core"],
+            "blocks": [{
+                "block_id": block["block_id"],
+                "beats": [{
+                    "beat_id": (
+                        "1X" if block["block_id"] == 1 and self.calls["whole"] == 1
+                        else f"{block['block_id']}A"
+                    ),
+                    "text": block["text"], "beat_type": "claim",
+                }],
+            } for block in data["blocks"]],
             "error": None,
         })
 
 
-def test_b12_retries_only_the_invalid_block() -> None:
+def test_b12_retries_the_complete_video_after_invalid_block() -> None:
     provider = OneInvalidB12()
     result = asyncio.run(run_b_pipeline(
         SOURCE, provider=provider,
         start_from="B1.2", stop_after="B1.2",
         previous_b11=valid_b11(),
     ))
-    assert provider.calls == {1: 2, 2: 1}
+    assert provider.calls == {"whole": 2}
     assert len(result.b12) == 2
 
 
@@ -160,7 +164,7 @@ class TwoBadB2:
         })
 
 
-@pytest.mark.parametrize("model", [B2Output, ProfessionalB2Output])
+@pytest.mark.parametrize("model", [B2Output, WholeProfessionalB2Output])
 def test_b2_styles_can_repair_a_schema_failure_twice(model) -> None:
     script = SOURCE
     b11 = one_block_b11()
@@ -200,45 +204,48 @@ def test_b2_styles_can_repair_a_schema_failure_twice(model) -> None:
     provider = BrokenThenFixed(model)
     result = asyncio.run(run_b_pipeline(
         script, provider=provider, visual_style=(
-            "profesional" if model is ProfessionalB2Output else "casero"
-        ), avatar_image=b"png" if model is ProfessionalB2Output else None,
+            "profesional" if model is WholeProfessionalB2Output else "casero"
+        ), avatar_image=b"png" if model is WholeProfessionalB2Output else None,
         start_from="B2", previous_b11=b11, previous_b12=(b12,),
     ))
     assert provider.calls[1] == 3
     assert result.b2[0].blocks[0].beats[0].visual_type == "avatar"
 
 
-def test_failed_parallel_b12_wave_preserves_successful_block_for_resume() -> None:
+def test_failed_whole_b12_never_persists_a_partial_segmentation() -> None:
     class AlwaysBad(OneInvalidB12):
         async def generate_structured(self, **kwargs):
             data = json.loads(kwargs["input_text"])
-            block_id = data["current_block_id"]
-            self.calls[block_id] += 1
-            return B12Output.model_validate({
-                "pipeline_stage": "B1.2", "block_id": block_id,
-                "beats": [{
-                    "beat_id": "1X" if block_id == 1 else "2A",
-                    "text": data["blocks"][0]["text"], "beat_type": "claim",
-                }],
+            self.calls["whole"] += 1
+            return WholeB12Output.model_validate({
+                "pipeline_stage": "B1.2",
+                "narrative_core": data["narrative_core"],
+                "blocks": [{
+                    "block_id": block["block_id"],
+                    "beats": [{
+                        "beat_id": "1X" if block["block_id"] == 1 else "2A",
+                        "text": block["text"], "beat_type": "claim",
+                    }],
+                } for block in data["blocks"]],
                 "error": None,
             })
 
     provider = AlwaysBad()
     saved = {}
-    with pytest.raises(BPipelineValidationError, match="after 2 retries"):
+    with pytest.raises(BPipelineValidationError, match="after 2 targeted retries each"):
         asyncio.run(run_b_pipeline(
             SOURCE, provider=provider, start_from="B1.2", stop_after="B1.2",
             previous_b11=valid_b11(),
             on_output=lambda stage, block_id, payload: saved.update({
-                block_id: B12Output.model_validate(payload),
+                (stage, block_id): payload,
             }),
         ))
-    assert provider.calls == {1: 3, 2: 1}
-    assert set(saved) == {2}
+    assert provider.calls == {"whole": 3}
+    assert saved == {}
     recovering = OneInvalidB12()
     complete = asyncio.run(run_b_pipeline(
         SOURCE, provider=recovering, start_from="B1.2", stop_after="B1.2",
-        previous_b11=valid_b11(), previous_partial_b12=saved,
+        previous_b11=valid_b11(), previous_partial_b12={},
     ))
     assert len(complete.b12) == 2
-    assert recovering.calls == {1: 2}
+    assert recovering.calls == {"whole": 2}

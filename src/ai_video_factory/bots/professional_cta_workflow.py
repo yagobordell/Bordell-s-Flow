@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import copy
 import json
-import re
 from collections.abc import Callable
 from importlib.resources import files
 from typing import Any
@@ -22,13 +21,20 @@ from ai_video_factory.bots.professional_cta import (
     ProfessionalCTAVisuals,
 )
 from ai_video_factory.bots.validation_retries import MAX_VALIDATION_RETRIES
+from ai_video_factory.providers.grid_numbering import (
+    GridMarker,
+    parse_grid_marker,
+    reflow_lettered_groups_at_cta_boundaries,
+)
 
 
 def prompt_instructions(name: str) -> str:
     return files("ai_video_factory.bots.prompts").joinpath(name).read_text(encoding="utf-8")
 
 
-_NUMBERED = re.compile(r"^\s*(?:[1-9]|1[0-8])\.\s+(.+)$", re.DOTALL)
+def _legacy_grid_marker(prompt: object) -> GridMarker | None:
+    marker = parse_grid_marker(prompt)
+    return marker if marker is not None and marker.style == "legacy" else None
 
 
 def validate_cta_detection(
@@ -91,27 +97,29 @@ def _reflow_numbered_cta_edges(block: dict[str, Any]) -> None:
         nonlocal pending
         if pending:
             for index, beat in enumerate(pending, 1):
-                matched = _NUMBERED.match(beat["prompt"])
-                if matched is None:
+                marker = _legacy_grid_marker(beat["prompt"])
+                if marker is None:
                     raise ValueError("Invalid numbered CTA grid")
                 beat["prompt"] = (
-                    f"{index}. {matched.group(1).strip()}" if len(pending) > 1
-                    else matched.group(1).strip()
+                    f"{index}. {marker.body.strip()}" if len(pending) > 1
+                    else marker.body.strip()
                 )
             pending = []
 
     for beat in block["beats"]:
         prompt = beat.get("prompt")
+        marker = _legacy_grid_marker(prompt)
         group = beat.get("cta_group_id")
         if (
-            not isinstance(prompt, str) or _NUMBERED.match(prompt) is None
+            marker is None
             or (pending and group != previous_group)
         ):
             finish()
-        if isinstance(prompt, str) and _NUMBERED.match(prompt) is not None:
+        if marker is not None:
             pending.append(beat)
         previous_group = group
     finish()
+    reflow_lettered_groups_at_cta_boundaries(block)
 
 
 def apply_cta_visuals(
@@ -206,6 +214,7 @@ async def direct_professional_cta(
     on_api_response: Callable[..., None] | None = None,
     on_call_duration: Callable[..., None] | None = None,
     correction: str = "",
+    previous_visuals: dict[str, ProfessionalCTAVisualBeat] | None = None,
 ) -> dict[str, ProfessionalCTAVisualBeat]:
     from time import perf_counter
 
@@ -223,24 +232,31 @@ async def direct_professional_cta(
         },
         "references": ["presenter", "ebook"],
     }
+    if previous_visuals:
+        payload["previous_visuals"] = [
+            previous_visuals[beat_id].model_dump()
+            for beat_id in beat_ids if beat_id in previous_visuals
+        ]
     images = [
         "data:image/png;base64," + base64.b64encode(image).decode("ascii")
         for image in (presenter, ebook)
     ]
     error_detail = correction
     stage = "B2 CTA"
-    for attempt in range(MAX_VALIDATION_RETRIES + 1):
+    for _attempt in range(MAX_VALIDATION_RETRIES + 1):
+        request_payload = (
+            {**payload, "validation_feedback": error_detail}
+            if error_detail else payload
+        )
         if on_input is not None:
-            on_input(stage, group_id, payload if attempt == 0 else {
-                **payload, "validation_feedback": error_detail,
-            })
+            on_input(stage, group_id, request_payload)
         started = perf_counter()
         async with semaphore:
             response, raw = await provider.generate_structured_with_response(
                 model=model,
                 instructions=prompt_instructions("b2_cta_professional.md")
-                + ("\n\nRepair: " + error_detail if error_detail else ""),
-                input_text=json.dumps(payload, ensure_ascii=False),
+                + ("\n\nRequired correction: " + error_detail if error_detail else ""),
+                input_text=json.dumps(request_payload, ensure_ascii=False),
                 input_image_urls=images,
                 output_type=ProfessionalCTAVisuals,
             )

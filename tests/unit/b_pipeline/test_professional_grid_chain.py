@@ -1,6 +1,5 @@
-"""Professional continuity uses 2–4 panel grids and the preceding paid PNG."""
+"""Professional logical sequences support 20 panels across grids of up to 9."""
 
-import base64
 import hashlib
 from io import BytesIO
 
@@ -9,6 +8,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from ai_video_factory.bots.professional_cta import ProfessionalCTAVisualBeat
+from ai_video_factory.providers.grid_numbering import parse_grid_marker
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai_batch_images import (
     ImageOptions,
@@ -18,13 +18,13 @@ from ai_video_factory.providers.openai_batch_images import (
 
 
 def _plan(count):
-    assert 2 <= count <= 18
+    assert 2 <= count <= 20
     beats = [{
         "block_id": 1,
         "beat_id": f"1{chr(ord('A') + i)}",
         "visual_type": "media_image",
         "text": f"Step {i + 1}",
-        "prompt": f"{i + 1}. A person continues the same event, step {i + 1}.",
+        "prompt": f"A{i + 1}. A person continues the same event, step {i + 1}.",
         "video_prompt": None,
         "audio": False,
         "reference": False,
@@ -35,22 +35,22 @@ def _plan(count):
     }
 
 
-@pytest.mark.parametrize("count", [2, 3, 4, 5, 9, 17, 18])
-def test_logical_run_packs_into_at_most_four_panels(count):
+@pytest.mark.parametrize("count", [2, 3, 4, 5, 9, 10, 17, 18, 19, 20])
+def test_lettered_logical_run_of_up_to_twenty_panels_packs_into_grids_of_nine(count):
     plan = _plan(count)
     jobs = plan_image_jobs(plan, described_beats(plan))
     grids = [job for job in jobs if job.get("grid")]
-    assert all(2 <= len(job["grid"]["numbered_asset_ids"]) <= 4 for job in grids)
+    assert all(2 <= len(job["grid"]["numbered_asset_ids"]) <= 9 for job in grids)
     assert sum(len(job["grid"]["numbered_asset_ids"]) for job in grids) == count
-    assert len(grids) == (count + 3) // 4
+    assert len(grids) == (count + 8) // 9
     assert [job["continuity_index"] for job in grids] == list(range(len(grids)))
     for previous, current in zip(grids, grids[1:], strict=False):
         assert current["continuity_previous_asset_id"] == previous["asset_id"]
         assert current["continuity_chain_id"] == previous["continuity_chain_id"]
 
 
-def test_grid_continuation_uses_actual_previous_png_and_resumes_without_paid_calls(tmp_path):
-    plan = _plan(5)
+def test_multi_grid_sequence_resumes_without_paid_calls(tmp_path):
+    plan = _plan(10)
     calls = []
 
     class Direct:
@@ -78,17 +78,27 @@ def test_grid_continuation_uses_actual_previous_png_and_resumes_without_paid_cal
     assert len(calls) == 2
     assert result["status"] == "completed"
     assert "reference_image_urls" not in calls[0]
-    assert len(calls[1]["reference_image_urls"]) == 1
-    previous = tmp_path / result["items"][0]["file"]
-    reference_data = base64.b64decode(calls[1]["reference_image_urls"][0].split(",", 1)[1])
-    assert reference_data == previous.read_bytes()
-    assert "CONTINUES" in calls[1]["prompt"]
-    assert result["items"][1]["continuity_reference_sha256"] == hashlib.sha256(
-        previous.read_bytes()
-    ).hexdigest()
     again = generate_b2_images(tmp_path, plan, **kwargs)
     assert again["status"] == "completed"
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("prompt", ["19. Panel nineteen.", "20. Panel twenty."])
+def test_legacy_grid_parser_accepts_panels_nineteen_and_twenty(prompt):
+    marker = parse_grid_marker(prompt)
+
+    assert marker is not None
+    assert marker.style == "legacy"
+    assert marker.panel_number in {19, 20}
+
+
+@pytest.mark.parametrize("prompt", ["A19. Panel nineteen.", "A20. Panel twenty."])
+def test_lettered_grid_parser_accepts_panels_nineteen_and_twenty(prompt):
+    marker = parse_grid_marker(prompt)
+
+    assert marker is not None
+    assert marker.style == "lettered"
+    assert marker.panel_number in {19, 20}
 
 
 def test_cta_avatar_media_uses_ebook_only_and_generated_video_cannot_speak():

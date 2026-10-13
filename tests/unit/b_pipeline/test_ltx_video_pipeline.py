@@ -705,6 +705,12 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     )
 
     assert result["status"] == "completed"
+    assert all(
+        set(item["transfer_timings_seconds"]) == {
+            "wait_for_result", "mp4_download", "mp4_verification",
+        }
+        for item in result["jobs"]
+    )
     assert [kind for kind, _job_id in events[:3]] == ["submit", "submit", "submit"]
     assert [kind for kind, _job_id in events[3:]] == ["execute", "execute", "execute"]
     assert {job_id for kind, job_id in events if kind == "submit"} == {
@@ -1135,6 +1141,8 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plan, audio, images = _case(tmp_path, monkeypatch)
+    audio["provider"] = "gemini"
+    audio["voice_source"] = "gemini"
     source = tmp_path / "worker-with-embedded-audio.mp4"
     subprocess.run([
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
@@ -1203,7 +1211,16 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert result["i2v_jobs"] == 1
     assert result["a2v_jobs"] == 2
     assert result["beat_count"] == 6
-    assert result["audio_source"] == "original_fish_pcm_master_only"
+    assert result["audio_source"] == "verified_original_pcm_master_only"
+    assert result["audio_provider"] == "gemini"
+    assert result["voice_source"] == "gemini"
+    timing = result["composition_timings_seconds"]
+    assert set(timing) == {
+        "segment_preparation", "final_encoding",
+        "final_verification", "composition_total",
+    }
+    assert all(value >= 0 for value in timing.values())
+    assert timing["composition_total"] >= timing["final_encoding"]
     assert len(submitted) == 3
     assert len([key for key in input_names if "/audio/" in key]) == 2
     assert _sha(tmp_path / result["file"]) == result["sha256"]
