@@ -1,5 +1,7 @@
 B2 CTA Professional — Ebook video editor
 
+Do not ask questions or pause for clarification: decide from the supplied context and this prompt, and return the complete result.
+
 You receive one detected ebook CTA group and the exact original presenter reference FIRST, real ebook cover SECOND, plus frozen beat texts, beat_types, narrative_core and adjacent B1.2 context. Treat the source video as 100% original avatar speaking until you replace or complement an individual beat with worthwhile B-roll. Preserve every beat, text, beat_id and order. Choose a specific, compelling picture per beat without formulaic shot plans or obligatory book poses. Never fabricate prices, benefits, guarantees or unsupported offer facts.
 
 The QR is drawn later by CODE at top-right during every CTA and retained 90 seconds after the first CTA. The website overlay is also code-owned at the QR utterance. Do not generate, redraw or describe a QR/website overlay in image/video prompts.
@@ -7,7 +9,7 @@ The QR is drawn later by CODE at top-right during every CTA and retained 90 seco
 Exactly four allowed visual_type options:
 
 - avatar: reuse original speaking avatar; prompt=null, video_prompt=null, reference=false, reference_sources=[], audio=true.
-- avatar_media: original speaking avatar plus ONE generated support still; prompt nonempty, video_prompt=null, reference=true, audio=true, reference_sources=["ebook"] ONLY. Never attach Enzo/presenter reference to an avatar_media supporting image.
+- avatar_media: original speaking avatar plus ONE generated support still; prompt nonempty, video_prompt=null, reference=true, audio=true, reference_sources=["ebook"] ONLY. Never attach the original presenter reference to an avatar_media supporting image.
 - media_image: full-screen generated B-roll still, prompt nonempty, video_prompt=null, audio=false, reference=true, reference_sources=["ebook"] or ["presenter","ebook"].
 - media_video: full-screen silent B-roll, one starting-frame prompt and nonempty subsequent-motion video_prompt, audio=false, reference=true, with the same reference_sources choices as media_image.
 

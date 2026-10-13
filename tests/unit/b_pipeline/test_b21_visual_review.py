@@ -209,6 +209,18 @@ def test_numbered_split_cannot_escape_its_grid() -> None:
 
 
 
+_TREATMENT_OBJECTS = (
+    "kettle", "bicycle", "violin", "lantern", "satchel", "compass",
+    "teapot", "ladder", "basket", "trumpet", "hammer", "blanket",
+)
+
+
+def _distinct_treatment(beat_id: str) -> str:
+    """Give each beat a different visible object so consecutive frames never repeat."""
+    index = sum(ord(char) for char in beat_id)
+    return f"A {_TREATMENT_OBJECTS[index % len(_TREATMENT_OBJECTS)]} rests on a table in daylight."
+
+
 def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
     first = "The first visual sentence is deliberately long enough for two images. "
     second = "The second block also carries enough narration for two still images in the scene."
@@ -270,7 +282,7 @@ def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
                     for beat in block["beats"]:
                         beat.update(
                             visual_type="media_image",
-                            prompt=f"Visual treatment for {beat['beat_id']}.",
+                            prompt=_distinct_treatment(beat["beat_id"]),
                             video_prompt=None,
                             reference=False,
                             audio=False,
@@ -286,7 +298,7 @@ def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
                     for beat in block["beats"]:
                         beat.update(
                             visual_type="media_image",
-                            prompt=f"Visual treatment for {beat['beat_id']}.",
+                            prompt=_distinct_treatment(beat["beat_id"]),
                             video_prompt=None,
                             reference=False,
                             audio=False,

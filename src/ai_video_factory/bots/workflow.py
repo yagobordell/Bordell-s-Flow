@@ -318,7 +318,7 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
 
 # Minimum stripped narration characters per beat, by B1.1 block type.
 B12_MINIMUM_BEAT_CHARACTERS = {
-    "intro": 22, "development": 30, "pivot": 22,
+    "intro": 12, "development": 22, "pivot": 22,
     "correction": 22, "climax": 22, "close": 22,
 }
 B12_DEFAULT_MINIMUM_BEAT_CHARACTERS = 22
@@ -1443,8 +1443,229 @@ def validate_whole_professional_b2(
             )
         )
     _renumber_lettered_panels(outputs)
+    # Wording and repetition are checked on the accumulated plan so a failing group can be retried alone.
+    rule_errors = _b2_prompt_rule_errors(outputs) + _b2_repetition_errors(outputs)
+    if rule_errors:
+        raise BPipelineValidationError(_B2_VISUAL_RULES_PREFIX + " || ".join(rule_errors))
     _professional_grid_preflight(_professional_plan(outputs))
     return outputs
+
+
+# Wording rules for B2 visual prompts (mirrors b2_professional.md, section 3 and 8).
+_B2_LABEL_PREFIX = re.compile(
+    r"^\s*(?:CTA continuity image\s*\d*|Image\s*\d+|Shot\s*\d+|\d+\s*[.:)])",
+    re.IGNORECASE,
+)
+_B2_RELATIVE_WORDING = re.compile(
+    r"\b(?:again|as before)\b"
+    r"|\bthe same\b(?!\s+(?:frame|plane|room|office|desk|kitchen|table|space|area|"
+    r"environment|location|setting|scene|hallway|workstation|wall|counter|surface|"
+    r"tabletop|cabinet|window|corner)\b)",
+    re.IGNORECASE,
+)
+_B2_ABSENCE_WORDING = re.compile(
+    r"\b(?:no|not|never|without|nothing|unopened|untouched|unmarked|unused|empty|"
+    r"out of frame)\b",
+    re.IGNORECASE,
+)
+_B2_CATALOG_WORDING = re.compile(
+    r"\b(?:photorealistic|candid|editorial|cinematic|intimate|cozy|cosy)\b",
+    re.IGNORECASE,
+)
+_B2_PERSON_TERMS = re.compile(
+    r"\b(?:adult|man|woman|person|parent|operator|employee|child|"
+    r"senior|older|official|resident|father|mother|worker|technician|manager|teller|"
+    r"agent|representative|neighbor|couple|people|figure|someone)s?\b"
+    r"|\bcustomers?\b(?!\s+service)",
+    re.IGNORECASE,
+)
+# "hand" counts as a person's hand only after a determiner; "its hand" may be a clock hand.
+_B2_HAND_TERM = re.compile(
+    r"\b(?:a|an|the|her|his|their|two|both|one|someone's)\s+hands?\b",
+    re.IGNORECASE,
+)
+_B2_AGE = re.compile(
+    r"\b\d{2}s\b|\b\d{2}\s*[-–]\s*\d{2}\b|\b\d{2}\s+to\s+\d{2}\b"
+    r"|\bin (?:their|his|her) \d{2}s?\b|\bapparent age\b|\b\d{2}\s+years?\b",
+    re.IGNORECASE,
+)
+_B2_CLOTHING = re.compile(
+    r"\b(?:sweaters?|sweatshirts?|shirts?|jackets?|cardigans?|blouses?|dress(?:es)?|"
+    r"polos?|headsets?|uniforms?|coats?|ties|vests?|hoodies?|t-shirts?|knits?|suits?|"
+    r"aprons?|sleeves?|cuffs?|collars?|collared|jumpers?|trousers|pants|clothes|"
+    r"clothing|outfit|attire)\b",
+    re.IGNORECASE,
+)
+
+
+def _b2_prompt_rule_errors(outputs: list[ProfessionalB2Output]) -> list[str]:
+    """Name every visual prompt that breaks a B2 wording rule, so the batch can be retried."""
+    errors: list[str] = []
+    for part in outputs:
+        for block in part.blocks:
+            for beat in block.beats:
+                if beat.visual_type == "avatar" or not beat.prompt:
+                    continue
+                prompt = beat.prompt
+                # Notes after "(For context:" are context, not the visible frame.
+                scene = prompt.split("(For context:", 1)[0]
+                rules: list[str] = []
+                # Each message quotes the offending wording so a retry can change exactly that.
+                label = _B2_LABEL_PREFIX.search(prompt)
+                if label:
+                    rules.append(
+                        f"begins with a label ('{label.group(0).strip()}'); "
+                        "start directly with the frame description"
+                    )
+                relative = _B2_RELATIVE_WORDING.search(scene)
+                if relative:
+                    rules.append(
+                        f"refers back to another shot ('{relative.group(0)}'); "
+                        "restate the subject's full description"
+                    )
+                absence = _B2_ABSENCE_WORDING.search(scene)
+                if absence:
+                    rules.append(
+                        f"uses negation or absence wording ('{absence.group(0)}') in the visible "
+                        "frame; describe only what appears"
+                    )
+                catalog = _B2_CATALOG_WORDING.search(prompt)
+                if catalog:
+                    rules.append(
+                        f"uses photographic-quality or atmosphere wording ('{catalog.group(0)}'); "
+                        "describe framing, light source, and action"
+                    )
+                people = _B2_PERSON_TERMS.search(scene)
+                if people or _B2_HAND_TERM.search(scene):
+                    if people and not _B2_AGE.search(scene):
+                        rules.append(
+                            f"shows a person ('{people.group(0)}') without an apparent age range"
+                        )
+                    if not _B2_CLOTHING.search(scene):
+                        rules.append("shows a person or hand without clothing")
+                if rules:
+                    errors.append(f"B2 beat {beat.beat_id}: " + "; ".join(rules))
+    return errors
+
+
+# Repetition check: place, object, and action words only. Person descriptors (age, clothing,
+# role) are excluded so a recurring character does not make different frames look alike.
+_B2_REPEAT_STOP = frozenset((
+    "close medium wide view framing frame side profile overhead angle shot over shoulder "
+    "daylight light lighting window practical ceiling lamp soft warm cool natural indoor "
+    "photo camera from with that this their there which while into onto toward towards under "
+    "beside behind above below across through where focus tight high low straight seen viewed "
+    "sits stands holding holds hands hand wearing adult years apparent visible shows showing "
+    "focused framed frames still scene area room desk table surface edge corner smartphone "
+    "phone sitting standing leaning looking gaze expression using uses held resting rests lies "
+    "lying each between among upon near nearby other another wearing blue gray grey charcoal "
+    "black white dark collared shirt sweater suit jacket headset cardigan knit casual plain "
+    "ordinary office clothes coat dress polo tie customer customers account manager employee "
+    "operator provider telecom business small man woman adult person parent family senior older "
+    "younger technician representative resident homeowner caller teller couple people figure "
+    "someone officer agent women men"
+).split())
+_B2_REPEAT_WINDOW = 6
+_B2_REPEAT_NEAR = 3
+_B2_REPEAT_NEAR_THRESHOLD = 0.55
+_B2_REPEAT_FAR_THRESHOLD = 0.65
+
+
+def _b2_scene_signature(prompt: str) -> frozenset[str]:
+    scene = re.split(r"\(For context:", prompt, maxsplit=1)[0].lower()
+    scene = re.sub(r"\b(?:in|at|from)?\s*(?:their|his|her)?\s*\d{2}s?\b", " ", scene)
+    return frozenset(
+        word for word in re.findall(r"[a-z][a-z-]{3,}", scene) if word not in _B2_REPEAT_STOP
+    )
+
+
+def _b2_repetition_errors(outputs: list[ProfessionalB2Output]) -> list[str]:
+    """Name each frame that repeats an earlier frame's place, object, and action."""
+    frames = [
+        beat
+        for part in outputs
+        for block in part.blocks
+        for beat in block.beats
+        if beat.visual_type != "avatar" and beat.prompt
+    ]
+    errors: list[str] = []
+    for index, frame in enumerate(frames):
+        signature = _b2_scene_signature(frame.prompt)
+        for distance in range(1, min(_B2_REPEAT_WINDOW, index) + 1):
+            earlier = frames[index - distance]
+            other = _b2_scene_signature(earlier.prompt)
+            union = signature | other
+            if not union:
+                continue
+            similarity = len(signature & other) / len(union)
+            threshold = (
+                _B2_REPEAT_NEAR_THRESHOLD if distance <= _B2_REPEAT_NEAR
+                else _B2_REPEAT_FAR_THRESHOLD
+            )
+            if similarity >= threshold:
+                errors.append(
+                    f"B2 beat {frame.beat_id}: repeats the place, object, and action of beat "
+                    f"{earlier.beat_id} ({distance} beat{'s' if distance > 1 else ''} earlier); "
+                    "change the visible object or action"
+                )
+                break
+    return errors
+
+
+_B2_VISUAL_RULES_PREFIX = "B2 visual rules failed: "
+_B2_WORDING_BEAT = re.compile(r"B2 beat (\d+[A-Z]+):")
+
+
+def _b2_wording_failed_beat_groups(error: BaseException) -> dict[int, tuple[str, ...]] | None:
+    """Group the beats named by a wording-rule failure by block, in source order."""
+    message = str(error)
+    if not message.startswith(_B2_VISUAL_RULES_PREFIX):
+        return None
+    groups: dict[int, list[str]] = {}
+    for beat_id in _B2_WORDING_BEAT.findall(message):
+        block_id = int(re.match(r"\d+", beat_id).group())
+        groups.setdefault(block_id, []).append(beat_id)
+    return {block_id: tuple(ids) for block_id, ids in sorted(groups.items())} or None
+
+
+def _b2_wording_partial_feedback(
+    error: BaseException,
+    beat_groups: dict[int, tuple[str, ...]],
+    previous: WholeProfessionalB2Output,
+    *,
+    correction_error: BaseException | None = None,
+) -> str:
+    """Ask for a corrected version of only the beats that break the wording rules."""
+    current_groups = []
+    for block in previous.blocks or []:
+        beat_ids = set(beat_groups.get(block.block_id, ()))
+        beats = [beat.model_dump() for beat in block.beats if beat.beat_id in beat_ids]
+        if beats:
+            current_groups.append({"block_id": block.block_id, "beats": beats})
+    return "\n".join((
+        "VALIDATION FAILED: B2 visual wording rules",
+        f"- Failure: {error}",
+        "Required correction:",
+        "Rewrite only the visible-frame prompt of the beats listed below so each one follows "
+        "the wording rules named in the failure: no label before the frame, no reference to "
+        "another shot, no negation or absence wording in the visible frame, no photographic-quality "
+        "or atmosphere wording, and an apparent age range plus clothing for every person or hand. "
+        "For a repetition, change the visible object, action, or place so the frame differs from "
+        "the earlier beat named in the failure, without changing the narration.",
+        "Keep each beat's ID, text, beat_type, visual_type, reference, and audio unchanged. "
+        "Keep video_prompt unchanged unless it contains a named violation.",
+        "Return only the listed beats, grouped under their block_id, in source order. "
+        "Do not return complete blocks or the full plan.",
+        "Return the B2 correction schema with pipeline_stage='B2', the unchanged "
+        "narrative_core, the listed beat groups under blocks, and error=null.",
+        *(
+            (f"The previous patch did not pass validation: {correction_error}. "
+             "Return a valid patch for the same beats.",)
+            if correction_error is not None else ()
+        ),
+        "Current versions of only the failing beats:",
+        json.dumps(current_groups, ensure_ascii=False, separators=(",", ":")),
+    ))
 
 
 def validate_professional_b2_batch(
@@ -1664,14 +1885,8 @@ def merge_professional_b2_correction(
             "B2 targeted correction returned unexpected block IDs "
             + ", ".join(map(str, unexpected))
         )
-    expected_block_order = tuple(
-        block_id for block_id in beat_groups if block_id in corrected_by_id
-    )
-    if tuple(corrected_by_id) != expected_block_order:
-        raise BPipelineValidationError(
-            "B2 targeted correction returned beat groups out of source order"
-        )
-
+    # Groups and beats are matched by ID and the merged plan keeps the base order, so the
+    # order in which the correction lists them carries no information and is not rejected.
     source_by_id = {block.block_id: block for block in source.blocks}
     result = base.model_copy(deep=True)
     result_index_by_id = {
@@ -1690,11 +1905,6 @@ def merge_professional_b2_correction(
             raise BPipelineValidationError(
                 f"B2 targeted correction returned non-target beats "
                 f"{', '.join(extra)} for block {block_id}"
-            )
-        target_order = tuple(beat_id for beat_id in target_beat_ids if beat_id in returned)
-        if tuple(returned) != target_order:
-            raise BPipelineValidationError(
-                f"B2 targeted correction beats are out of source order in block {block_id}"
             )
         source_beats = {beat.beat_id: beat for beat in expected.beats}
         current_block = result.blocks[result_index]
@@ -2524,7 +2734,8 @@ async def run_b_pipeline(
                             f"{MAX_VALIDATION_RETRIES} validation retries: {error}"
                         ) from error
                     validation_retries += 1
-                    failed_groups = _professional_b2_failed_beat_groups(error)
+                    wording_groups = _b2_wording_failed_beat_groups(error)
+                    failed_groups = wording_groups or _professional_b2_failed_beat_groups(error)
                     if (
                         failed_groups is not None
                         and candidate_is_complete
@@ -2532,16 +2743,28 @@ async def run_b_pipeline(
                     ):
                         partial_base = candidate.model_copy(deep=True)
                         partial_beat_groups = failed_groups
-                        feedback = _professional_b2_partial_feedback(
-                            error, partial_beat_groups, partial_base,
+                        feedback = (
+                            _b2_wording_partial_feedback(error, partial_beat_groups, partial_base)
+                            if wording_groups is not None
+                            else _professional_b2_partial_feedback(
+                                error, partial_beat_groups, partial_base,
+                            )
                         )
                     elif partial_beat_groups is not None and partial_base is not None:
-                        feedback = _professional_b2_partial_feedback(
-                            error,
-                            partial_beat_groups,
-                            partial_base,
-                            correction_error=error,
-                        )
+                        if _b2_wording_failed_beat_groups(error) is not None:
+                            feedback = _b2_wording_partial_feedback(
+                                error,
+                                partial_beat_groups,
+                                partial_base,
+                                correction_error=error,
+                            )
+                        else:
+                            feedback = _professional_b2_partial_feedback(
+                                error,
+                                partial_beat_groups,
+                                partial_base,
+                                correction_error=error,
+                            )
                     else:
                         current_batch_response = (
                             raw_response

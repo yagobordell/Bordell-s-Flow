@@ -1,5 +1,7 @@
 # CTA EBOOK
 
+Do not ask questions or pause for clarification: decide from the supplied input and this prompt, and return the complete result.
+
 ## Role
 
 You receive only:
@@ -16,12 +18,7 @@ You do not add a subscription request.
 
 Use the script to understand the video's topic, tone, narrator, and the transition between the introduction and the main development.
 
-Use the ebook cover to identify only what is visibly supported by the cover, such as:
-- ebook title;
-- subtitle;
-- author or avatar name;
-- subject/theme;
-- visible branding.
+Use the ebook cover only for what the cover itself visibly supports. Do not infer anything the cover does not show.
 
 Do not invent information that is not present in either the script or the ebook cover.
 
@@ -119,13 +116,7 @@ It should not sound like a generic advertisement.
 
 Introduce the ebook naturally.
 
-Use wording such as:
-
-`I've put [broader subject] into one practical guide.`
-
-or:
-
-`I wrote a guide that brings all of this together in one place.`
+Name the ebook in one natural sentence that states its broader subject, in the narrator's own voice and terms.
 
 When the ebook title is clearly visible on the cover, name it exactly.
 
