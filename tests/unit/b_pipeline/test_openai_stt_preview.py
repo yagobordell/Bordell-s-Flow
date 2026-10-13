@@ -255,7 +255,7 @@ def test_cached_stt_repairs_are_not_billed_twice(tmp_path: Path) -> None:
     assert persisted["source_audio_sha256"] == item["sha256"]
 
 
-def test_response_invalid_stt_resumes_same_wav_without_repeated_tts(
+def test_invalid_paid_stt_response_is_preserved_without_second_post(
     tmp_path: Path,
 ) -> None:
     audio = tmp_path / "audio.wav"
@@ -263,39 +263,106 @@ def test_response_invalid_stt_resumes_same_wav_without_repeated_tts(
     digest = _sha(audio)
     item = {"block_id": 1, "file": "audio.wav", "sha256": digest}
     run = tmp_path / "audio" / "runs" / "test"
-    (run / "blocks" / "block_1").mkdir(parents=True)
-    attempts = []
+    folder = run / "blocks" / "block_1"
+    folder.mkdir(parents=True)
+    calls = _FakeTranscriptions()
 
-    def response(**_kwargs):
-        attempts.append("stt")
-        if len(attempts) == 1:
-            return {"words": [
-                {"word": "x", "start": None, "end": None},
-            ]}
-        return {"words": [
-            {"word": "x", "start": 0.1, "end": 0.5},
-        ]}
+    def invalid(**_kwargs):
+        calls.calls += 1
+        return {"words": [{"word": None, "start": 0.1, "end": 0.3}]}
 
-    fake = _FakeTranscriptions()
-    fake.create = response
+    calls.create = invalid
     client = OpenAISttClient(client=SimpleNamespace(
-        audio=SimpleNamespace(transcriptions=fake),
+        audio=SimpleNamespace(transcriptions=calls),
     ))
-    with pytest.raises(OpenAISttError, match="Unrecoverable"):
-        asyncio.run(_transcribe_block(
-            item, output=tmp_path, run_dir=run, stt_client=client,
-        ))
-    request = run / "blocks" / "block_1" / "stt_request.json"
-    assert json.loads(request.read_text(encoding="utf-8"))["status"] == "response_invalid"
+    for _ in range(2):
+        with pytest.raises(OpenAISttError, match="non-text word"):
+            asyncio.run(_transcribe_block(
+                item, output=tmp_path, run_dir=run, stt_client=client,
+            ))
+    assert calls.calls == 1
+    raw = json.loads((folder / "stt_response.json").read_text(encoding="utf-8"))
+    assert raw["source_audio_sha256"] == digest
+    assert raw["response"]["words"][0]["word"] is None
+    request = json.loads((folder / "stt_request.json").read_text(encoding="utf-8"))
+    assert request["status"] == "response_invalid"
     assert _sha(audio) == digest
 
-    recovered = asyncio.run(_transcribe_block(
-        item, output=tmp_path, run_dir=run, stt_client=client,
+
+@pytest.mark.parametrize("blank", ["  ", "\t", "...", "—", "!?"])
+def test_whisper_nonlexical_word_is_skipped_and_reported(
+    tmp_path: Path, blank: str,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    calls.create = lambda **_kwargs: {"words": [
+        {"word": "Hola", "start": 0.1, "end": 0.3},
+        {"word": blank, "start": None, "end": None},
+        {"word": "mundo", "start": 0.4, "end": 0.7},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
     ))
-    assert recovered["stt"]["word_count"] == 1
-    assert json.loads(request.read_text(encoding="utf-8"))["status"] == "completed"
-    assert _sha(audio) == digest
-    assert attempts == ["stt", "stt"]
+    transcript = client.transcribe(audio)
+    assert [entry["word"] for entry in transcript["words"]] == ["Hola", "mundo"]
+    assert transcript["skipped_nonlexical_indices"] == [1]
+    assert [entry["start"] for entry in transcript["words"]] == [0.1, 0.4]
+
+
+def test_whisper_nonlexical_at_original_error_index_348(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    calls.create = lambda **_kwargs: {"words": [
+        *({"word": "Hola", "start": i / 1000, "end": (i + 1) / 1000}
+          for i in range(348)),
+        {"word": " ", "start": None, "end": None},
+        {"word": "mundo", "start": 0.35, "end": 0.37},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    transcript = client.transcribe(audio)
+    assert len(transcript["words"]) == 349
+    assert transcript["words"][-1]["word"] == "mundo"
+    assert transcript["skipped_nonlexical_indices"] == [348]
+
+
+@pytest.mark.parametrize("invalid", [None, 6, {"text": "mundo"}])
+def test_whisper_nontext_word_is_rejected_not_silently_dropped(
+    tmp_path: Path, invalid: object,
+) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    calls.create = lambda **_kwargs: {"words": [
+        {"word": "Hola", "start": 0.1, "end": 0.3},
+        {"word": invalid, "start": 0.4, "end": 0.7},
+    ]}
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    with pytest.raises(OpenAISttError, match="non-text word"):
+        client.transcribe(audio)
+
+
+def test_stt_raw_cache_rejects_changed_source_hash(tmp_path: Path) -> None:
+    audio = tmp_path / "audio.wav"
+    _wav(audio, 48000)
+    calls = _FakeTranscriptions()
+    client = OpenAISttClient(client=SimpleNamespace(
+        audio=SimpleNamespace(transcriptions=calls),
+    ))
+    checkpoint = tmp_path / "stt_response.json"
+    client.transcribe_durable(
+        audio, response_path=checkpoint, source_audio_sha256="first",
+    )
+    with pytest.raises(OpenAISttError, match="differs from source"):
+        client.transcribe_durable(
+            audio, response_path=checkpoint, source_audio_sha256="second",
+        )
+    assert calls.calls == 1
 
 
 def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -> None:
@@ -326,10 +393,12 @@ def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -
     state = json.loads(request.read_text(encoding="utf-8"))
     state["status"] = "request_started_unknown"
     request.write_text(json.dumps(state), encoding="utf-8")
-    with pytest.raises(FishAudioWorkflowError, match="reconcile"):
-        asyncio.run(_transcribe_block(
-            item, output=tmp_path, run_dir=run, stt_client=client
-        ))
+    # A complete raw provider response is safe to replay even if the task
+    # manifest was interrupted after the paid call.
+    restored = asyncio.run(_transcribe_block(
+        item, output=tmp_path, run_dir=run, stt_client=client,
+    ))
+    assert restored["stt"]["word_count"] == 1
     assert calls.calls == 1
 
 
