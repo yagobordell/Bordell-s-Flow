@@ -54,11 +54,11 @@ from ai_video_factory.bots.workflow import (
 )
 from ai_video_factory.compositor.static_preview import (
     StaticPreviewError,
+    StaticPreviewResourceError,
     SttAlignmentError,
     _verified_asset,
     build_stt_beat_timeline,
     generate_static_preview,
-    StaticPreviewResourceError,
 )
 from ai_video_factory.config import settings
 from ai_video_factory.inference.capacity_controller import (
