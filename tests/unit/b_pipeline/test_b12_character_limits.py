@@ -89,7 +89,7 @@ class RepairProvider:
 
 @pytest.mark.parametrize(
     ("length", "valid"),
-    [(1, True), (12, True), (13, True), (100, True), (101, False)],
+    [(1, True), (12, True), (13, True), (100, True), (119, True), (120, True), (121, False)],
 )
 def test_beat_character_boundaries(length: int, valid: bool) -> None:
     first = "x" * length + " "
@@ -104,9 +104,22 @@ def test_beat_character_boundaries(length: int, valid: bool) -> None:
 
 
 def test_character_count_ignores_only_boundary_whitespace() -> None:
-    first = " " * 3 + "x" * 100 + "\n\t"
+    first = " " * 3 + "x" * 120 + "\n\t"
     remaining = "La continuación explica otro hecho completo."
     assert validate_beats(_output(first, remaining), _block(first + remaining))
+
+
+@pytest.mark.parametrize(
+    "block_type", ["intro", "development", "pivot", "correction", "climax", "close"]
+)
+def test_short_beats_are_valid_in_every_block_type(block_type: str) -> None:
+    text = "A b Una frase breve y completa."
+    block = MaterializedBlock(
+        block_id=1, type=block_type,
+        emotional_entry="inicio", emotional_exit="fin", text=text,
+    )
+    beats = validate_beats(_output("A ", "b ", "Una frase breve y completa."), block)
+    assert [beat.text.strip() for beat in beats] == ["A", "b", "Una frase breve y completa."]
 
 
 def test_short_sole_beat_of_a_frozen_block_is_valid() -> None:
@@ -122,7 +135,7 @@ def test_short_beat_in_multibeat_block_is_not_rejected_by_character_count() -> N
 
 def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> None:
     script = FIRST + SECOND
-    assert len(script.strip()) > 100
+    assert len(script.strip()) > 120
     provider = RepairProvider(_output(script), _output(FIRST, SECOND))
     rejected = []
     metered = []
@@ -145,9 +158,9 @@ def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> N
     assert len(provider.calls) == len(metered) == 2
     assert [call[0] for call in rejected] == [0]
     assert [call[1] for call in rejected] == [1]
-    assert "maximum 100" in rejected[0][2]
+    assert "maximum 120" in rejected[0][2]
     assert "Correct only source block groups: 1." in provider.calls[1]["instructions"]
-    assert "at or below 40 words and 100 stripped" in provider.calls[1]["instructions"]
+    assert "at or below 40 words and 120 stripped" in provider.calls[1]["instructions"]
     assert "no minimum character count" in provider.calls[1]["instructions"]
     assert "13 characters" not in provider.calls[1]["instructions"]
     assert all(json.loads(call["input_text"])["blocks"][0]["text"] == script
@@ -177,7 +190,7 @@ def test_short_beat_does_not_trigger_character_repair() -> None:
     assert [beat.text.strip() for beat in result.b12[0].beats] == [
         FIRST.strip(), SHORT.strip(), SECOND.strip(),
     ]
-    assert all(len(beat.text.strip()) <= 100 for beat in result.b12[0].beats)
+    assert all(len(beat.text.strip()) <= 120 for beat in result.b12[0].beats)
 
 
 def test_second_invalid_repair_fails_closed_with_both_rejections() -> None:
