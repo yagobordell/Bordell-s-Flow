@@ -57,7 +57,9 @@ def load_imported_professional_b2(text: str) -> ImportedProfessionalB2 | None:
     if obj.get("pipeline_stage") != "B2" and obj.get("schema_version") != "b-pipeline-merged-v1":
         return None
     if obj.get("schema_version") != "b-pipeline-merged-v1" or obj.get("pipeline_stage") != "B2":
-        raise ValueError("Only b-pipeline-merged-v1 B2 JSON can start the professional continuation")
+        raise ValueError(
+            "Only b-pipeline-merged-v1 B2 JSON can start the professional continuation"
+        )
     if obj.get("visual_style") != "profesional":
         raise ValueError("An imported B2 must declare visual_style=profesional")
     if set(obj) != {"schema_version", "pipeline_stage", "visual_style", "narrative_core", "blocks"}:
@@ -73,7 +75,9 @@ def load_imported_professional_b2(text: str) -> ImportedProfessionalB2 | None:
         parts: list[str] = []
         for index, block in enumerate(blocks, start=1):
             if not isinstance(block, dict) or block.get("block_id") != index:
-                raise ValueError(f"Imported B2 block IDs must be consecutive from 1 (block {index})")
+                raise ValueError(
+                    f"Imported B2 block IDs must be consecutive from 1 (block {index})"
+                )
             beats = block.get("beats")
             if not isinstance(beats, list) or not beats:
                 raise ValueError(f"Imported B2 block {index} has no beats")
