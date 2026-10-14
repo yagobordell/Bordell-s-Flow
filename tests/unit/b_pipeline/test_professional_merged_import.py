@@ -104,6 +104,13 @@ def test_invalid_merged_json_is_not_treated_as_plain_script() -> None:
         load_imported_professional_b2('{"schema_version":"b-pipeline-merged-v1",oops}')
 
 
+def test_b21_json_fails_closed_without_restarting_bots() -> None:
+    with pytest.raises(ValueError, match="Only b-pipeline-merged-v1 B2"):
+        load_imported_professional_b2(
+            '{"pipeline_stage": "B2.1", "modified_beats": []}'
+        )
+
+
 def test_imported_cta_groups_and_ebook_reference_contract() -> None:
     merged = _merged()
     beat = merged["blocks"][0]["beats"][0]
