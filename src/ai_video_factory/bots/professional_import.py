@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import copy
 import json
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +18,7 @@ from ai_video_factory.bots.contracts import (
 )
 from ai_video_factory.bots.professional_cta import ProfessionalCTAVisualBeat
 from ai_video_factory.bots.workflow import (
+    _beat_suffix,
     _overlong_avatar_runs,
     _professional_grid_preflight,
 )
@@ -45,9 +45,9 @@ def load_imported_professional_b2(text: str) -> ImportedProfessionalB2 | None:
     All other input continues through the original plain-script pipeline.
     """
     try:
-        obj = json.loads(text)
+        obj = json.loads(text.lstrip("\ufeff"))
     except json.JSONDecodeError as exc:
-        if text.lstrip().startswith("{") and (
+        if text.lstrip("\ufeff \t\r\n").startswith("{") and (
             '"b-pipeline-merged-v1"' in text or '"pipeline_stage"' in text
         ):
             raise ValueError(f"Malformed merged B2 JSON: {exc}") from exc
@@ -82,7 +82,7 @@ def load_imported_professional_b2(text: str) -> ImportedProfessionalB2 | None:
                 if not isinstance(beat, dict):
                     raise ValueError(f"Imported B2 block {index} has a malformed beat")
                 bid = beat.get("beat_id")
-                if not isinstance(bid, str) or not re.fullmatch(rf"{index}[A-Z]+", bid):
+                if bid != f"{index}{_beat_suffix(number)}":
                     raise ValueError(f"Imported B2 has an invalid beat ID: {bid!r}")
                 if bid in all_ids:
                     raise ValueError(f"Imported B2 duplicates beat ID {bid}")
