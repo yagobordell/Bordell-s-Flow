@@ -107,7 +107,8 @@ from ai_video_factory.bots.workflow import (  # noqa: E402
 def test_wording_failure_is_grouped_by_block_in_source_order():
     error = BPipelineValidationError(
         _B2_VISUAL_RULES_PREFIX
-        + "B2 beat 3A: refers back to another shot ('again'); restate the subject's full description"
+        + "B2 beat 3A: refers back to another shot ('again'); "
+        "restate the subject's full description"
         + " || B2 beat 3B: uses negation or absence wording ('no') in the visible frame"
         + " || B2 beat 12C: begins with a label ('1.'); start directly with the frame description"
     )
@@ -125,7 +126,9 @@ class _Dumpable(SimpleNamespace):
 
 def test_partial_feedback_asks_only_for_failing_beats_in_correction_schema():
     error = BPipelineValidationError(
-        _B2_VISUAL_RULES_PREFIX + "B2 beat 3A: uses negation or absence wording ('empty') in the visible frame"
+        _B2_VISUAL_RULES_PREFIX
+        + "B2 beat 3A: uses negation or absence wording ('empty') "
+        "in the visible frame"
     )
     previous = SimpleNamespace(blocks=[
         SimpleNamespace(block_id=3, beats=[
@@ -168,15 +171,18 @@ def test_distinct_frames_are_not_flagged():
     errors = _b2_repetition_errors([_frames(
         _frame("1A", "A telecom technician in their 30s wears a plain shirt and traces a cable "
                      "through a switching rack."),
-        _frame("1B", "A retired couple in their 60s stands at the entry of a brick house in daylight."),
+        _frame("1B", "A retired couple in their 60s stands at the entry of "
+                      "a brick house in daylight."),
     )])
     assert errors == []
 
 
 def test_recurring_person_descriptor_alone_does_not_count():
     errors = _b2_repetition_errors([_frames(
-        _frame("2A", "A man in his 30s wearing a charcoal shirt types at a laptop in an office corridor."),
-        _frame("2B", "A man in his 30s wearing a charcoal shirt slides an envelope across a post office counter."),
+        _frame("2A", "A man in his 30s wearing a charcoal shirt types at a "
+                      "laptop in an office corridor."),
+        _frame("2B", "A man in his 30s wearing a charcoal shirt slides an "
+                      "envelope across a post office counter."),
     )])
     assert errors == []
 
