@@ -109,6 +109,34 @@ def test_publishes_expected_layout_and_keeps_working_files(
 
 
 
+def test_imported_professional_run_publishes_without_b11_or_b12(
+    completed: tuple[Path, Path, Path],
+) -> None:
+    work, script, root = completed
+    import shutil
+
+    shutil.rmtree(work / "B1.1")
+    shutil.rmtree(work / "B1.2")
+    _json(work, "B2/merged_output.json", {"pipeline_stage": "B2"})
+    plan = json.loads((work / "visual_plan.json").read_text(encoding="utf-8"))
+    plan.update({"visual_style": "profesional", "blocks": []})
+    _json(work, "visual_plan.json", plan)
+    images = json.loads((work / "images/manifest.json").read_text(encoding="utf-8"))
+    images.update({"finishing_status": "completed", "final_assets": []})
+    _json(work, "images/manifest.json", images)
+    report = json.loads((work / "run_report.json").read_text(encoding="utf-8"))
+    report["run"].update({
+        "input_kind": "professional_merged_b2",
+        "visual_style": "profesional",
+    })
+    _json(work, "run_report.json", report)
+
+    published = publish_completed_run(work, script, root)
+    assert (published / "Bots" / "B2" / "merged_output.json").is_file()
+    assert not (published / "Bots" / "B1.1").exists()
+    assert not (published / "Bots" / "B1.2").exists()
+
+
 def test_professional_subshots_publish_by_asset_id(
     completed: tuple[Path, Path, Path],
 ) -> None:
