@@ -231,3 +231,60 @@ def test_imported_b2_flows_to_voice_and_images_without_any_b_calls(
         assert report["api_costs"]["stages"][stage]["expected_calls"] == 0
         assert report["api_costs"]["stages"][stage]["recorded_calls"] == 0
     assert script.read_bytes() == raw
+
+
+def test_imported_voice_resume_does_not_require_b11(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "input" / "video05.txt"
+    script.parent.mkdir()
+    raw = json.dumps(_merged(), ensure_ascii=False).encode("utf-8")
+    script.write_bytes(raw)
+    output = tmp_path / "work" / "video05"
+    (output / "B2").mkdir(parents=True)
+    (output / "B2" / "merged_output.json").write_bytes(raw)
+    (output / "avatar_voice.json").write_text(
+        json.dumps({"voice_id": "Algenib", "provider": "gemini"}), encoding="utf-8"
+    )
+    expected = {
+        "B1.1": 0, "B1.2": 0, "B2": 0, "B2.1": 0,
+    }
+    runner._write(output / "run_report.json", {
+        "run": {
+            "visual_style": "profesional",
+            "input_kind": "professional_merged_b2",
+            "script_sha256": hashlib.sha256(raw).hexdigest(),
+            "status": "running",
+            "audio_generation": {"status": "incomplete"},
+        },
+        "timings": runner.TimingLedger().report(run_seconds=0.1, status="running"),
+        "api_costs": runner.ApiCostLedger().report(
+            blocks=2, run_status="running", expected_calls=expected,
+        ),
+    })
+    monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai")
+    monkeypatch.setattr(runner.settings, "gemini_api_key", "test-gemini")
+    monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
+    async def fake_audio(**kwargs):
+        assert kwargs["core"] == _merged()["narrative_core"]
+        assert kwargs["blocks"] == _merged()["blocks"]
+        assert not (output / "B1.1").exists()
+        return {
+            "status": "completed", "provider": "gemini",
+            "voice_id": "Algenib", "sha256": "a" * 64,
+            "file": "audio/narracion.wav",
+        }
+
+    async def no_preview(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(runner, "generate_professional_audio", fake_audio)
+    monkeypatch.setattr(runner, "_preview_if_ready", no_preview)
+    monkeypatch.setattr(runner, "_publish_if_ready", lambda *_a, **_kw: None)
+    asyncio.run(runner._run_audio_only(
+        script, tmp_path / "work", resume=True, no_video=True,
+    ))
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert report["run"]["audio_generation"]["status"] == "completed"
+    for stage in expected:
+        assert report["api_costs"]["stages"][stage]["expected_calls"] == 0
