@@ -2287,16 +2287,30 @@ async def _run_audio_only(
             raise SystemExit("GEMINI_API_KEY is required for professional Gemini TTS")
     elif not settings.ai33_api_key:
         raise SystemExit("AI33_API_KEY is required for Casero voice synthesis")
-    b11_path = output / "B1.1" / "output.json"
-    if b11_path.is_symlink() or not b11_path.is_file():
-        raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
-    try:
-        b11 = B11Output.model_validate(json.loads(b11_path.read_text(encoding="utf-8")))
-        if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
-            raise ValueError("B1.1 checkpoint is not a successful output")
-        materialize_blocks(script, b11.blocks)
-    except (ValueError, OSError) as exc:
-        raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
+    b11: B11Output | None = None
+    if is_professional and report.get("run", {}).get("input_kind") == "professional_merged_b2":
+        # Imported B2 runs deliberately have no fabricated B1.1 checkpoint.
+        try:
+            imported = load_imported_professional_b2(script)
+            saved_path = output / "B2" / "merged_output.json"
+            if imported is None or saved_path.is_symlink() or not saved_path.is_file():
+                raise ValueError("Imported B2 source or saved merge is missing")
+            saved = json.loads(saved_path.read_text(encoding="utf-8"))
+            if saved != imported.merged_output:
+                raise ValueError("Saved B2 plan does not match the imported source TXT")
+        except (ValueError, OSError) as exc:
+            raise SystemExit(f"Invalid imported B2 audio checkpoint: {exc}") from exc
+    else:
+        b11_path = output / "B1.1" / "output.json"
+        if b11_path.is_symlink() or not b11_path.is_file():
+            raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
+        try:
+            b11 = B11Output.model_validate(json.loads(b11_path.read_text(encoding="utf-8")))
+            if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
+                raise ValueError("B1.1 checkpoint is not a successful output")
+            materialize_blocks(script, b11.blocks)
+        except (ValueError, OSError) as exc:
+            raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
     # Audio-only runs must restore and extend the same V timing ledger as
     # complete B runs. Paid token usage is reconciled from durable V states.
@@ -2398,6 +2412,8 @@ async def _run_audio_only(
                     max_parallel_calls=max_parallel_calls,
                 )
             else:
+                if b11 is None:
+                    raise RuntimeError("Casero audio requires a B1.1 checkpoint")
                 artifact = await _generate_audio(
                     script, output, b11=b11, provider=provider, resume=resume
                 )
