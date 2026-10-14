@@ -159,7 +159,9 @@ def test_imported_b2_flows_to_voice_and_images_without_any_b_calls(
     monkeypatch.setattr(runner, "ensure_avatar_meta", lambda *_a, **_k: None)
     monkeypatch.setattr(
         runner, "ensure_professional_avatar_voice",
-        lambda **_kw: SimpleNamespace(snapshot=lambda: {"provider": "gemini", "voice_id": "Algenib"}),
+        lambda **_kw: SimpleNamespace(
+            snapshot=lambda: {"provider": "gemini", "voice_id": "Algenib"}
+        ),
     )
     monkeypatch.setattr(
         runner, "ensure_avatar_qr",
