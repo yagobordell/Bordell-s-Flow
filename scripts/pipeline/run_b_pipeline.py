@@ -3541,7 +3541,7 @@ async def main() -> None:
             narration_path = output / "source_narration.txt"
             if narration_path.is_symlink():
                 raise RuntimeError("Unsafe imported narration snapshot")
-            narration_path.write_text(imported_b2.narration, encoding="utf-8")
+            narration_path.write_bytes(imported_b2.narration.encode("utf-8"))
             planned_blocks = len(imported_b2.blocks)
             save_report("running", planned_blocks)
         current_block_count = (
