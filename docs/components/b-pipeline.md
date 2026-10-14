@@ -27,7 +27,7 @@ Structured Outputs is appended at runtime.
   narration using the blocks' types and emotional transitions. Beats are narrative
   pulses, not mandatory cuts or isolated visual assets. Frozen block boundaries
   and exact source slices are preserved, with at most 40 whitespace-separated
-  words and 100 stripped characters per beat (no minimum character limit).
+  words and 120 stripped characters per beat (no minimum character limit).
 - B1.2 first segments the complete video in one response. The application
   restores exact source punctuation and whitespace, then verifies that the
   canonical beat texts reconstruct every block and the entire original script
@@ -358,8 +358,8 @@ composition tests is required before restoring end-to-end video production.
 No lossy adapter or silent fallback to the retired bots is used.
 
 The validations here establish structural fidelity, source-word order after ignoring
-whitespace and punctuation, 40-word and 13–100-character
-limits, type/ID preservation, and mandatory intro/close avatars. Whether a media
+whitespace and punctuation, a 40-word and 120-character maximum per B1.2
+beat (with no character minimum), type/ID preservation, and mandatory intro/close avatars. Whether a media
 brief is *semantically* faithful or physically feasible still needs representative
 manual or model-based evaluation; schemas alone cannot prove that.
 
