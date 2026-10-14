@@ -54,7 +54,7 @@ def load_imported_professional_b2(text: str) -> ImportedProfessionalB2 | None:
         return None
     if not isinstance(obj, dict):
         return None
-    if obj.get("pipeline_stage") != "B2" and obj.get("schema_version") != "b-pipeline-merged-v1":
+    if "pipeline_stage" not in obj and "schema_version" not in obj:
         return None
     if obj.get("schema_version") != "b-pipeline-merged-v1" or obj.get("pipeline_stage") != "B2":
         raise ValueError(
