@@ -356,8 +356,8 @@ composition tests is required before restoring end-to-end video production.
 No lossy adapter or silent fallback to the retired bots is used.
 
 The validations here establish structural fidelity, source-word order after ignoring
-whitespace and punctuation, 40-word and 13–100-character
-limits, type/ID preservation, and mandatory intro/close avatars. Whether a media
+whitespace and punctuation, a 40-word and 120-character maximum per B1.2
+beat (with no character minimum), type/ID preservation, and mandatory intro/close avatars. Whether a media
 brief is *semantically* faithful or physically feasible still needs representative
 manual or model-based evaluation; schemas alone cannot prove that.
 
