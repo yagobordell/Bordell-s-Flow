@@ -6,7 +6,9 @@ antes de generar las imágenes/vídeo; Casero termina la planificación visual
 en B2. El estilo profesional continúa además con V1 → V2 → V3 → V4 y Gemini TTS;
 Casero conserva su propia ruta de voz y CTA. Las etapas de voz
 preservan los textos, identificadores y decisiones visuales de B2.
-Consulta [voz profesional](professional-voice.md).
+Consulta [voz profesional](professional-voice.md). Un TXT que contenga el JSON
+`B2/merged_output.json` profesional puede iniciar directamente V1 sin ejecutar
+B1.1/B1.2/B2/B2.1; ver [importación B2 profesional](professional-merged-input.md).
 
 Los prompts activos viven en `src/ai_video_factory/bots/prompts/`.
 Las referencias históricas B8 están disponibles en el historial Git,
