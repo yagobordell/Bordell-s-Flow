@@ -265,6 +265,7 @@ def test_imported_voice_resume_does_not_require_b11(
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai")
     monkeypatch.setattr(runner.settings, "gemini_api_key", "test-gemini")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
+
     async def fake_audio(**kwargs):
         assert kwargs["core"] == _merged()["narrative_core"]
         assert kwargs["blocks"] == _merged()["blocks"]
