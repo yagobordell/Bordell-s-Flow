@@ -32,6 +32,7 @@ escenas/shots no sean un segundo orquestador de producción.
 El único lanzador público es `run.ps1`. El motor Python acepta rutas
 explícitas para su invocación desde el lanzador administrado.
 Consulta [B-pipeline](../components/b-pipeline.md),
+[importación de B2 profesional desde TXT](../components/professional-merged-input.md),
 [voz profesional](../components/professional-voice.md),
 [imágenes profesionales](../components/image-upscaler.md) y
 [operación de Salad](../operations/salad-stack-deployment.md).
