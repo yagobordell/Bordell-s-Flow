@@ -74,7 +74,7 @@ Ask internally:
 
 ### Beats versus visual changes
 
-- Every carrier covers at least 22 stripped narration characters of its beat. A shorter beat still gets its own carrier: it takes a different framing or detail of the same moment, never the neighbor's identical prompt.
+- Every original B1.2 beat has its own visual assignment, including beats shorter than 22 stripped narration characters. Never merge or omit a short beat. Give short beats a faithful framing or detail of their own moment, not an identical copy of a neighboring B-roll prompt.
 - Each carrier shows the subject that its own beat's narration names: the person, object, place, number, or action it mentions. Do not substitute a related or adjacent subject.
 - Every person or hand in a prompt has an apparent age range, clothing, and a posture or action, written in that prompt. A role word alone never describes a person. These staging details make a named person concrete; they never add a plot fact, object, or event the narration does not state.
 - When the narration names an actor who performs an action, that actor appears in the frame doing it. A frame never shows only the receiving party or the final object when the narration describes someone else's action.

@@ -141,7 +141,18 @@ def _collect(
 
     # The exact script bytes are the original input, not a rewritten bot transcript.
     entries["Guion/" + script.name] = (script, source_sha)
-    for stage in ("B1.1", "B1.2", "B2"):
+    imported_b2 = run.get("input_kind") == "professional_merged_b2"
+    if imported_b2 and (
+        run.get("visual_style") != "profesional"
+        or plan.get("visual_style") != "profesional"
+    ):
+        raise PublicationError("Imported B2 publication requires professional style")
+    # An imported run has one authoritative B2 merge and no fabricated B1.x.
+    # Normal runs retain their mandatory complete B-stage audit trail.
+    required_b_stages = (
+        ("B2",) if imported_b2 else ("B1.1", "B1.2", "B2")
+    )
+    for stage in required_b_stages:
         folder = work / stage
         if not folder.is_dir() or folder.is_symlink() or folder.is_junction():
             raise PublicationError(f"Missing or linked bot stage: {stage}")

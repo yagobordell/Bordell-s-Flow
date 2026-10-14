@@ -35,6 +35,7 @@ _HELP = """usage: run.ps1 [script] [avatar] [options]
 Put a new avatar PNG and its first TXT directly in data/. After the first run,
 place additional pending TXT files directly in data/<avatar>/.
 One raw TXT = pending; a folder with that TXT = started or completed.
+A TXT containing a valid professional B2 merged_output.json starts at V1 automatically.
 The persistent QR, voice, optional clone audio and one-time visual style
 are saved in data/<avatar>/meta/. A conflicting --style is refused.
 

@@ -309,46 +309,11 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     length_errors = _beat_character_length_errors(restored_beats)
     if length_errors:
         raise BPipelineValidationError("; ".join(length_errors))
-    minimum_errors = _beat_minimum_character_errors(restored_beats, block.text, block.type)
-    if minimum_errors:
-        raise BPipelineValidationError("; ".join(minimum_errors))
     result.beats = restored_beats
     return restored_beats
 
 
-# Minimum stripped narration characters per beat, by B1.1 block type.
-B12_MINIMUM_BEAT_CHARACTERS = {
-    "intro": 12, "development": 22, "pivot": 22,
-    "correction": 22, "climax": 22, "close": 22,
-}
-B12_DEFAULT_MINIMUM_BEAT_CHARACTERS = 22
-
-
-def _b12_minimum_beat_characters(block_type: str) -> int:
-    return B12_MINIMUM_BEAT_CHARACTERS.get(block_type, B12_DEFAULT_MINIMUM_BEAT_CHARACTERS)
-
-
-def _beat_minimum_character_errors(
-    beats: list[Beat], block_text: str, block_type: str,
-) -> list[str]:
-    """Enforce the stripped narration minimum for every beat of a block.
-
-    A block shorter than its minimum cannot be split into compliant beats, so it is
-    exempt; its single beat is the whole block.
-    """
-    minimum = _b12_minimum_beat_characters(block_type)
-    if len(block_text.strip()) < minimum:
-        return []
-    errors: list[str] = []
-    for beat in beats:
-        characters = len(beat.text.strip())
-        if characters < minimum:
-            errors.append(
-                f"B1.2 beat {beat.beat_id} has {characters} characters "
-                f"(minimum {minimum} for {block_type} blocks); merge it with an adjacent "
-                "beat of the same block"
-            )
-    return errors
+B12_MAXIMUM_BEAT_CHARACTERS = 120
 
 
 def _beat_character_length_errors(beats: list[Beat]) -> list[str]:
@@ -356,9 +321,10 @@ def _beat_character_length_errors(beats: list[Beat]) -> list[str]:
     errors: list[str] = []
     for beat in beats:
         characters = len(beat.text.strip())
-        if characters > 100:
+        if characters > B12_MAXIMUM_BEAT_CHARACTERS:
             errors.append(
-                f"B1.2 beat {beat.beat_id} has {characters} characters (maximum 100); "
+                f"B1.2 beat {beat.beat_id} has {characters} characters "
+                f"(maximum {B12_MAXIMUM_BEAT_CHARACTERS}); "
                 "split it into two or more beats"
             )
     return errors
@@ -1316,13 +1282,12 @@ def _b12_targeted_retry_feedback(
         "Required correction:",
         f"Correct only source block groups: {', '.join(map(str, block_ids))}.",
         "Return every beat for each named block, in source order, but do not return "
-        "any unaffected block. Keep each beat at or below 40 words and 100 stripped "
-        "characters. If a beat exceeds a limit, split that source passage into two "
+        "any unaffected block. Keep each beat at or below 40 words and "
+        f"{B12_MAXIMUM_BEAT_CHARACTERS} stripped characters. "
+        "If a beat exceeds a limit, split that source passage into two "
         "or more consecutive beats and renumber the affected block's beat IDs "
-        "sequentially from its A suffix. Keep each beat at least "
-        f"{B12_MINIMUM_BEAT_CHARACTERS['development']} stripped characters in development "
-        f"blocks and {B12_DEFAULT_MINIMUM_BEAT_CHARACTERS} in other blocks; "
-        "merge any shorter beat with an adjacent beat of the same block.",
+        "sequentially from its A suffix. There is no minimum character count; "
+        "preserve short beats when the narration calls for them.",
         "Preserve every source word exactly and do not move text across frozen B1.1 "
         "block boundaries. The application restores source punctuation and whitespace, "
         "then merges these groups into the previously accepted whole-video result and "
@@ -1443,7 +1408,8 @@ def validate_whole_professional_b2(
             )
         )
     _renumber_lettered_panels(outputs)
-    # Wording and repetition are checked on the accumulated plan so a failing group can be retried alone.
+    # Wording and repetition are checked on the accumulated plan so a failing
+    # group can be retried alone.
     rule_errors = _b2_prompt_rule_errors(outputs) + _b2_repetition_errors(outputs)
     if rule_errors:
         raise BPipelineValidationError(_B2_VISUAL_RULES_PREFIX + " || ".join(rule_errors))
@@ -1648,7 +1614,8 @@ def _b2_wording_partial_feedback(
         "Required correction:",
         "Rewrite only the visible-frame prompt of the beats listed below so each one follows "
         "the wording rules named in the failure: no label before the frame, no reference to "
-        "another shot, no negation or absence wording in the visible frame, no photographic-quality "
+        "another shot, no negation or absence wording in the visible frame, no "
+        "photographic-quality "
         "or atmosphere wording, and an apparent age range plus clothing for every person or hand. "
         "For a repetition, change the visible object, action, or place so the frame differs from "
         "the earlier beat named in the failure, without changing the narration.",
@@ -2269,7 +2236,7 @@ async def run_b_pipeline(
                                 "Retry the complete whole-video beat segmentation because "
                                 "no complete structured result was available to merge. "
                                 "Preserve every B1.1 block and source word. Respect the "
-                                "40-word and 100-character maximums."
+                                "40-word and 120-character maximums."
                             ),
                         )
                     else:

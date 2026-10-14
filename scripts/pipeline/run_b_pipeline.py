@@ -41,6 +41,7 @@ from ai_video_factory.bots.professional_cta import (
     ProfessionalCTAVisualBeat,
     ProfessionalCTAVisuals,
 )
+from ai_video_factory.bots.professional_import import load_imported_professional_b2
 from ai_video_factory.bots.professional_voice import (
     ProfessionalAudioRegenerationLimitReached,
     generate_professional_audio,
@@ -2286,16 +2287,30 @@ async def _run_audio_only(
             raise SystemExit("GEMINI_API_KEY is required for professional Gemini TTS")
     elif not settings.ai33_api_key:
         raise SystemExit("AI33_API_KEY is required for Casero voice synthesis")
-    b11_path = output / "B1.1" / "output.json"
-    if b11_path.is_symlink() or not b11_path.is_file():
-        raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
-    try:
-        b11 = B11Output.model_validate(json.loads(b11_path.read_text(encoding="utf-8")))
-        if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
-            raise ValueError("B1.1 checkpoint is not a successful output")
-        materialize_blocks(script, b11.blocks)
-    except (ValueError, OSError) as exc:
-        raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
+    b11: B11Output | None = None
+    if is_professional and report.get("run", {}).get("input_kind") == "professional_merged_b2":
+        # Imported B2 runs deliberately have no fabricated B1.1 checkpoint.
+        try:
+            imported = load_imported_professional_b2(script)
+            saved_path = output / "B2" / "merged_output.json"
+            if imported is None or saved_path.is_symlink() or not saved_path.is_file():
+                raise ValueError("Imported B2 source or saved merge is missing")
+            saved = json.loads(saved_path.read_text(encoding="utf-8"))
+            if saved != imported.merged_output:
+                raise ValueError("Saved B2 plan does not match the imported source TXT")
+        except (ValueError, OSError) as exc:
+            raise SystemExit(f"Invalid imported B2 audio checkpoint: {exc}") from exc
+    else:
+        b11_path = output / "B1.1" / "output.json"
+        if b11_path.is_symlink() or not b11_path.is_file():
+            raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
+        try:
+            b11 = B11Output.model_validate(json.loads(b11_path.read_text(encoding="utf-8")))
+            if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
+                raise ValueError("B1.1 checkpoint is not a successful output")
+            materialize_blocks(script, b11.blocks)
+        except (ValueError, OSError) as exc:
+            raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
     # Audio-only runs must restore and extend the same V timing ledger as
     # complete B runs. Paid token usage is reconciled from durable V states.
@@ -2397,6 +2412,8 @@ async def _run_audio_only(
                     max_parallel_calls=max_parallel_calls,
                 )
             else:
+                if b11 is None:
+                    raise RuntimeError("Casero audio requires a B1.1 checkpoint")
                 artifact = await _generate_audio(
                     script, output, b11=b11, provider=provider, resume=resume
                 )
@@ -2861,6 +2878,28 @@ async def main() -> None:
             reset_active_video_scope(token)
         return
 
+    # A finished professional B2 merge can be supplied as a plain .txt.
+    # Detect it before avatar style selection and before any paid request.
+    try:
+        source_bytes = script_file.read_bytes()
+        script = source_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit(f"Script must be UTF-8: {script_file}") from exc
+    if not script.strip():
+        raise SystemExit(f"Script is empty: {script_file}")
+    try:
+        imported_b2 = (
+            load_imported_professional_b2(script)
+            if getattr(args, "from_stage", "B1.1") == "B1.1" else None
+        )
+    except ValueError as exc:
+        raise SystemExit(f"Invalid imported professional B2: {exc}") from exc
+    if imported_b2 is not None:
+        if getattr(args, "visual_style", None) == "casero":
+            raise SystemExit("An imported professional B2 cannot run as Casero")
+        if getattr(args, "stop_stage", None) is not None:
+            raise SystemExit("Imported professional B2 starts at V1; --stop B is not applicable")
+        args.visual_style = "profesional"
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     output_root_for_style = args.output if args.output is not None else settings.output_dir
@@ -2928,15 +2967,7 @@ async def main() -> None:
 
     if args.max_parallel_calls < 1:
         raise SystemExit("--max-parallel-calls must be positive")
-    # Preserve every source character: no strip(), newline normalization or rewriting.
-    try:
-        source_bytes = script_file.read_bytes()
-        script = source_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise SystemExit(f"Script must be UTF-8: {script_file}") from exc
-    if not script.strip():
-        raise SystemExit(f"Script is empty: {script_file}")
-
+    # source_bytes and script were loaded verbatim before style selection.
     run_started = perf_counter()
     output_root = args.output if args.output is not None else settings.output_dir
     script_sha256 = hashlib.sha256(source_bytes).hexdigest()
@@ -3187,6 +3218,12 @@ async def main() -> None:
         "b2_reasoning_effort": settings.openai_b2_reasoning_effort,
         "visual_style": visual_style,
     }
+    if imported_b2 is not None:
+        run_metadata["input_kind"] = "professional_merged_b2"
+        run_metadata["merged_b2_sha256"] = script_sha256
+        run_metadata["narration_sha256"] = hashlib.sha256(
+            imported_b2.narration.encode("utf-8")
+        ).hexdigest()
     if visual_style == "casero":
         run_metadata["casero_cta_enabled"] = True
         if args.from_stage == "B1.1":
@@ -3268,6 +3305,13 @@ async def main() -> None:
                         1,
                         timings.call_count("B2.1"),
                     )
+        if imported_b2 is not None:
+            # These stages were supplied, not called. Zero is authoritative,
+            # including for the cost report's completion check.
+            expected_calls.update({
+                "B1.1": 0, "B1.2": 0, "B2": 0, "B2.1": 0,
+                "CTA Detector": 0, "B2 CTA": 0,
+            })
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
         ledger.sync_image_usage(output)
@@ -3441,7 +3485,8 @@ async def main() -> None:
                                 raise RuntimeError("Duplicate CTA beat in saved checkpoint")
                             prior_cta_overrides[beat.beat_id] = beat
 
-        result = await run_b_pipeline(
+        if imported_b2 is None:
+            result = await run_b_pipeline(
             script,
             provider=provider,
             model=settings.openai_model,
@@ -3484,25 +3529,52 @@ async def main() -> None:
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
             on_stage_complete=stage_complete,
+            )
+        else:
+            result = None
+            if imported_b2.cta_groups and covers is None:
+                raise RuntimeError(
+                    "Imported professional CTA requires a configured ebook cover; "
+                    "pass --ebook-cover or configure the avatar ebook"
+                )
+            _write(output / "B2" / "merged_output.json", imported_b2.merged_output)
+            narration_path = output / "source_narration.txt"
+            if narration_path.is_symlink():
+                raise RuntimeError("Unsafe imported narration snapshot")
+            narration_path.write_bytes(imported_b2.narration.encode("utf-8"))
+            planned_blocks = len(imported_b2.blocks)
+            save_report("running", planned_blocks)
+        current_block_count = (
+            len(result.b12) if result is not None else len(imported_b2.blocks)
         )
         if cta_task is not None:
             prepared_cta = await asyncio.shield(cta_task)
             run_metadata["cta_cache_dir"] = prepared_cta["directory"]
             run_metadata["casero_cta"] = {"status": prepared_cta["status"]}
-            save_report("running", len(result.b12))
+            save_report("running", current_block_count)
         elif visual_style == "casero" and args.from_stage != "B1.1":
             cache = avatar_file.parent / "meta" / "cta"
             if (cache / "identity.json").is_file() and (output / "CTA" / "output.json").is_file():
                 run_metadata["cta_cache_dir"] = str(cache)
         visual_plan = None
         if stop_index >= 2:
-            visual_plan = result.visual_plan()
+            visual_plan = (
+                result.visual_plan() if result is not None else {
+                    "schema_version": "b-pipeline-v1",
+                    "visual_style": "profesional",
+                    "narrative_core": imported_b2.core,
+                    "blocks": imported_b2.blocks,
+                }
+            )
             # This binding is intentionally absent from audited B2 payloads.
             visual_plan["avatar"] = avatar_metadata
             if visual_style == "profesional":
                 visual_plan["ebook_reference"] = ebook_reference
                 visual_plan["ebook_cta_groups"] = [
-                    list(group) for group in getattr(result, "cta_groups", ())
+                    list(group) for group in (
+                        getattr(result, "cta_groups", ())
+                        if result is not None else imported_b2.cta_groups
+                    )
                 ]
             _write(output / "visual_plan.json", visual_plan)
         if professional_audio_enabled:
@@ -3511,8 +3583,14 @@ async def main() -> None:
             if not settings.gemini_api_key:
                 raise RuntimeError("GEMINI_API_KEY is required for professional Gemini 3.8 TTS")
             run_metadata["audio_generation"] = await generate_professional_audio(
-                core=result.b11.narrative_core.model_dump(mode="json"),
-                blocks=[item.blocks[0].model_dump(mode="json") for item in result.b2],
+                core=(
+                    result.b11.narrative_core.model_dump(mode="json")
+                    if result is not None else imported_b2.core
+                ),
+                blocks=(
+                    [item.blocks[0].model_dump(mode="json") for item in result.b2]
+                    if result is not None else imported_b2.blocks
+                ),
                 output=output,
                 provider=provider,
                 model=settings.openai_model,
@@ -3525,7 +3603,7 @@ async def main() -> None:
                 max_parallel_calls=args.max_parallel_calls,
             )
             audio_joined = True
-            voice_costs, voice_times = save_report("running", len(result.b12))
+            voice_costs, voice_times = save_report("running", current_block_count)
             for voice_stage in ("V1", "V2", "V3", "V4"):
                 seconds = voice_times["stages"][voice_stage]["elapsed_seconds"]
                 if seconds is not None:
@@ -3542,7 +3620,7 @@ async def main() -> None:
             run_metadata["audio_generation"] = await audio_task
             audio_joined = True
             if getattr(args, "managed_target", None) is not None:
-                save_report("running", len(result.b12))
+                save_report("running", current_block_count)
                 await asyncio.to_thread(
                     sync_managed_outputs, output, args.managed_target
                 )
@@ -3562,10 +3640,10 @@ async def main() -> None:
                     "status": "failed",
                     "error": str(exc),
                 }
-                save_report("failed", len(result.b12))
+                save_report("failed", current_block_count)
                 raise
             if aligned:
-                save_report("running", len(result.b12))
+                save_report("running", current_block_count)
         # Wait for valid audio/STT alignment before starting paid image work.
         if stop_stage is None and not getattr(args, "skip_images", False):
             if visual_plan is None:
@@ -3578,7 +3656,7 @@ async def main() -> None:
                         flush=True,
                     )
             run_metadata["image_generation"] = {"status": "running"}
-            save_report("running", len(result.b12))
+            save_report("running", current_block_count)
             image_started = perf_counter()
             # A downstream continuity failure is still a B2 validation error.
             # Spend the affected block's remaining B2 retries, never retry all blocks.
@@ -3588,6 +3666,11 @@ async def main() -> None:
                     break
                 except ImageGenerationError as image_error:
                     retry_block_id = _continuity_retry_block_id(image_error)
+                    if imported_b2 is not None:
+                        raise RuntimeError(
+                            "Imported B2 is immutable. Image continuity failed; "
+                            "correct the source TXT and start a new run."
+                        ) from image_error
                     if retry_block_id is None:
                         raise
                     if result.b2_correction_counts.get(retry_block_id, 0) >= 2:
@@ -3649,7 +3732,7 @@ async def main() -> None:
                         # Re-direct from the corrected whole B2 plan. Identical
                         # paid Gemini fragments are reused by verified block SHA.
                         run_metadata["audio_generation"] = {"status": "running"}
-                        save_report("running", len(result.b12))
+                        save_report("running", current_block_count)
                         run_metadata["audio_generation"] = await generate_professional_audio(
                             core=result.b11.narrative_core.model_dump(mode="json"),
                             blocks=[
@@ -3670,9 +3753,9 @@ async def main() -> None:
                         await _preflight_saved_run_audio(
                             output, visual_plan, run_metadata,
                         )
-                        save_report("running", len(result.b12))
+                        save_report("running", current_block_count)
             run_metadata["image_generation"] = _image_summary(image_manifest)
-            image_costs, _ = save_report("running", len(result.b12))
+            image_costs, _ = save_report("running", current_block_count)
             if getattr(args, "managed_target", None) is not None:
                 await asyncio.to_thread(
                     sync_managed_outputs, output, args.managed_target
@@ -3684,7 +3767,7 @@ async def main() -> None:
             )
         if image_manifest is not None:
             run_metadata["video_preview"] = {"status": "running"}
-            save_report("running", len(result.b12))
+            save_report("running", current_block_count)
             report = {"run": run_metadata}
             preview = await _preview_if_ready(
                 output, report, plan=visual_plan, images=image_manifest
@@ -3693,7 +3776,7 @@ async def main() -> None:
                 run_metadata["video_preview"] = preview
                 print(f"  Static video ready: {preview['file']}", flush=True)
                 if getattr(args, "managed_target", None) is not None:
-                    save_report("running", len(result.b12))
+                    save_report("running", current_block_count)
                     await asyncio.to_thread(
                         sync_managed_outputs, output, args.managed_target
                     )
@@ -3701,7 +3784,7 @@ async def main() -> None:
                 run_metadata["video_generation"] = {"status": "skipped"}
             else:
                 run_metadata["video_generation"] = {"status": "running"}
-                save_report("running", len(result.b12))
+                save_report("running", current_block_count)
                 video = await _video_if_ready(
                     output, {"run": run_metadata},
                     plan=visual_plan, images=image_manifest,
@@ -3743,7 +3826,7 @@ async def main() -> None:
 
         reset_active_video_scope(active_scope_token)
 
-    costs, timing_report = save_report("completed", len(result.b12))
+    costs, timing_report = save_report("completed", current_block_count)
     await asyncio.to_thread(
         _publish_if_ready, output, script_file, results_root, getattr(args, "managed_target", None)
     )
