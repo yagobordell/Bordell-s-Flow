@@ -2890,7 +2890,7 @@ async def main() -> None:
     try:
         imported_b2 = (
             load_imported_professional_b2(script)
-            if args.from_stage == "B1.1" else None
+            if getattr(args, "from_stage", "B1.1") == "B1.1" else None
         )
     except ValueError as exc:
         raise SystemExit(f"Invalid imported professional B2: {exc}") from exc
@@ -3572,7 +3572,8 @@ async def main() -> None:
                 visual_plan["ebook_reference"] = ebook_reference
                 visual_plan["ebook_cta_groups"] = [
                     list(group) for group in (
-                        result.cta_groups if result is not None else imported_b2.cta_groups
+                        getattr(result, "cta_groups", ())
+                        if result is not None else imported_b2.cta_groups
                     )
                 ]
             _write(output / "visual_plan.json", visual_plan)
