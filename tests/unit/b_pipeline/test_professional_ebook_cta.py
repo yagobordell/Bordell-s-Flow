@@ -223,26 +223,32 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
     from ai_video_factory.bots.professional_cta import ProfessionalCTAVisuals
     from ai_video_factory.bots.workflow import run_b_pipeline
 
-    script = "First scene. Buy my ebook. Last scene."
+    script = "First scene shows the street. Buy my ebook using the link. Last scene shows a room."
     b11 = B11Output.model_validate({
         "pipeline_stage": "B1.1",
         "narrative_core": {"central_question": "Q", "final_answer": "A"},
         "blocks": [{
             "block_id": 1, "type": "development",
             "emotional_entry": "A", "emotional_exit": "B",
-            "span": {"first_words": "First scene.", "last_words": "Last scene."},
+            "span": {"first_words": "First scene shows", "last_words": "shows a room."},
         }], "error": None,
     })
     b12 = (B12Output.model_validate({
         "pipeline_stage": "B1.2", "block_id": 1, "error": None,
         "beats": [
-            {"beat_id": "1A", "text": "First scene. ", "beat_type": "claim"},
-            {"beat_id": "1B", "text": "Buy my ebook. ", "beat_type": "claim"},
-            {"beat_id": "1C", "text": "Last scene.", "beat_type": "claim"},
+            {"beat_id": "1A", "text": "First scene shows the street. ", "beat_type": "claim"},
+            {"beat_id": "1B", "text": "Buy my ebook using the link. ", "beat_type": "claim"},
+            {"beat_id": "1C", "text": "Last scene shows a room.", "beat_type": "claim"},
         ],
     }),)
     assert "".join(beat.text for beat in b12[0].beats) == script
     captured_b21 = []
+    # The professional B2 repetition guard requires distinct adjacent frames.
+    prompts = {
+        "1A": "A city street with storefronts in daylight.",
+        "1B": "A paperback ebook beside a laptop on a wooden desk.",
+        "1C": "A small living room with a sofa beside the window.",
+    }
 
     class Provider:
         async def generate_structured(
@@ -256,7 +262,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
                     beat.update({
                         "visual_type": "media_image", "audio": False,
                         "reference": False, "video_prompt": None,
-                        "prompt": "Ordinary B2 static composition.",
+                        "prompt": prompts[beat["beat_id"]],
                     })
                 return ProfessionalB2BatchOutput.model_validate({
                     "pipeline_stage": "B2",
@@ -300,13 +306,13 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
     ))
     assert result.cta_groups == (("1B",),)
     normal = result.b2[0].blocks[0].beats[1]
-    assert normal.prompt == "Ordinary B2 static composition."
+    assert normal.prompt == prompts["1B"]
     final = result.visual_plan()["blocks"][0]["beats"]
-    assert final[0]["prompt"] == "Ordinary B2 static composition."
+    assert final[0]["prompt"] == prompts["1A"]
     assert final[1]["prompt"] == _visual("1B").prompt
     assert final[1]["visual_type"] == "media_video"
     assert final[1]["reference"] is True
     assert final[1]["cta_reference_sources"] == ["ebook"]
-    assert final[2]["prompt"] == "Ordinary B2 static composition."
+    assert final[2]["prompt"] == prompts["1C"]
     assert captured_b21
     assert "cta_reference_sources" not in captured_b21[0]["blocks"][0]["beats"][1]

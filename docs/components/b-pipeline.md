@@ -25,7 +25,9 @@ Structured Outputs is appended at runtime.
   narration using the blocks' types and emotional transitions. Beats are narrative
   pulses, not mandatory cuts or isolated visual assets. Frozen block boundaries
   and exact source slices are preserved, with at most 40 whitespace-separated
-  words and 100 stripped characters per beat (no minimum character limit).
+  words and 100 stripped characters per beat. A beat must have at least 12
+  stripped characters in intro blocks and at least 22 in other block types,
+  except when an entire frozen block is shorter than its own minimum.
 - B1.2 first segments the complete video in one response. The application
   restores exact source punctuation and whitespace, then verifies that the
   canonical beat texts reconstruct every block and the entire original script

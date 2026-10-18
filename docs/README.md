@@ -18,6 +18,7 @@
 - [Validación del despliegue](operations/deployment-validation.md)
 - [LTX 2.5](components/ltx25-worker.md)
 - [LTX A2V](components/ltx25-a2v.md)
+- [Generación directa de vídeos verticales 9:16](components/standalone-vertical-a2v.md)
 - [Servicio de upscale](operations/image-upscaler-salad.md)
 
 Los valores mutables de despliegue pertenecen a
