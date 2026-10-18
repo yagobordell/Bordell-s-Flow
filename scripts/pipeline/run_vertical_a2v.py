@@ -16,6 +16,14 @@ from pathlib import Path
 
 from PIL import Image, ImageFilter, ImageOps
 
+from ai_video_factory.config import settings
+from ai_video_factory.providers.job_queue import QueueJobNotFoundError, QueueJobStatus
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.workers.ltx25 import (
+    LTX_A2V_REFERENCE_GENERATION_PROFILE,
+    ltx_a2v_application_job_id,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 SUBMIT = ROOT / "scripts" / "smoke" / "submit_ltx25_a2v_smoke.py"
 HEALTH = ROOT / "scripts" / "salad" / "run_salad_capacity_controller.py"
@@ -177,6 +185,103 @@ def compose(
         raise RuntimeError("Final video duration differs from the original speech")
 
 
+def segment_job_identity(
+    *, digest: str, label: str, attempt: int, prompt: str, seed: int,
+    image_sha256: str, audio_sha256: str,
+) -> tuple[str, str]:
+    """Stable transport identity for one fragment and one explicit retry generation."""
+    if attempt < 0:
+        raise ValueError("Retry attempt must not be negative")
+    segment_id = f"vertical-{digest[:12]}-{label}"
+    if attempt:
+        segment_id += f"-retry-{attempt:02d}"
+    job_id = ltx_a2v_application_job_id(
+        segment_id=segment_id,
+        prompt=prompt,
+        image_sha256=image_sha256,
+        audio_sha256=audio_sha256,
+        seed=seed,
+        width=WIDTH, height=HEIGHT, fps=FPS,
+        generation_profile=LTX_A2V_REFERENCE_GENERATION_PROFILE,
+    )
+    return segment_id, job_id
+
+
+def maybe_advance_cancelled(
+    current_attempt: int, snapshot: object | None, *, retry_cancelled: bool,
+) -> int:
+    """Advance only a terminal, unclaimed job; never duplicate active/paid GPU work."""
+    if snapshot is None:
+        return current_attempt
+    status = getattr(snapshot, "status", None)
+    if status != QueueJobStatus.CANCELLED:
+        return current_attempt
+    provider_payload = getattr(snapshot, "provider_payload", None) or {}
+    gpu_attempts = provider_payload.get("attempt_count")
+    if not retry_cancelled:
+        raise RuntimeError(
+            "A2V job was cancelled. Re-run this command with -RetryCancelled "
+            "(PowerShell) / --retry-cancelled (Python) to create a new "
+            "request ONLY for the cancelled fragment."
+        )
+    if gpu_attempts != 0:
+        raise RuntimeError(
+            "Cancelled A2V job has GPU attempts; automatic retry is unsafe. "
+            "Inspect the job and use a new -RunTag only after confirming it is safe."
+        )
+    return current_attempt + 1
+
+
+def _existing_job_snapshot(job_id: str) -> object | None:
+    if not settings.postgres_dsn:
+        raise RuntimeError("POSTGRES_DSN is required to check A2V retry state")
+    queue = PostgresJobQueueClient(dsn=settings.postgres_dsn)
+    try:
+        try:
+            return queue.get(job_id)
+        except QueueJobNotFoundError:
+            return None
+    finally:
+        queue.close()
+
+
+def prepare_segment_retry(
+    item: dict, *, digest: str, prompt: str, seed: int,
+    image_sha256: str, manifest_path: Path, manifest: dict,
+    retry_cancelled: bool,
+) -> str:
+    """Persist the new identity BEFORE submission, so interruptions are idempotent."""
+    attempt = int(item.get("retry_count") or 0)
+    segment_id, job_id = segment_job_identity(
+        digest=digest, label=item["label"], attempt=attempt, prompt=prompt, seed=seed,
+        image_sha256=image_sha256, audio_sha256=item["audio_sha256"],
+    )
+    snapshot = _existing_job_snapshot(job_id)
+    new_attempt = maybe_advance_cancelled(
+        attempt, snapshot, retry_cancelled=retry_cancelled,
+    )
+    if new_attempt != attempt:
+        item["retry_count"] = new_attempt
+        segment_id, job_id = segment_job_identity(
+            digest=digest, label=item["label"], attempt=new_attempt,
+            prompt=prompt, seed=seed, image_sha256=image_sha256,
+            audio_sha256=item["audio_sha256"],
+        )
+        _write_json(manifest_path, manifest)
+        print(
+            f"  Cancelled before GPU claim; retrying {item['label']} "
+            f"with a new transport identity: {job_id}",
+            flush=True,
+        )
+    elif snapshot is not None:
+        print(
+            f"  Existing A2V job {job_id}: {snapshot.status.value}; "
+            "resuming without a duplicate request.",
+            flush=True,
+        )
+    return segment_id
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="One-command 9:16 LTX A2V from JPEG/PNG and MP3/WAV"
@@ -201,6 +306,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Prepare and inspect clips without Salad jobs",
     )
     parser.add_argument("--skip-controller-check", action="store_true")
+    parser.add_argument(
+        "--retry-cancelled", action="store_true",
+        help="Only requeue jobs cancelled before any GPU claim; keep completed clips",
+    )
     return parser.parse_args(argv)
 
 
@@ -265,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError(f"{label} exceeds A2V safe length: {actual:.3f} s")
         segments.append({
             "label": label, "start": start, "end": end,
-            "duration": actual, "audio_sha256": _sha(segment_audio), "video_sha256": None,
+            "duration": actual, "audio_sha256": _sha(segment_audio),
+            "video_sha256": None, "retry_count": 0,
         })
     manifest_path = destination / "manifest.json"
     if manifest_path.exists():
@@ -278,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         for old, new in zip(existing["segments"], segments, strict=True):
             new["video_sha256"] = old.get("video_sha256")
+            new["retry_count"] = old.get("retry_count", 0)
     manifest = {
         "schema_version": 1, "identity": identity, "request_id": digest,
         "script_sha256": _sha(args.script) if args.script else None,
@@ -297,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.skip_controller_check:
         _run([sys.executable, str(HEALTH), "--check-health"])
+    reference_sha256 = _sha(reference)
     clips: list[Path] = []
     for index, item in enumerate(segments, 1):
         label = item["label"]
@@ -308,13 +420,19 @@ def main(argv: list[str] | None = None) -> int:
             _check_video(clip)
             print(f"[{index}/{len(segments)}] Reusing verified {label}", flush=True)
         else:
+            print(f"[{index}/{len(segments)}] Preparing A2V {label}...", flush=True)
+            segment_id = prepare_segment_retry(
+                item, digest=digest, prompt=args.prompt.strip(), seed=args.seed,
+                image_sha256=reference_sha256, manifest_path=manifest_path,
+                manifest=manifest, retry_cancelled=args.retry_cancelled,
+            )
             print(f"[{index}/{len(segments)}] Submitting A2V {label}...", flush=True)
             _run([
                 sys.executable, str(SUBMIT),
                 "--avatar-image", str(reference),
                 "--audio", str(work / f"{label}.wav"),
                 "--prompt", args.prompt.strip(),
-                "--profile", "reference", "--segment-id", f"vertical-{digest[:12]}-{label}",
+                "--profile", "reference", "--segment-id", segment_id,
                 "--width", str(WIDTH), "--height", str(HEIGHT), "--fps", str(FPS),
                 "--seed", str(args.seed), "--pending-timeout-seconds", "7200",
                 "--output-dir", str(folder),
