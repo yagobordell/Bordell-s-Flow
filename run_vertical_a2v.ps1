@@ -9,7 +9,8 @@ param(
     [long]$Seed = 4242,
     [string]$RunTag = "default",
     [switch]$PlanOnly,
-    [switch]$NativeOutput
+    [switch]$NativeOutput,
+    [switch]$RetryCancelled
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +26,7 @@ try {
     if ($Prompt) { $arguments += @("--prompt", $Prompt) }
     if ($PlanOnly) { $arguments += "--plan-only" }
     if ($NativeOutput) { $arguments += "--native-output" }
+    if ($RetryCancelled) { $arguments += "--retry-cancelled" }
     & uv @arguments
     exit $LASTEXITCODE
 }
