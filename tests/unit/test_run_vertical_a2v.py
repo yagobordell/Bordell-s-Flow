@@ -10,7 +10,6 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.providers.job_queue import QueueJobStatus
-
 from scripts.pipeline import run_vertical_a2v as vertical
 
 
