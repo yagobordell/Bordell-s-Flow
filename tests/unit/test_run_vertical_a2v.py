@@ -4,9 +4,12 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+
+from ai_video_factory.providers.job_queue import QueueJobStatus
 
 from scripts.pipeline import run_vertical_a2v as vertical
 
@@ -115,3 +118,85 @@ def test_real_ffmpeg_portrait_composition_uses_master_audio(tmp_path: Path) -> N
     vertical.compose(clips, [0.55, 0.55], master, output, full_hd=False)
     vertical._check_video(output)
     assert vertical._duration(output) == pytest.approx(1.1, abs=0.1)
+
+
+
+def _snapshot(status: QueueJobStatus, gpu_attempts: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        status=status, provider_payload={"attempt_count": gpu_attempts}
+    )
+
+
+def test_cancelled_retry_is_explicit_and_never_reuses_an_existing_job() -> None:
+    cancelled = _snapshot(QueueJobStatus.CANCELLED, 0)
+    with pytest.raises(RuntimeError, match="RetryCancelled"):
+        vertical.maybe_advance_cancelled(0, cancelled, retry_cancelled=False)
+    assert vertical.maybe_advance_cancelled(0, cancelled, retry_cancelled=True) == 1
+    assert vertical.maybe_advance_cancelled(2, cancelled, retry_cancelled=True) == 3
+
+
+@pytest.mark.parametrize(
+    "status",
+    [QueueJobStatus.PENDING, QueueJobStatus.RUNNING, QueueJobStatus.SUCCEEDED],
+)
+def test_non_cancelled_jobs_are_never_requeued(status: QueueJobStatus) -> None:
+    assert vertical.maybe_advance_cancelled(
+        0, _snapshot(status, 0), retry_cancelled=True,
+    ) == 0
+    assert vertical.maybe_advance_cancelled(
+        0, None, retry_cancelled=True,
+    ) == 0
+
+
+def test_cancelled_with_previous_gpu_work_never_auto_retries() -> None:
+    with pytest.raises(RuntimeError, match="unsafe"):
+        vertical.maybe_advance_cancelled(
+            1, _snapshot(QueueJobStatus.CANCELLED, 1), retry_cancelled=True,
+        )
+
+
+def test_segment_retry_changes_only_its_transport_id(tmp_path: Path, monkeypatch) -> None:
+    manifest = {
+        "segments": [
+            {"label": "part-001", "audio_sha256": "b" * 64, "retry_count": 0},
+            {"label": "part-002", "audio_sha256": "c" * 64, "retry_count": 0,
+             "video_sha256": "d" * 64},
+        ],
+    }
+    first = manifest["segments"][0]
+    other = dict(manifest["segments"][1])
+    digest = "f" * 20
+    kwargs = {
+        "digest": digest, "prompt": "talking to the camera",
+        "seed": 4242, "image_sha256": "a" * 64,
+    }
+    initial_segment, initial_job = vertical.segment_job_identity(
+        label="part-001", attempt=0, audio_sha256=first["audio_sha256"], **kwargs,
+    )
+    monkeypatch.setattr(
+        vertical, "_existing_job_snapshot",
+        lambda job_id: (
+            _snapshot(QueueJobStatus.CANCELLED, 0) if job_id == initial_job else None
+        ),
+    )
+    path = tmp_path / "manifest.json"
+    retry_id = vertical.prepare_segment_retry(
+        first, manifest=manifest, manifest_path=path, retry_cancelled=True, **kwargs,
+    )
+    assert retry_id != initial_segment
+    assert first["retry_count"] == 1
+    assert manifest["segments"][1] == other
+    assert json.loads(path.read_text(encoding="utf-8")) == manifest
+    _, new_job = vertical.segment_job_identity(
+        label="part-001", attempt=1, audio_sha256=first["audio_sha256"], **kwargs,
+    )
+    assert initial_job != new_job
+    # Restart while the new job is pending; keep exactly the same id.
+    monkeypatch.setattr(
+        vertical, "_existing_job_snapshot",
+        lambda _: _snapshot(QueueJobStatus.PENDING, 0),
+    )
+    assert vertical.prepare_segment_retry(
+        first, manifest=manifest, manifest_path=path, retry_cancelled=True, **kwargs,
+    ) == retry_id
+    assert first["retry_count"] == 1
