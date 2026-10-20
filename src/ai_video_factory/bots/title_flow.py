@@ -20,6 +20,12 @@ from ai_video_factory.providers.grid_numbering import (
 )
 
 MODEL = "claude-haiku-5-5"
+T1_MAX_OUTPUT_TOKENS = 32000
+# Haiku 5.5 supports 128k output; adaptive high-effort thinking shares this budget.
+# The cap is not a target: only generated tokens are billed.
+T2_MAX_OUTPUT_TOKENS = 128000
+LEGACY_T2_MAX_OUTPUT_TOKENS = 32000
+T2_VALIDATION_ATTEMPTS = 3
 BEAT_TYPES = set(
     "setup orientation action evidence claim data question revelation escalation "
     "consequence contrast analogy causal_link correction reaction pivot verdict "
@@ -95,10 +101,11 @@ def parse(response: dict[str, Any]) -> dict[str, Any]:
 def call_claude(
     *, api_key: str, system: str, messages: list[dict[str, Any]],
     transport: Callable[..., Any] | None = None,
+    max_tokens: int = T1_MAX_OUTPUT_TOKENS,
 ) -> dict[str, Any]:
     """Streaming Anthropic Messages API, retaining signed thinking content intact."""
     body = {
-        "model": MODEL, "max_tokens": 32000, "system": system, "messages": messages,
+        "model": MODEL, "max_tokens": max_tokens, "system": system, "messages": messages,
         "output_config": {"effort": "high"}, "cache_control": {"type": "ephemeral"},
         "stream": True,
     }
@@ -520,7 +527,25 @@ def run(
                     # only. The next attempt uses a separate inflight marker.
             else:
                 write(input_path, identity)
-            for attempt in range(1, 4):
+            # Old builds used only 32k tokens for T2, including high-effort
+            # thinking. A completed response with stop_reason=max_tokens is a
+            # definitive (billable) result, not an uncertain network request.
+            # Allow ONE additional attempt for already-exhausted legacy
+            # checkpoints. Never automatically grant the fourth attempt to a
+            # newly generated 128k response or to arbitrary validation errors.
+            previous_third = root / "response_attempt_3.json"
+            legacy_truncated = False
+            if previous_third.is_file():
+                third = read(previous_third)
+                usage = third.get("usage") or {}
+                output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
+                legacy_truncated = (
+                    third.get("stop_reason") == "max_tokens"
+                    and type(output_tokens) is int
+                    and 0 < output_tokens <= LEGACY_T2_MAX_OUTPUT_TOKENS
+                )
+            attempts = T2_VALIDATION_ATTEMPTS + int(legacy_truncated)
+            for attempt in range(1, attempts + 1):
                 attempt_path = root / f"response_attempt_{attempt}.json"
                 if attempt_path.is_file():
                     response = read(attempt_path)
@@ -545,10 +570,16 @@ def run(
                             )},
                         ]
                     try:
-                        response = provider(
-                            api_key=api_key, system=prompt("t2_director.md"),
-                            messages=request_history,
-                        )
+                        # Keep existing injected test providers' three-argument
+                        # contract intact while passing the production limit.
+                        kwargs: dict[str, Any] = {
+                            "api_key": api_key,
+                            "system": prompt("t2_director.md"),
+                            "messages": request_history,
+                        }
+                        if provider is call_claude:
+                            kwargs["max_tokens"] = T2_MAX_OUTPUT_TOKENS
+                        response = provider(**kwargs)
                     except ClaudeRequestRejected:
                         inflight.unlink()
                         raise
@@ -561,8 +592,12 @@ def run(
                     rejection = root / f"rejection_{attempt}.json"
                     if not rejection.is_file():
                         write(rejection, {"reason": str(exc)})
-                    if attempt == 3:
-                        raise
+                    if attempt == attempts:
+                        raise TitleContractError(
+                            f"T2 block {number}: {exc}; "
+                            f"{attempts} attempts exhausted. The raw responses "
+                            f"are preserved under {root}; do not delete them."
+                        ) from exc
                     continue
                 write(resp_file, response)
                 write(out_file, result)
