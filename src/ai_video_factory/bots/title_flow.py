@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from importlib.resources import files
@@ -33,6 +34,15 @@ class TitleContractError(ValueError):
 
 class ClaudeAPIError(RuntimeError):
     """Ambiguous provider failure. The paid request MUST NOT be repeated blindly."""
+
+
+class ClaudeRequestRejected(ClaudeAPIError):
+    """Anthropic definitively rejected the request without starting generation.
+
+    HTTP 4xx rejection is not a completed model response, so its inflight
+    marker may be cleared. A 5xx, disconnected stream, or transport timeout
+    remains ambiguous and MUST keep its inflight marker.
+    """
 
 
 def sha(data: bytes) -> str:
@@ -133,6 +143,24 @@ def call_claude(
                     usage.update(event.get("usage") or {})
                 elif kind == "message_stop":
                     stopped = True
+    except urllib.error.HTTPError as exc:
+        if 400 <= exc.code < 500:
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+                detail = payload.get("error", {})
+                error_type = str(detail.get("type", "rejected_request"))
+                message = str(detail.get("message", "")).replace("\n", " ")[:350]
+            except (OSError, UnicodeError, ValueError, AttributeError, TypeError):
+                error_type, message = "rejected_request", ""
+            raise ClaudeRequestRejected(
+                f"Anthropic rejected T1/T2 HTTP {exc.code} ({error_type}): {message}. "
+                "No generation response was received. Check ANTHROPIC_API_KEY, "
+                "credits, request dimensions and API access before retrying."
+            ) from exc
+        raise ClaudeAPIError(
+            f"Anthropic HTTP {exc.code}; request outcome is uncertain. "
+            "Do not retry before reconciling the checkpoint and provider usage."
+        ) from exc
     except ClaudeAPIError:
         raise
     except (OSError, ValueError, KeyError, UnicodeError) as exc:
@@ -417,10 +445,16 @@ def run(
                             f"Last stop reason: {prior.get('stop_reason')}"
                         )},
                     ]
-                response = provider(
-                    api_key=api_key, system=prompt("t1_planner.md"),
-                    messages=request_history,
-                )
+                try:
+                    response = provider(
+                        api_key=api_key, system=prompt("t1_planner.md"),
+                        messages=request_history,
+                    )
+                except ClaudeRequestRejected:
+                    # A definite HTTP 4xx cannot have produced a billed turn;
+                    # preserve the rejection traceback, but allow correction.
+                    inflight.unlink()
+                    raise
                 write(response_path, response)
                 inflight.unlink()
             try:
@@ -510,10 +544,14 @@ def run(
                                 "only; all previously accepted blocks are fixed."
                             )},
                         ]
-                    response = provider(
-                        api_key=api_key, system=prompt("t2_director.md"),
-                        messages=request_history,
-                    )
+                    try:
+                        response = provider(
+                            api_key=api_key, system=prompt("t2_director.md"),
+                            messages=request_history,
+                        )
+                    except ClaudeRequestRejected:
+                        inflight.unlink()
+                        raise
                     write(attempt_path, response)
                     inflight.unlink()
                 try:
