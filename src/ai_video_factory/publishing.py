@@ -141,6 +141,19 @@ def _collect(
 
     # The exact script bytes are the original input, not a rewritten bot transcript.
     entries["Guion/" + script.name] = (script, source_sha)
+    if run.get("flow") == "titulo":
+        for extra in ("T1", "T2"):
+            folder = work / extra
+            if folder.is_symlink() or folder.is_junction() or not folder.is_dir():
+                raise PublicationError(f"Missing title stage: {extra}")
+            for item in sorted(folder.rglob("*")):
+                if item.is_symlink() or item.is_junction():
+                    raise PublicationError(f"Linked title checkpoint: {item}")
+                if item.is_file():
+                    relative = item.relative_to(work).as_posix()
+                    add("Bots/" + relative, relative)
+        add("thumbnail.png", "thumbnail.png", run.get("thumbnail_sha256"))
+        add("Bots/narracion.txt", "narracion.txt")
     for stage in ("B1.1", "B1.2", "B2"):
         folder = work / stage
         if not folder.is_dir() or folder.is_symlink() or folder.is_junction():

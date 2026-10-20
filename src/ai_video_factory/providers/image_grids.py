@@ -459,4 +459,32 @@ def plan_image_jobs(
         )
 
     jobs.sort(key=job_position)
+    if plan.get("flow") == "titulo":
+        # A T2 logical continuity world spans *multiple* B2 blocks. Existing
+        # B2 uses block-local lettered labels; preserve visual memory by making
+        # the first image of each later block depend on that world's latest
+        # finished image, using the ordinary verified image-reference chain.
+        latest_by_world: dict[str, dict[str, Any]] = {}
+        for job in jobs:
+            members = job.get("panels", [job])
+            worlds = {
+                panel["title_global_group"]
+                for panel in members
+                if panel.get("title_global_group") is not None
+            }
+            if len(worlds) != 1:
+                continue
+            world = next(iter(worlds))
+            job["title_global_group"] = world
+            previous = latest_by_world.get(world)
+            if (
+                previous is not None
+                and previous["block_id"] != job["block_id"]
+                and job.get("continuity_previous_asset_id") is None
+            ):
+                job["continuity_previous_asset_id"] = previous.get(
+                    "asset_id", previous["beat_id"],
+                )
+                job["continuity_previous_block_id"] = previous["block_id"]
+            latest_by_world[world] = job
     return jobs

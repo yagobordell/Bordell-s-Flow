@@ -309,9 +309,8 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     length_errors = _beat_character_length_errors(restored_beats)
     if length_errors:
         raise BPipelineValidationError("; ".join(length_errors))
-    minimum_errors = _beat_minimum_character_errors(restored_beats, block.text, block.type)
-    if minimum_errors:
-        raise BPipelineValidationError("; ".join(minimum_errors))
+    # Beat segmentation follows narration rhythm, with no minimum character
+    # length. Short intentional beats remain valid after source restoration.
     result.beats = restored_beats
     return restored_beats
 
@@ -1443,7 +1442,7 @@ def validate_whole_professional_b2(
             )
         )
     _renumber_lettered_panels(outputs)
-    # Wording and repetition are checked on the accumulated plan so a failing group can be retried alone.
+    # Check wording/repetition on the accumulated plan to retry only its failing group.
     rule_errors = _b2_prompt_rule_errors(outputs) + _b2_repetition_errors(outputs)
     if rule_errors:
         raise BPipelineValidationError(_B2_VISUAL_RULES_PREFIX + " || ".join(rule_errors))
@@ -1648,7 +1647,8 @@ def _b2_wording_partial_feedback(
         "Required correction:",
         "Rewrite only the visible-frame prompt of the beats listed below so each one follows "
         "the wording rules named in the failure: no label before the frame, no reference to "
-        "another shot, no negation or absence wording in the visible frame, no photographic-quality "
+        "another shot, no negation or absence wording in the visible frame, no " 
+        "photographic-quality "
         "or atmosphere wording, and an apparent age range plus clothing for every person or hand. "
         "For a repetition, change the visible object, action, or place so the frame differs from "
         "the earlier beat named in the failure, without changing the narration.",

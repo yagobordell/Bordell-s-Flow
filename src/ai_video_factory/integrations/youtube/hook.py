@@ -19,7 +19,7 @@ from .errors import (
     YouTubeThumbnailError,
     YouTubeValidationError,
 )
-from .metadata import resolve_request
+from .metadata import load_metadata, resolve_request
 from .publisher import default_state_dir, publish_to_youtube
 from .state import PublicationStateStore, _write_json, sha256_file
 from .store import YouTubeStore
@@ -88,10 +88,33 @@ def publish_verified_result(
         raise YouTubeValidationError("Master MP4 differs from the publication manifest")
 
     metadata = _metadata_path(output, published, managed_target)
+    # The original Title PNG is the definitive thumbnail, not another
+    # independently selected thumbnail from youtube.json.
+    overrides = None
+    title_report_path = output / "run_report.json"
+    if title_report_path.is_file() and not title_report_path.is_symlink():
+        run = json.loads(title_report_path.read_text(encoding="utf-8")).get("run", {})
+        if isinstance(run, dict) and run.get("flow") == "titulo":
+            selected = published / "thumbnail.png"
+            if (selected.is_symlink() or not selected.is_file()
+                    or sha256_file(selected) != run.get("thumbnail_sha256")):
+                raise YouTubeValidationError("Title thumbnail differs from original PNG")
+            declared = load_metadata(metadata).get("thumbnail_path")
+            if declared is not None:
+                candidate = Path(declared)
+                if not candidate.is_absolute():
+                    candidate = metadata.parent / candidate
+                if (candidate.is_symlink() or not candidate.is_file()
+                        or sha256_file(candidate) != run["thumbnail_sha256"]):
+                    raise YouTubeValidationError(
+                        "youtube.json thumbnail conflicts with Title input PNG"
+                    )
+            overrides = {"thumbnail_path": str(selected.absolute())}
     request = resolve_request(
         video_path=video,
         metadata_path=metadata,
         config=config,
+        overrides=overrides,
     )
     # The uploader's local alias determines credentials, but it cannot verify
     # the actual channel without increasing the OAuth scope. Operators must

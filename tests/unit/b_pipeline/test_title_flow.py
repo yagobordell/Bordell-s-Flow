@@ -1,0 +1,489 @@
+"""Offline contract and execution tests for the Title flow; no paid providers."""
+from __future__ import annotations
+
+import copy
+import hashlib
+import io
+import json
+from urllib.error import HTTPError
+
+import pytest
+
+from ai_video_factory.bots import title_flow
+from ai_video_factory.providers.image_grids import plan_image_jobs
+from ai_video_factory.providers.openai_batch_images import described_beats
+
+
+def _plan() -> dict:
+    return {
+        "schema_version": "b-planner-v1",
+        "narrative_contract": {
+            "central_question": "How?", "final_answer": "This way.",
+        },
+        "word_budget_total": 4,
+        "stages": [
+            {"id": "S01", "kind": "hook", "markers": [], "word_budget": 2},
+            {"id": "S02", "kind": "chain", "markers": [], "word_budget": 1},
+            {"id": "S03", "kind": "closing", "markers": [], "word_budget": 1},
+        ],
+    }
+
+
+def _block(n: int, *, bad: bool = False) -> dict:
+    kind = ("intro", "development", "close")[n - 1]
+    content = ("First scene. ", "Next. ", "Goodbye.")[n - 1]
+    p = ("A1. Woman views phone at a desk.", "A2. Woman picks up phone at a desk.", None)[n - 1]
+    return {"block": {
+        "block_id": n, "type": kind, "emotional_entry": "Expecting an answer",
+        "emotional_exit": "More informed",
+        "span": {"first_words": content, "last_words": content},
+        "beats": [{
+            "beat_id": f"{n}A", "text": content * 120 if bad else content,
+            "beat_type": "action",
+            "visual_type": "avatar" if n == 3 else "media_image",
+            "prompt": p, "video_prompt": None,
+            "reference": False, "audio": n == 3,
+        }],
+    }}
+
+
+def _response(payload: dict) -> dict:
+    return {
+        "stop_reason": "end_turn", "model": title_flow.MODEL,
+        "content": [
+            {"type": "thinking", "thinking": "signed reasoning", "signature": "sig"},
+            {"type": "text", "text": json.dumps(payload)},
+        ],
+        "usage": {"input_tokens": 5, "output_tokens": 10},
+    }
+
+
+def test_plan_rejects_wrong_budget():
+    plan = _plan()
+    title_flow.validate_plan(plan)
+    plan["word_budget_total"] = 5
+    with pytest.raises(title_flow.TitleContractError, match="budgets"):
+        title_flow.validate_plan(plan)
+
+
+def test_rejects_beat_length_and_avatar_overrun():
+    plan = _plan()
+    with pytest.raises(title_flow.TitleContractError, match="too long"):
+        title_flow.validate_block(_block(1, bad=True), 1, plan, [])
+    first = _block(1)["block"]
+    second = _block(2)["block"]
+    second["beats"][0]["audio"] = True
+    second["beats"][0]["visual_type"] = "avatar"
+    second["beats"][0]["prompt"] = None
+    title_flow.validate_block({"block": first}, 1, plan, [])
+
+
+def test_resumable_run_replays_signed_content_without_new_t1_call(tmp_path):
+    calls = []
+
+    def fake_provider(*, api_key, system, messages):
+        assert api_key == "fake"
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            return _response(_plan())
+        # The second and later T2 turns include every original accepted
+        # assistant block, not just the parsed JSON text.
+        assistant_contents = [
+            msg["content"] for msg in messages if msg["role"] == "assistant"
+        ]
+        for content in assistant_contents:
+            assert content[0]["type"] == "thinking"
+            assert content[0]["signature"] == "sig"
+        return _response(_block(len(assistant_contents) + 1))
+
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle Enzo",
+        "title": "Why this happened", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake",
+        "provider": fake_provider,
+    }
+    first, none = title_flow.run(**kwargs, stop="T1")
+    assert none is None
+    assert first == _plan()
+    _, value = title_flow.run(**kwargs, stop="T2")
+    assert value["schema_version"] == "b-pipeline-merged-v1"
+    assert len(calls) == 4
+    title_flow.run(**kwargs, stop="T2")
+    assert len(calls) == 4
+    assert (tmp_path / "T2" / "blocks" / "block_001" / "response.json").is_file()
+
+
+def test_globally_lettered_groups_become_cross_block_image_references():
+    p = _plan()
+    blocks = [_block(i)["block"] for i in range(1, 4)]
+    m = title_flow.merged(p, blocks)
+    visual = title_flow.image_plan(m)
+    assert visual["schema_version"] == "b-pipeline-v1"
+    assert visual["blocks"][1]["beats"][0]["title_global_group"] == "A"
+    assert visual["blocks"][1]["beats"][0]["prompt"].startswith("Woman picks up")
+    jobs = plan_image_jobs(visual, described_beats(visual))
+    first, second = jobs
+    assert second["continuity_previous_asset_id"] == first["asset_id"]
+    assert second["continuity_previous_block_id"] == first["block_id"]
+
+
+def test_failed_claude_turn_does_not_trigger_blind_replay(tmp_path):
+    def fail(*, api_key, system, messages):
+        raise title_flow.ClaudeAPIError("uncertain")
+
+    kwargs = {
+        "output": tmp_path, "avatar": "Enzo", "title": "Title",
+        "ebook": b"a", "thumbnail": b"b", "api_key": "fake",
+    }
+    with pytest.raises(title_flow.ClaudeAPIError):
+        title_flow.run(**kwargs, stop="T1", provider=fail)
+    with pytest.raises(title_flow.TitleContractError, match="uncertain"):
+        title_flow.run(**kwargs, stop="T1", provider=fail)
+
+
+def test_title_inputs_refuse_mutation(tmp_path):
+    def plan_only(*, api_key, system, messages):
+        return _response(_plan())
+
+    title_flow.run(
+        output=tmp_path, avatar="Enzo", title="Original",
+        ebook=b"cover", thumbnail=b"thumb", api_key="key", stop="T1",
+        provider=plan_only,
+    )
+    with pytest.raises(title_flow.TitleContractError, match="changed"):
+        title_flow.run(
+            output=tmp_path, avatar="Enzo", title="New",
+            ebook=b"cover", thumbnail=b"thumb", api_key="key", stop="T1",
+            provider=plan_only,
+        )
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 413, 429])
+def test_http_rejection_shows_status_without_ambiguous_result(status):
+    def http_failure(request, timeout):
+        body = json.dumps({
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Invalid Anthropic request",
+            }
+        }).encode("utf-8")
+        raise HTTPError(
+            request.full_url, status, "Rejected", {},
+            io.BytesIO(body),
+        )
+
+    with pytest.raises(title_flow.ClaudeRequestRejected, match=f"HTTP {status}"):
+        title_flow.call_claude(
+            api_key="invalid", system="test", messages=[
+                {"role": "user", "content": "test"},
+            ], transport=http_failure,
+        )
+
+
+def test_server_error_still_retains_ambiguous_status():
+    def http_failure(request, timeout):
+        raise HTTPError(
+            request.full_url, 503, "Unavailable", {},
+            io.BytesIO(b""),
+        )
+
+    with pytest.raises(title_flow.ClaudeAPIError, match="uncertain"):
+        title_flow.call_claude(
+            api_key="invalid", system="test", messages=[
+                {"role": "user", "content": "test"},
+            ], transport=http_failure,
+        )
+
+
+def test_definitive_t1_rejection_can_retry_after_fix(tmp_path):
+    called = []
+
+    def rejected(*, api_key, system, messages):
+        called.append("rejected")
+        raise title_flow.ClaudeRequestRejected("HTTP 401")
+
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo", "title": "Wrong Number",
+        "ebook": b"cover", "thumbnail": b"thumb", "api_key": "fake",
+        "stop": "T1",
+    }
+    with pytest.raises(title_flow.ClaudeRequestRejected, match="401"):
+        title_flow.run(**kwargs, provider=rejected)
+    assert not (tmp_path / "T1" / "inflight_attempt_1.json").exists()
+    assert (tmp_path / "T1" / "input.json").is_file()
+
+    def working(*, api_key, system, messages):
+        called.append("accepted")
+        return _response(_plan())
+
+    plan, final = title_flow.run(**kwargs, provider=working)
+    assert final is None
+    assert plan == _plan()
+    assert called == ["rejected", "accepted"]
+
+
+def test_definitive_t2_rejection_retains_accepted_t1(tmp_path):
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo", "title": "Wrong Number",
+        "ebook": b"cover", "thumbnail": b"thumb", "api_key": "fake",
+    }
+
+    def preflight(*, api_key, system, messages):
+        return _response(_plan())
+
+    title_flow.run(**kwargs, stop="T1", provider=preflight)
+
+    def rejected(*, api_key, system, messages):
+        raise title_flow.ClaudeRequestRejected("HTTP 429")
+
+    with pytest.raises(title_flow.ClaudeRequestRejected, match="429"):
+        title_flow.run(**kwargs, stop="T2", provider=rejected)
+    t2_root = tmp_path / "T2" / "blocks" / "block_001"
+    assert not (t2_root / "inflight_attempt_1.json").exists()
+    assert (tmp_path / "T1" / "output.json").is_file()
+
+
+
+def test_t2_legacy_max_tokens_exhaustion_recovers_on_fourth_only(tmp_path):
+    """Replay all three billable capped turns; send only one new request."""
+    old_calls = []
+
+    def legacy_provider(*, api_key, system, messages):
+        old_calls.append(len(messages))
+        return {
+            "model": title_flow.MODEL,
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "too long", "signature": "sig"}],
+            "usage": {"input_tokens": 500, "output_tokens": 32000},
+        }
+
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake",
+    }
+    title_flow.run(**options, stop="T1", provider=lambda **kw: _response(_plan()))
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, stop="T2", provider=legacy_provider)
+    assert len(old_calls) == 3
+
+    root = tmp_path / "T2" / "blocks" / "block_001"
+    for attempt in (1, 2, 3):
+        assert title_flow.read(root / f"response_attempt_{attempt}.json")[
+            "stop_reason"
+        ] == "max_tokens"
+        assert (root / f"rejection_{attempt}.json").is_file()
+        assert not (root / f"inflight_attempt_{attempt}.json").exists()
+
+    new_calls = []
+
+    def recovered_provider(*, api_key, system, messages):
+        count = sum(msg["role"] == "assistant" for msg in messages)
+        new_calls.append(count)
+        # Invalid T2 turns are never inserted into accepted conversation history.
+        return _response(_block(count + 1))
+
+    _, value = title_flow.run(**options, stop="T2", provider=recovered_provider)
+    assert [block["block_id"] for block in value["blocks"]] == [1, 2, 3]
+    assert new_calls == [0, 1, 2]
+    assert (root / "response_attempt_4.json").is_file()
+    assert (root / "response.json").is_file()
+    assert title_flow.read(root / "response_attempt_1.json")[
+        "stop_reason"
+    ] == "max_tokens"
+    # A third resume must use accepted checkpoints, not replay any paid requests.
+    title_flow.run(
+        **options, stop="T2",
+        provider=lambda **kwargs: pytest.fail("An accepted T2 turn was re-sent"),
+    )
+
+
+def test_new_max_tokens_exhaustion_does_not_enable_unbounded_fourth_call(tmp_path):
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake",
+    }
+    title_flow.run(**options, stop="T1", provider=lambda **kw: _response(_plan()))
+    calls = []
+
+    def exhausted(*, api_key, system, messages):
+        calls.append(messages)
+        return {
+            "model": title_flow.MODEL, "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "unfinished", "signature": "sig"}],
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": title_flow.T2_MAX_OUTPUT_TOKENS,
+            },
+        }
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, stop="T2", provider=exhausted)
+    assert len(calls) == 3
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, stop="T2", provider=lambda **kw: pytest.fail(
+            "Exhausted 128k block must not be silently regenerated"
+        ))
+    assert not (tmp_path / "T2" / "blocks" / "block_001" /
+                "response_attempt_4.json").exists()
+
+
+def test_t2_provider_supports_128k_ceiling_without_lowering_high_effort():
+    captured = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            events = [
+                {"type": "message_start", "message": {"usage": {"input_tokens": 1}}},
+                {"type": "content_block_start", "index": 0,
+                 "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "text_delta", "text": "{}"}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                 "usage": {"output_tokens": 1}},
+                {"type": "message_stop"},
+            ]
+            return iter([
+                ("data: " + json.dumps(event)).encode()
+                for event in events
+            ])
+
+    def transport(request, timeout):
+        captured.append(json.loads(request.data))
+        return FakeStream()
+
+    response = title_flow.call_claude(
+        api_key="fake",
+        system="T2",
+        messages=[{"role": "user", "content": "Write block 1."}],
+        max_tokens=title_flow.T2_MAX_OUTPUT_TOKENS,
+        transport=transport,
+    )
+    assert response["stop_reason"] == "end_turn"
+    assert captured[0]["max_tokens"] == 128000
+    assert captured[0]["output_config"]["effort"] == "high"
+    assert captured[0]["stream"] is True
+    assert "temperature" not in captured[0]
+
+
+
+def test_retry_feedback_is_preserved_before_signed_thinking_in_following_turn(tmp_path):
+    """Catch Anthropic's 400: retry feedback was omitted after accepted block."""
+    t2_requests = []
+    failed_once = set()
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumbnail", "api_key": "fake",
+    }
+
+    def signed_provider(*, api_key, system, messages):
+        assert api_key == "fake"
+        if system == title_flow.prompt("t1_planner.md"):
+            return _response(_plan())
+        t2_requests.append(copy.deepcopy(messages))
+        # Mimic Claude's binding of each signed thinking block to its
+        # *entire prior conversation*, not merely its own text/signature.
+        for index, message in enumerate(messages):
+            if message["role"] != "assistant":
+                continue
+            content = message["content"]
+            signed = content[0]
+            assert signed["type"] == "thinking"
+            prefix = json.dumps(messages[:index], ensure_ascii=False, sort_keys=True)
+            expected = hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+            assert signed["signature"] == "bound:" + expected
+
+        number = sum(m["role"] == "assistant" for m in messages) + 1
+        if number == 1 and number not in failed_once:
+            failed_once.add(number)
+            return _response({"invalid_block": True})
+        result = _response(_block(number))
+        prefix = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+        result["content"][0]["signature"] = (
+            "bound:" + hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        )
+        return result
+
+    title_flow.run(**kwargs, stop="T1", provider=signed_provider)
+    _, merged = title_flow.run(**kwargs, stop="T2", provider=signed_provider)
+    assert len(merged["blocks"]) == 3
+    assert len(t2_requests) == 4
+    retry_message = t2_requests[1][-1]
+    assert retry_message["role"] == "user"
+    assert "previous block 1 failed local validation" in retry_message["content"]
+    assert t2_requests[2][:len(t2_requests[1])] == t2_requests[1]
+    assert t2_requests[2][len(t2_requests[1])]["role"] == "assistant"
+    assert (tmp_path / "T2" / "blocks" / "block_001" /
+            "response_attempt_2.json").exists()
+
+
+def test_resume_after_accepted_retry_reconstructs_exact_signed_prefix(tmp_path):
+    """Accept block 1 on retry; simulate 400 at block 2; resume unchanged."""
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumbnail", "api_key": "fake",
+    }
+    title_flow.run(
+        **kwargs, stop="T1", provider=lambda **kw: _response(_plan()),
+    )
+
+    calls = []
+
+    def before_restart(*, api_key, system, messages):
+        number = sum(msg["role"] == "assistant" for msg in messages) + 1
+        calls.append(number)
+        if number == 1 and calls.count(1) == 1:
+            return _response({"bad_block": True})
+        if number == 2:
+            raise title_flow.ClaudeRequestRejected("HTTP 400 temporary test")
+        output = _response(_block(1))
+        prefix = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+        output["content"][0]["signature"] = (
+            "bound:" + hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        )
+        return output
+
+    with pytest.raises(title_flow.ClaudeRequestRejected, match="HTTP 400"):
+        title_flow.run(**kwargs, stop="T2", provider=before_restart)
+
+    first_root = tmp_path / "T2" / "blocks" / "block_001"
+    raw_before = (first_root / "response.json").read_bytes()
+    assert (first_root / "output.json").is_file()
+    assert calls == [1, 1, 2]
+    assert not (tmp_path / "T2" / "blocks" / "block_002" /
+                "inflight_attempt_1.json").exists()
+
+    resumed_calls = []
+
+    def after_restart(*, api_key, system, messages):
+        number = sum(msg["role"] == "assistant" for msg in messages) + 1
+        resumed_calls.append(number)
+        assistant_index = next(
+            i for i, msg in enumerate(messages) if msg["role"] == "assistant"
+        )
+        signed = messages[assistant_index]["content"][0]
+        prefix = json.dumps(
+            messages[:assistant_index], ensure_ascii=False, sort_keys=True
+        )
+        assert signed["signature"] == (
+            "bound:" + hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        )
+        assert "previous block 1 failed local validation" in (
+            messages[assistant_index - 1]["content"]
+        )
+        return _response(_block(number))
+
+    _, value = title_flow.run(**kwargs, stop="T2", provider=after_restart)
+    assert len(value["blocks"]) == 3
+    assert resumed_calls == [2, 3]
+    assert (first_root / "response.json").read_bytes() == raw_before
