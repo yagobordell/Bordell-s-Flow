@@ -20,7 +20,6 @@ from ai_video_factory.bots.professional_voice import generate_professional_audio
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
-from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
 
 try:
@@ -183,9 +182,22 @@ async def main(argv: list[str] | None = None) -> None:
     ebook_record = avatar.parent / "meta" / "ebook_covers.json"
     if ebook_record.is_symlink() or not ebook_record.is_file():
         raise SystemExit("Titulo requires an ebook already associated with the avatar")
-    ebook = _regular_png(ensure_ebook_covers(
-        avatar, data_dir=args.data_root,
-    ).files[0])
+    if ebook_record.is_symlink():
+        raise SystemExit("Linked ebook cover registry")
+    association = json.loads(ebook_record.read_text(encoding="utf-8"))
+    stored = association.get("covers", [])
+    if (
+        association.get("schema_version") != "ebook-covers-v1"
+        or association.get("avatar") != avatar.name
+        or not isinstance(stored, list) or len(stored) not in (1, 2)
+        or not isinstance(stored[0].get("sha256"), str)
+    ):
+        raise SystemExit("Avatar ebook association is malformed")
+    # Only the primary cover matters to Titulo. A damaged SECOND cover
+    # cannot block a run that never reads or sends it.
+    ebook = _regular_png(avatar.parent / "meta" / "ebook" / "cover_1.png")
+    if title_flow.sha(ebook) != stored[0]["sha256"]:
+        raise SystemExit("Primary ebook cover differs from registered SHA-256")
     output = args.output / script.stem
     if output.is_symlink() or output.is_junction():
         raise SystemExit("Linked title work directory")
@@ -218,13 +230,27 @@ async def main(argv: list[str] | None = None) -> None:
         "thumbnail_sha256": title_flow.sha(thumbnail),
     }
     if args.stop is None:
-        if not settings.openai_api_key or not settings.gemini_api_key:
+        if (
+            not settings.openai_api_key and (not args.no_audio or not args.no_image)
+        ) or (not settings.gemini_api_key and not args.no_audio):
             raise SystemExit(
-                "OPENAI_API_KEY and GEMINI_API_KEY are required for full Title production"
+                "OPENAI_API_KEY and GEMINI_API_KEY are required for enabled "
+                "Professional Title production stages"
+            )
+        voice_file = avatar.parent / "meta" / "gemini_voice.json"
+        if (not args.no_audio and not voice_file.is_file()
+                and not sys.stdin.isatty() and args.voice_id is None):
+            raise SystemExit(
+                "Titulo requires --voice-id on the first noninteractive "
+                "Gemini audio run, before any paid T1/T2 request"
             )
     api_key = os.getenv("ANTHROPIC_API_KEY") or professional._runtime_env_value("ANTHROPIC_API_KEY")
-    if not api_key and not (output / "T2" / "merged_output.json").is_file():
-        raise SystemExit("ANTHROPIC_API_KEY is required for T1/T2")
+    checkpoint_available = (
+        (args.stop == "T1" and (output / "T1" / "output.json").is_file())
+        or (output / "T2" / "merged_output.json").is_file()
+    )
+    if not api_key and not checkpoint_available:
+        raise SystemExit("ANTHROPIC_API_KEY is required for uncached T1/T2")
     try:
         if (output / "run_report.json").is_file():
             previous = title_flow.read(output / "run_report.json")
