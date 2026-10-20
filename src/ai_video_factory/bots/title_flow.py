@@ -396,6 +396,50 @@ def image_plan(value: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _t2_retry_turn(root: Path, *, block: int, attempt: int) -> dict[str, Any]:
+    """Recreate the exact user turn that preceded a successful retry.
+
+    Anthropic binds signed thinking to the full preceding prefix. Omitting
+    the validator feedback after accepting attempt >= 2 invalidates that
+    thinking signature in all subsequent T2 calls. Never edit or strip the
+    original assistant content to work around this.
+    """
+    if attempt <= 1:
+        raise TitleContractError("T2 retry turn requires attempt >= 2")
+    rejection = read(root / f"rejection_{attempt - 1}.json")
+    reason = rejection.get("reason")
+    if not isinstance(reason, str) or not reason:
+        raise TitleContractError(f"Missing T2 retry reason for block {block}")
+    return {
+        "role": "user",
+        "content": (
+            f"Your previous block {block} failed local validation: "
+            f"{reason}. Rewrite block {block} "
+            "only; all previously accepted blocks are fixed."
+        ),
+    }
+
+
+def _accepted_t2_attempt(root: Path, response: dict[str, Any]) -> int:
+    """Find the original, fully saved request for an accepted T2 assistant turn.
+
+    Old checkpoints did not record an accepted attempt index; recovering it
+    from the *immutable raw response* allows exact prefix replay with no paid
+    API calls. Refuse missing/ambiguous history rather than forging context.
+    """
+    matches: list[int] = []
+    for path in root.glob("response_attempt_*.json"):
+        found = re.fullmatch(r"response_attempt_([1-9][0-9]*)[.]json", path.name)
+        if found and read(path) == response:
+            matches.append(int(found.group(1)))
+    if len(matches) != 1:
+        raise TitleContractError(
+            f"T2 accepted response has {len(matches)} matching raw attempts "
+            f"in {root}; cannot safely replay signed thinking"
+        )
+    return matches[0]
+
+
 def run(
     *, output: Path, avatar: str, title: str, ebook: bytes, thumbnail: bytes,
     api_key: str, stop: str | None = None,
@@ -508,6 +552,7 @@ def run(
             block = validate_block(result, number, plan, blocks)
             if parse(response) != result:
                 raise TitleContractError("T2 raw response differs from accepted checkpoint")
+            accepted_attempt = _accepted_t2_attempt(root, response)
         else:
             input_path = root / "input.json"
             identity = {
@@ -559,15 +604,9 @@ def run(
                     write(inflight, {"submitted": True, "attempt": attempt})
                     request_history = history
                     if attempt > 1:
-                        rejection = read(
-                            root / f"rejection_{attempt - 1}.json"
-                        )
                         request_history = [
-                            *history, {"role": "user", "content": (
-                                f"Your previous block {number} failed local validation: "
-                                f"{rejection['reason']}. Rewrite block {number} "
-                                "only; all previously accepted blocks are fixed."
-                            )},
+                            *history,
+                            _t2_retry_turn(root, block=number, attempt=attempt),
                         ]
                     try:
                         # Keep existing injected test providers' three-argument
@@ -601,8 +640,16 @@ def run(
                     continue
                 write(resp_file, response)
                 write(out_file, result)
+                accepted_attempt = attempt
                 break
         blocks.append(block)
+        # The retry message was part of the accepted response's *signed
+        # prefix*, not just a temporary validation hint. Keep it before the
+        # assistant turn in every subsequent request, including on --resume.
+        if accepted_attempt > 1:
+            history.append(
+                _t2_retry_turn(root, block=number, attempt=accepted_attempt)
+            )
         history.append({"role": "assistant", "content": response["content"]})
     value = merged(plan, blocks)
     write(output / "T2" / "merged_output.json", value)
