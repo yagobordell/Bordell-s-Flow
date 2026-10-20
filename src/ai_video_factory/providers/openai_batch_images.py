@@ -239,6 +239,8 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
             "visual_type": beat.get("visual_type"),
             "text": beat.get("text"),
             "description": description,
+            **({"title_global_group": beat["title_global_group"]}
+               if beat.get("title_global_group") is not None else {}),
             **({"generation": generation} if generation is not None else {}),
             **(
                 {"cta_group_id": beat["cta_group_id"]}
@@ -729,7 +731,9 @@ def generate_b2_images(
         previous = job.get("continuity_previous_asset_id")
         if previous is None:
             continue
-        parent = job_index.get((job["block_id"], previous))
+        parent = job_index.get((
+            job.get("continuity_previous_block_id", job["block_id"]), previous,
+        ))
         if parent is None or parent >= i or jobs[parent].get("grid") is None:
             raise ImageGenerationError("Invalid chronological grid continuation dependency")
         if parent in children:
