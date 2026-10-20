@@ -219,7 +219,9 @@ async def main(argv: list[str] | None = None) -> None:
     }
     if args.stop is None:
         if not settings.openai_api_key or not settings.gemini_api_key:
-            raise SystemExit("OPENAI_API_KEY and GEMINI_API_KEY are required for full Title production")
+            raise SystemExit(
+                "OPENAI_API_KEY and GEMINI_API_KEY are required for full Title production"
+            )
     api_key = os.getenv("ANTHROPIC_API_KEY") or professional._runtime_env_value("ANTHROPIC_API_KEY")
     if not api_key and not (output / "T2" / "merged_output.json").is_file():
         raise SystemExit("ANTHROPIC_API_KEY is required for T1/T2")
@@ -259,8 +261,8 @@ async def main(argv: list[str] | None = None) -> None:
         # Casero and Profesional retain their persisted visual style and voice.
         # Title uses a separate Gemini voice; noninteractive use requires --voice-id.
         existing_voice = avatar.parent / "meta" / "gemini_voice.json"
-        if (not existing_voice.is_file() and not sys.stdin.isatty()
-                and args.voice_id is None):
+        if (not args.no_audio and not existing_voice.is_file()
+                and not sys.stdin.isatty() and args.voice_id is None):
             raise SystemExit(
                 "Titulo needs --voice-id for the first noninteractive Gemini setup"
             )
@@ -290,7 +292,9 @@ async def main(argv: list[str] | None = None) -> None:
                 raise SystemExit("Saved visual plan differs from immutable T2")
         title_flow.write(visual_path, visual)
         from ai_video_factory.workflows.r2_run_scope import (
-            reset_active_video_scope, saved_video_scope, set_active_video_scope,
+            reset_active_video_scope,
+            saved_video_scope,
+            set_active_video_scope,
             video_run_scope,
         )
         scope = (
