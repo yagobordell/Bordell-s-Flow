@@ -734,7 +734,15 @@ def generate_b2_images(
         parent = job_index.get((
             job.get("continuity_previous_block_id", job["block_id"]), previous,
         ))
-        if parent is None or parent >= i or jobs[parent].get("grid") is None:
+        parent_is_title_world = (
+            parent is not None and plan.get("flow") == "titulo"
+            and job.get("title_global_group") is not None
+            and jobs[parent].get("title_global_group") == job["title_global_group"]
+        )
+        if (
+            parent is None or parent >= i
+            or (jobs[parent].get("grid") is None and not parent_is_title_world)
+        ):
             raise ImageGenerationError("Invalid chronological grid continuation dependency")
         if parent in children:
             raise ImageGenerationError("A completed grid cannot branch to two continuations")
@@ -791,8 +799,15 @@ def generate_b2_images(
             source_url: str | None = None
             effective_job = job
             if job.get("continuity_previous_asset_id") is not None:
-                if predecessor is None or predecessor.get("grid") is None:
-                    raise ImageGenerationError("Chained grid predecessor has not completed")
+                compatible_title_world = (
+                    predecessor is not None and plan.get("flow") == "titulo"
+                    and job.get("title_global_group") is not None
+                    and predecessor.get("title_global_group") == job["title_global_group"]
+                )
+                if predecessor is None or (
+                    predecessor.get("grid") is None and not compatible_title_world
+                ):
+                    raise ImageGenerationError("Chained image predecessor has not completed")
                 source = output / predecessor["file"]
                 if source.is_symlink() or not source.is_file():
                     raise ImageGenerationError("Missing or linked prior grid reference")
