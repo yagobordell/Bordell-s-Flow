@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import sys
@@ -20,7 +19,6 @@ from ai_video_factory.bots import title_flow
 from ai_video_factory.bots.professional_voice import generate_professional_audio
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
-from ai_video_factory.providers.avatar_library import ensure_avatar_meta
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
