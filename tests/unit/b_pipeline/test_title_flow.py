@@ -117,7 +117,7 @@ def test_globally_lettered_groups_become_cross_block_image_references():
     visual = title_flow.image_plan(m)
     assert visual["schema_version"] == "b-pipeline-v1"
     assert visual["blocks"][1]["beats"][0]["title_global_group"] == "A"
-    assert visual["blocks"][1]["beats"][0]["prompt"].startswith("Next")
+    assert visual["blocks"][1]["beats"][0]["prompt"].startswith("Woman picks up")
     jobs = plan_image_jobs(visual, described_beats(visual))
     first, second = jobs
     assert second["continuity_previous_asset_id"] == first["asset_id"]
