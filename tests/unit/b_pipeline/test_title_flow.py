@@ -28,7 +28,7 @@ def _plan() -> dict:
 
 def _block(n: int, *, bad: bool = False) -> dict:
     kind = ("intro", "development", "close")[n - 1]
-    content = ("First scene.", "Next.", "Goodbye.")[n - 1]
+    content = ("First scene. ", "Next. ", "Goodbye.")[n - 1]
     p = ("A1. Woman views phone at a desk.", "A2. Woman picks up phone at a desk.", None)[n - 1]
     return {"block": {
         "block_id": n, "type": kind, "emotional_entry": "Expecting an answer",
