@@ -201,7 +201,10 @@ async def main(argv: list[str] | None = None) -> None:
     output = args.output / script.stem
     if output.is_symlink() or output.is_junction():
         raise SystemExit("Linked title work directory")
-    if output.exists() and not (output / "T1" / "input.json").is_file():
+    if output.exists() and not (
+        (output / "T1" / "input.json").is_file()
+        or (output / "T1" / "inputs" / "title.txt").is_file()
+    ):
         raise SystemExit("Existing work folder is not a verified Title run")
     if args.from_stage == "T2" and not (output / "T1" / "output.json").is_file():
         raise SystemExit("--from T2 requires a completed, validated T1 checkpoint")
