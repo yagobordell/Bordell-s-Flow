@@ -179,7 +179,8 @@ def test_distinct_frames_are_not_flagged():
 
 def test_recurring_person_descriptor_alone_does_not_count():
     errors = _b2_repetition_errors([_frames(
-        _frame("2A", "A man in his 30s wearing a charcoal shirt types at a laptop in an office corridor."),
+        _frame("2A", "A man in his 30s wearing a charcoal shirt types at a laptop "
+               "in an office corridor."),
         _frame("2B", "A man in his 30s wearing a charcoal shirt slides an envelope "
                "across a post office counter."),
     )])
