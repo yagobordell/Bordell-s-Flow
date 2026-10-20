@@ -256,7 +256,14 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
                     beat.update({
                         "visual_type": "media_image", "audio": False,
                         "reference": False, "video_prompt": None,
-                        "prompt": "Ordinary B2 static composition.",
+                        "prompt": {
+                            "1A": "A wooden desk holds a pencil and an open notebook "
+                                  "beneath a desk lamp.",
+                            "1B": "A blue paperback book lies next to a smartphone "
+                                  "on a tiled cafe table.",
+                            "1C": "A frosted glass window overlooks a brick sidewalk "
+                                  "beneath a broad autumn tree.",
+                        }[beat["beat_id"]],
                     })
                 return ProfessionalB2BatchOutput.model_validate({
                     "pipeline_stage": "B2",
@@ -300,13 +307,13 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
     ))
     assert result.cta_groups == (("1B",),)
     normal = result.b2[0].blocks[0].beats[1]
-    assert normal.prompt == "Ordinary B2 static composition."
+    assert normal.prompt.startswith("A blue paperback book")
     final = result.visual_plan()["blocks"][0]["beats"]
-    assert final[0]["prompt"] == "Ordinary B2 static composition."
+    assert final[0]["prompt"].startswith("A wooden desk holds")
     assert final[1]["prompt"] == _visual("1B").prompt
     assert final[1]["visual_type"] == "media_video"
     assert final[1]["reference"] is True
     assert final[1]["cta_reference_sources"] == ["ebook"]
-    assert final[2]["prompt"] == "Ordinary B2 static composition."
+    assert final[2]["prompt"].startswith("A frosted glass window")
     assert captured_b21
     assert "cta_reference_sources" not in captured_b21[0]["blocks"][0]["beats"][1]
