@@ -240,3 +240,134 @@ def test_definitive_t2_rejection_retains_accepted_t1(tmp_path):
     t2_root = tmp_path / "T2" / "blocks" / "block_001"
     assert not (t2_root / "inflight_attempt_1.json").exists()
     assert (tmp_path / "T1" / "output.json").is_file()
+
+
+
+def test_t2_legacy_max_tokens_exhaustion_recovers_on_fourth_only(tmp_path):
+    """Replay all three billable capped turns; send only one new request."""
+    old_calls = []
+
+    def legacy_provider(*, api_key, system, messages):
+        old_calls.append(len(messages))
+        return {
+            "model": title_flow.MODEL,
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "too long", "signature": "sig"}],
+            "usage": {"input_tokens": 500, "output_tokens": 32000},
+        }
+
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake",
+    }
+    title_flow.run(**options, stop="T1", provider=lambda **kw: _response(_plan()))
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, stop="T2", provider=legacy_provider)
+    assert len(old_calls) == 3
+
+    root = tmp_path / "T2" / "blocks" / "block_001"
+    for attempt in (1, 2, 3):
+        assert title_flow.read(root / f"response_attempt_{attempt}.json")[
+            "stop_reason"
+        ] == "max_tokens"
+        assert (root / f"rejection_{attempt}.json").is_file()
+        assert not (root / f"inflight_attempt_{attempt}.json").exists()
+
+    new_calls = []
+
+    def recovered_provider(*, api_key, system, messages):
+        count = sum(msg["role"] == "assistant" for msg in messages)
+        new_calls.append(count)
+        # Invalid T2 turns are never inserted into accepted conversation history.
+        return _response(_block(count + 1))
+
+    _, value = title_flow.run(**options, stop="T2", provider=recovered_provider)
+    assert [block["block_id"] for block in value["blocks"]] == [1, 2, 3]
+    assert new_calls == [0, 1, 2]
+    assert (root / "response_attempt_4.json").is_file()
+    assert (root / "response.json").is_file()
+    assert title_flow.read(root / "response_attempt_1.json")[
+        "stop_reason"
+    ] == "max_tokens"
+    # A third resume must use accepted checkpoints, not replay any paid requests.
+    title_flow.run(
+        **options, stop="T2",
+        provider=lambda **kwargs: pytest.fail("An accepted T2 turn was re-sent"),
+    )
+
+
+def test_new_max_tokens_exhaustion_does_not_enable_unbounded_fourth_call(tmp_path):
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake",
+    }
+    title_flow.run(**options, stop="T1", provider=lambda **kw: _response(_plan()))
+    calls = []
+
+    def exhausted(*, api_key, system, messages):
+        calls.append(messages)
+        return {
+            "model": title_flow.MODEL, "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "unfinished", "signature": "sig"}],
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": title_flow.T2_MAX_OUTPUT_TOKENS,
+            },
+        }
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, stop="T2", provider=exhausted)
+    assert len(calls) == 3
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, stop="T2", provider=lambda **kw: pytest.fail(
+            "Exhausted 128k block must not be silently regenerated"
+        ))
+    assert not (tmp_path / "T2" / "blocks" / "block_001" /
+                "response_attempt_4.json").exists()
+
+
+def test_t2_provider_supports_128k_ceiling_without_lowering_high_effort():
+    captured = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            events = [
+                {"type": "message_start", "message": {"usage": {"input_tokens": 1}}},
+                {"type": "content_block_start", "index": 0,
+                 "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "text_delta", "text": "{}"}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                 "usage": {"output_tokens": 1}},
+                {"type": "message_stop"},
+            ]
+            return iter([
+                ("data: " + json.dumps(event) + "\\n").encode()
+                for event in events
+            ])
+
+    def transport(request, timeout):
+        captured.append(json.loads(request.data))
+        return FakeStream()
+
+    response = title_flow.call_claude(
+        api_key="fake",
+        system="T2",
+        messages=[{"role": "user", "content": "Write block 1."}],
+        max_tokens=title_flow.T2_MAX_OUTPUT_TOKENS,
+        transport=transport,
+    )
+    assert response["stop_reason"] == "end_turn"
+    assert captured[0]["max_tokens"] == 128000
+    assert captured[0]["output_config"]["effort"] == "high"
+    assert captured[0]["stream"] is True
+    assert "temperature" not in captured[0]
