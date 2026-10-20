@@ -366,10 +366,17 @@ def run(
                     output / "T1" / f"response_attempt_{attempt - 1}.json"
                 ).is_file():
                     raise TitleContractError("T1 previous request outcome uncertain")
+                inflight = output / "T1" / f"inflight_attempt_{attempt}.json"
+                if inflight.is_file():
+                    raise TitleContractError(
+                        "T1 prior request outcome uncertain; manual reconciliation required"
+                    )
+                write(inflight, {"submitted": True, "attempt": attempt})
                 response = provider(
                     api_key=api_key, system=prompt("t1_planner.md"), messages=first,
                 )
                 write(response_path, response)
+                inflight.unlink()
             try:
                 candidate = parse(response)
                 validate_plan(candidate)
@@ -424,10 +431,13 @@ def run(
                 if read(input_path) != identity:
                     raise TitleContractError("T2 prior turn input differs")
                 if not list(root.glob("response_attempt_*.json")):
-                    raise TitleContractError(
-                        "T2 request may already have been submitted without a response; "
-                        "manual reconciliation is required"
-                    )
+                    if list(root.glob("inflight_attempt_*.json")):
+                        raise TitleContractError(
+                            "T2 request may already have been submitted without a response; "
+                            "manual reconciliation is required"
+                        )
+                    # A setup crash before the provider call may leave input.json
+                    # only. The next attempt uses a separate inflight marker.
             else:
                 write(input_path, identity)
             for attempt in range(1, 4):
@@ -435,10 +445,18 @@ def run(
                 if attempt_path.is_file():
                     response = read(attempt_path)
                 else:
+                    inflight = root / f"inflight_attempt_{attempt}.json"
+                    if inflight.is_file():
+                        raise TitleContractError(
+                            f"T2 block {number} attempt {attempt} has uncertain outcome; "
+                            "manual reconciliation required"
+                        )
+                    write(inflight, {"submitted": True, "attempt": attempt})
                     response = provider(
                         api_key=api_key, system=prompt("t2_director.md"), messages=history,
                     )
                     write(attempt_path, response)
+                    inflight.unlink()
                 try:
                     result = parse(response)
                     block = validate_block(result, number, plan, blocks)
