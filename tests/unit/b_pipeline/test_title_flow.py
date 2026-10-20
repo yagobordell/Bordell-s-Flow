@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 from urllib.error import HTTPError
@@ -371,3 +372,118 @@ def test_t2_provider_supports_128k_ceiling_without_lowering_high_effort():
     assert captured[0]["output_config"]["effort"] == "high"
     assert captured[0]["stream"] is True
     assert "temperature" not in captured[0]
+
+
+
+def test_retry_feedback_is_preserved_before_signed_thinking_in_following_turn(tmp_path):
+    """Catch Anthropic's 400: retry feedback was omitted after accepted block."""
+    t2_requests = []
+    failed_once = set()
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumbnail", "api_key": "fake",
+    }
+
+    def signed_provider(*, api_key, system, messages):
+        assert api_key == "fake"
+        if system == title_flow.prompt("t1_planner.md"):
+            return _response(_plan())
+        t2_requests.append(copy.deepcopy(messages))
+        # Mimic Claude's binding of each signed thinking block to its
+        # *entire prior conversation*, not merely its own text/signature.
+        for index, message in enumerate(messages):
+            if message["role"] != "assistant":
+                continue
+            content = message["content"]
+            signed = content[0]
+            assert signed["type"] == "thinking"
+            prefix = json.dumps(messages[:index], ensure_ascii=False, sort_keys=True)
+            expected = hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+            assert signed["signature"] == "bound:" + expected
+
+        number = sum(m["role"] == "assistant" for m in messages) + 1
+        if number == 1 and number not in failed_once:
+            failed_once.add(number)
+            return _response({"invalid_block": True})
+        result = _response(_block(number))
+        prefix = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+        result["content"][0]["signature"] = (
+            "bound:" + hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        )
+        return result
+
+    title_flow.run(**kwargs, stop="T1", provider=signed_provider)
+    _, merged = title_flow.run(**kwargs, stop="T2", provider=signed_provider)
+    assert len(merged["blocks"]) == 3
+    assert len(t2_requests) == 4
+    retry_message = t2_requests[1][-1]
+    assert retry_message["role"] == "user"
+    assert "previous block 1 failed local validation" in retry_message["content"]
+    assert t2_requests[2][:len(t2_requests[1])] == t2_requests[1]
+    assert t2_requests[2][len(t2_requests[1])]["role"] == "assistant"
+    assert (tmp_path / "T2" / "blocks" / "block_001" /
+            "response_attempt_2.json").exists()
+
+
+def test_resume_after_accepted_retry_reconstructs_exact_signed_prefix(tmp_path):
+    """Accept block 1 on retry; simulate 400 at block 2; resume unchanged."""
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumbnail", "api_key": "fake",
+    }
+    title_flow.run(
+        **kwargs, stop="T1", provider=lambda **kw: _response(_plan()),
+    )
+
+    calls = []
+
+    def before_restart(*, api_key, system, messages):
+        number = sum(msg["role"] == "assistant" for msg in messages) + 1
+        calls.append(number)
+        if number == 1 and calls.count(1) == 1:
+            return _response({"bad_block": True})
+        if number == 2:
+            raise title_flow.ClaudeRequestRejected("HTTP 400 temporary test")
+        output = _response(_block(1))
+        prefix = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+        output["content"][0]["signature"] = (
+            "bound:" + hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        )
+        return output
+
+    with pytest.raises(title_flow.ClaudeRequestRejected, match="HTTP 400"):
+        title_flow.run(**kwargs, stop="T2", provider=before_restart)
+
+    first_root = tmp_path / "T2" / "blocks" / "block_001"
+    raw_before = (first_root / "response.json").read_bytes()
+    assert (first_root / "output.json").is_file()
+    assert calls == [1, 1, 2]
+    assert not (tmp_path / "T2" / "blocks" / "block_002" /
+                "inflight_attempt_1.json").exists()
+
+    resumed_calls = []
+
+    def after_restart(*, api_key, system, messages):
+        number = sum(msg["role"] == "assistant" for msg in messages) + 1
+        resumed_calls.append(number)
+        assistant_index = next(
+            i for i, msg in enumerate(messages) if msg["role"] == "assistant"
+        )
+        signed = messages[assistant_index]["content"][0]
+        prefix = json.dumps(
+            messages[:assistant_index], ensure_ascii=False, sort_keys=True
+        )
+        assert signed["signature"] == (
+            "bound:" + hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        )
+        assert "previous block 1 failed local validation" in (
+            messages[assistant_index - 1]["content"]
+        )
+        return _response(_block(number))
+
+    _, value = title_flow.run(**kwargs, stop="T2", provider=after_restart)
+    assert len(value["blocks"]) == 3
+    assert resumed_calls == [2, 3]
+    assert (first_root / "response.json").read_bytes() == raw_before
