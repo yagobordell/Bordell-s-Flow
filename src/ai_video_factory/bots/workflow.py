@@ -309,9 +309,8 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     length_errors = _beat_character_length_errors(restored_beats)
     if length_errors:
         raise BPipelineValidationError("; ".join(length_errors))
-    minimum_errors = _beat_minimum_character_errors(restored_beats, block.text, block.type)
-    if minimum_errors:
-        raise BPipelineValidationError("; ".join(minimum_errors))
+    # Beat segmentation follows narration rhythm, with no minimum character
+    # length. Short intentional beats remain valid after source restoration.
     result.beats = restored_beats
     return restored_beats
 
