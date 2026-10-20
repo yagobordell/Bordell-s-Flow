@@ -30,6 +30,7 @@ except ModuleNotFoundError as exc:
     from run_b_pipeline import available_avatars, load_avatar_png
 
 CORE = Path(__file__).with_name("run_b_pipeline.py")
+TITLE_CORE = Path(__file__).with_name("run_title_pipeline.py")
 WORK_ROOT = Path(".video_factory_work")
 _HELP = """usage: run.ps1 [script] [avatar] [options]
 Put a new avatar PNG and its first TXT directly in data/. After the first run,
@@ -38,7 +39,8 @@ One raw TXT = pending; a folder with that TXT = started or completed.
 The persistent QR, voice, optional clone audio and one-time visual style
 are saved in data/<avatar>/meta/. A conflicting --style is refused.
 
-Options include --no-image, --no-video, --style, --from B2, --rerun,
+Options include --flow titulo --thumbnail NAME --stop T1|T2 --from T2 --resume,
+--no-image, --no-video, --style, --from B2, --rerun,
 --images-only, --generate-video, --subtitles, --no-subtitles,
 --cta-motion automatic|manual, --resume-audio, --regenerate-audio,
 --publish-only, --youtube-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
@@ -368,6 +370,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.executable, str(CORE), "--qr-only",
             "--avatars-dir", str(data), "--avatar", qr_avatar, *flags,
         ])
+    title_mode = False
+    if "--flow" in flags:
+        index = flags.index("--flow")
+        if index + 1 == len(flags) or flags[index + 1] != "titulo":
+            raise SystemExit("--flow requires 'titulo'")
+        del flags[index:index + 2]
+        title_mode = True
+    if not title_mode and ("--thumbnail" in flags or "--resume" in flags):
+        raise SystemExit("--thumbnail/--resume require --flow titulo")
+    if title_mode:
+        forbidden = {
+            "--style", "--b2-style", "--tts-provider", "--voice-audio", "--default-voice",
+            "--subtitles", "--no-subtitles", "--cta-motion",
+            "--images-only", "--videos-only", "--generate-video",
+            "--regenerate-audio", "--resume-audio", "--publish-only",
+            "--youtube-only", "--sync-only", "--replace-professional-voice",
+        }
+        if forbidden.intersection(flags):
+            raise SystemExit("Titulo cannot use legacy B/Casero-only options")
+        if "--stop" in flags:
+            pos = flags.index("--stop")
+            if pos + 1 == len(flags) or flags[pos + 1] not in {"T1", "T2"}:
+                raise SystemExit("Titulo --stop must be T1 or T2")
+        if "--from" in flags:
+            pos = flags.index("--from")
+            if pos + 1 == len(flags) or flags[pos + 1] != "T2":
+                raise SystemExit("Titulo --from must be T2")
     rerun = "--rerun" in flags
     if rerun:
         flags.remove("--rerun")
@@ -382,7 +411,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(
                 "--rerun starts from B1.1 and cannot be combined with resume options"
             )
-    resume = _is_resume(flags)
+    resume = _is_resume(flags) or (title_mode and "--resume" in flags)
+    if title_mode and script_arg and avatar_arg and not rerun:
+        key_avatar = _name(avatar_arg, ".png")
+        key_script = _name(script_arg, ".txt")
+        if (data / key_avatar / key_script).is_dir():
+            resume = True
     discovery_resume = resume or rerun
     if avatar_arg:
         avatar = _name(avatar_arg, ".png")
@@ -427,6 +461,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if index + 1 == len(flags):
             raise SystemExit("--voice-audio requires a file name")
         reference_audio = flags[index + 1]
+    if title_mode:
+        if "--thumbnail" in flags:
+            index = flags.index("--thumbnail")
+            if index + 1 == len(flags):
+                raise SystemExit("--thumbnail requires a PNG name")
+            thumbnail_name = _name(flags[index + 1], ".png")
+            thumbnail_file = data / (thumbnail_name + ".png")
+            if thumbnail_file.is_symlink() or not thumbnail_file.is_file():
+                raise SystemExit(f"Thumbnail PNG not found in data/: {thumbnail_file}")
+        elif not resume:
+            raise SystemExit("First Title run requires --thumbnail NAME from data/")
+        if not (data / avatar / "meta" / "ebook_covers.json").is_file():
+            raise SystemExit("Title requires an already associated ebook cover")
     _, source = prepare_managed_script(
         data, avatar, script, resume=resume, reference_audio=reference_audio
     )
@@ -449,6 +496,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  Verified available media: {media}")
         print(f"  Human-facing report: {destination / 'outputs' / 'run_report.json'}")
         return 0
+    if title_mode:
+        command = [
+            sys.executable, str(TITLE_CORE), str(source),
+            "--avatar", avatar, "--data-root", str(data),
+            "--output", str(work_root), "--managed-target", str(destination),
+            *flags,
+        ]
+        print(f"  Titulo | Avatar: {avatar} | Title: {source} | Work: {work_root}")
+        try:
+            return subprocess.call(command)
+        finally:
+            sync_managed_outputs(work, destination)
     command = [
         sys.executable, str(CORE), str(source),
         "--avatars-dir", str(data),
