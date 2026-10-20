@@ -351,7 +351,7 @@ def test_t2_provider_supports_128k_ceiling_without_lowering_high_effort():
                 {"type": "message_stop"},
             ]
             return iter([
-                ("data: " + json.dumps(event) + "\\n").encode()
+                ("data: " + json.dumps(event)).encode()
                 for event in events
             ])
 
