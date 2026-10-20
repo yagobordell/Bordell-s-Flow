@@ -300,6 +300,8 @@ def image_plan(value: dict[str, Any]) -> dict[str, Any]:
         for beat in block["beats"]:
             marker = parse_grid_marker(beat.get("prompt"))
             if marker and marker.style == "lettered":
+                beat["title_global_group"] = marker.sequence_id
+                beat["title_global_position"] = marker.panel_number
                 groups.setdefault(marker.sequence_id, []).append(beat)
         reserved = set(groups)
         serial = 1
@@ -319,7 +321,11 @@ def image_plan(value: dict[str, Any]) -> dict[str, Any]:
                 for n, beat in enumerate(chunk, 1):
                     body = parse_grid_marker(beat["prompt"]).body
                     beat["prompt"] = format_grid_marker("lettered", new_id, n, body)
-    return {"visual_style": "profesional", "blocks": data["blocks"]}
+    return {
+        "schema_version": "b-pipeline-v1", "flow": "titulo",
+        "visual_style": "profesional", "narrative_core": data["narrative_core"],
+        "blocks": data["blocks"],
+    }
 
 
 def run(
@@ -348,18 +354,35 @@ def run(
         plan = read(result_path)
         validate_plan(plan)
     else:
+        # A completed HTTP response may have been checkpointed just before
+        # the process stopped. Reconcile it, never submit the same turn twice.
+        accepted_plan = None
         for attempt in range(1, 4):
-            response = provider(api_key=api_key, system=prompt("t1_planner.md"), messages=first)
-            write(output / "T1" / f"response_attempt_{attempt}.json", response)
+            response_path = output / "T1" / f"response_attempt_{attempt}.json"
+            if response_path.is_file():
+                response = read(response_path)
+            else:
+                if attempt > 1 and not (
+                    output / "T1" / f"response_attempt_{attempt - 1}.json"
+                ).is_file():
+                    raise TitleContractError("T1 previous request outcome uncertain")
+                response = provider(
+                    api_key=api_key, system=prompt("t1_planner.md"), messages=first,
+                )
+                write(response_path, response)
             try:
-                plan = parse(response)
-                validate_plan(plan)
+                candidate = parse(response)
+                validate_plan(candidate)
             except TitleContractError:
                 if attempt == 3:
                     raise
                 continue
-            write(result_path, plan)
+            accepted_plan = candidate
             break
+        if accepted_plan is None:
+            raise TitleContractError("T1 exhausted validation retries")
+        plan = accepted_plan
+        write(result_path, plan)
     if stop == "T1":
         return plan, None
     first_text = (
@@ -378,27 +401,51 @@ def run(
         resp_file = root / "response.json"
         if out_file.is_file() or resp_file.is_file():
             if not (out_file.is_file() and resp_file.is_file()):
-                raise TitleContractError("Incomplete accepted T2 checkpoint; reconcile manually")
+                # A raw accepted response may have been saved before the
+                # validated output was committed. Reconstruct it deterministically.
+                if not resp_file.is_file():
+                    raise TitleContractError("Accepted T2 result lacks original response")
+                response = read(resp_file)
+                result = parse(response)
+                validate_block(result, number, plan, blocks)
+                write(out_file, result)
             result = read(out_file)
             response = read(resp_file)
             block = validate_block(result, number, plan, blocks)
             if parse(response) != result:
                 raise TitleContractError("T2 raw response differs from accepted checkpoint")
         else:
-            write(root / "input.json", {
+            input_path = root / "input.json"
+            identity = {
                 "block_id": number, "prior_blocks": len(blocks),
                 "plan_sha256": sha(json.dumps(plan, sort_keys=True).encode()),
-            })
+            }
+            if input_path.is_file():
+                if read(input_path) != identity:
+                    raise TitleContractError("T2 prior turn input differs")
+                if not list(root.glob("response_attempt_*.json")):
+                    raise TitleContractError(
+                        "T2 request may already have been submitted without a response; "
+                        "manual reconciliation is required"
+                    )
+            else:
+                write(input_path, identity)
             for attempt in range(1, 4):
-                response = provider(
-                    api_key=api_key, system=prompt("t2_director.md"), messages=history,
-                )
-                write(root / f"response_attempt_{attempt}.json", response)
+                attempt_path = root / f"response_attempt_{attempt}.json"
+                if attempt_path.is_file():
+                    response = read(attempt_path)
+                else:
+                    response = provider(
+                        api_key=api_key, system=prompt("t2_director.md"), messages=history,
+                    )
+                    write(attempt_path, response)
                 try:
                     result = parse(response)
                     block = validate_block(result, number, plan, blocks)
                 except TitleContractError as exc:
-                    write(root / f"rejection_{attempt}.json", {"reason": str(exc)})
+                    rejection = root / f"rejection_{attempt}.json"
+                    if not rejection.is_file():
+                        write(rejection, {"reason": str(exc)})
                     if attempt == 3:
                         raise
                     continue
