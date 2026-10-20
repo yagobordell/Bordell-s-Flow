@@ -85,6 +85,109 @@ def _cta_groups(blocks: list[dict[str, object]]) -> list[list[str]]:
     return [groups[i] for i in sorted(groups)]
 
 
+def _image_plan_annotations(manifest: dict[str, object]) -> dict[str, list[dict[str, object]]]:
+    """Recreate ONLY the image annotations written by _generate_images.
+
+    They are produced after expensive image generation and are not part of
+    Claude's immutable T2 plan. Check their provenance against the saved
+    completed image manifest before accepting a resumed visual plan.
+    """
+    if manifest.get("status") != "completed" or manifest.get("finishing_status") != "completed":
+        raise title_flow.TitleContractError(
+            "Saved visual plan contains image assets without a completed image manifest"
+        )
+    final_assets = manifest.get("final_assets")
+    items = manifest.get("items")
+    if not isinstance(final_assets, list) or not isinstance(items, list):
+        raise title_flow.TitleContractError("Malformed completed image manifest")
+    try:
+        image_assets = [
+            {
+                "block_id": item["block_id"],
+                "beat_id": item["beat_id"],
+                "asset_id": item.get("asset_id", item["beat_id"]),
+                **(
+                    {
+                        "subshot_index": item["subshot_index"],
+                        "subshot_count": item["subshot_count"],
+                    }
+                    if isinstance(item.get("subshot_index"), int)
+                    and isinstance(item.get("subshot_count"), int)
+                    else {}
+                ),
+                "file": item["file"],
+                "sha256": item["sha256"],
+                "provider": item.get("provider", "ai33"),
+            }
+            for item in final_assets
+        ]
+        image_grids = [
+            {
+                "file": item["file"],
+                "sha256": item["sha256"],
+                "provider": item["provider"],
+                "size": item["size"],
+                "grid": item["grid"],
+                "panels": item["panels"],
+            }
+            for item in items if item.get("grid") is not None
+        ]
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise title_flow.TitleContractError("Malformed saved image annotations") from exc
+    return {"image_assets": image_assets, "image_grids": image_grids}
+
+
+def _reconcile_visual_plan(
+    output: Path, expected: dict[str, object],
+) -> dict[str, object]:
+    """Preserve completed image annotations on Title resume, without changing T2.
+
+    T2 --stop saves the bare plan. First full production adds avatar/QR
+    metadata, and _generate_images saves image_assets/image_grids. Older
+    Title resumes mistakenly compared this enriched plan with the bare plan
+    and rejected every otherwise valid post-image LTX restart.
+    """
+    path = output / "visual_plan.json"
+    if path.is_symlink():
+        raise title_flow.TitleContractError("Linked visual plan")
+    if not path.is_file():
+        title_flow.write(path, expected)
+        return expected
+    saved = title_flow.read(path)
+    if saved == expected:
+        return saved
+    bare = {key: value for key, value in expected.items() if key != "avatar"}
+    if saved == bare:
+        title_flow.write(path, expected)
+        return expected
+
+    # Post-image plan must contain *exactly* the immutable planning fields
+    # plus the two documented annotations. Changes in avatar, CTA, beats,
+    # or unknown fields remain a hard error rather than being overwritten.
+    annotation_names = {"image_assets", "image_grids"}
+    if (
+        set(saved) != set(expected) | annotation_names
+        or {key: value for key, value in saved.items()
+            if key not in annotation_names} != expected
+    ):
+        raise title_flow.TitleContractError(
+            "Saved visual plan differs from immutable T2/voice/avatar/QR"
+        )
+    manifest_path = output / "images" / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise title_flow.TitleContractError(
+            "Image-enriched visual plan has no saved image manifest"
+        )
+    manifest = title_flow.read(manifest_path)
+    if {key: saved[key] for key in annotation_names} != _image_plan_annotations(manifest):
+        raise title_flow.TitleContractError(
+            "Saved image annotations differ from completed image manifest"
+        )
+    # Do not rewrite or strip annotations: video job IDs and cached assets
+    # are derived from the completed, checkpointed image plan.
+    return saved
+
+
 def _compat(output: Path, merged: dict[str, object]) -> None:
     """Deterministic compatibility artifacts; NO B bots are called."""
     blocks = merged["blocks"]
@@ -313,13 +416,7 @@ async def main(argv: list[str] | None = None) -> None:
         _snapshot(output, "qr.png", qr.png)
         metadata["avatar"] = _avatar_meta(avatar, avatar_bytes, voice_snapshot or {}, qr)
         visual["avatar"] = metadata["avatar"]
-        visual_path = output / "visual_plan.json"
-        if visual_path.is_file() and title_flow.read(visual_path) != visual:
-            # Prior T2 stop wrote a plan lacking the video-only avatar/QR metadata.
-            previous_plan = title_flow.read(visual_path)
-            if previous_plan != {k: v for k, v in visual.items() if k != "avatar"}:
-                raise SystemExit("Saved visual plan differs from immutable T2")
-        title_flow.write(visual_path, visual)
+        visual = _reconcile_visual_plan(output, visual)
         from ai_video_factory.workflows.r2_run_scope import (
             reset_active_video_scope,
             saved_video_scope,
