@@ -223,6 +223,19 @@ def validate_block(
             raise TitleContractError(f"T2 empty text {beat_id}")
         if len(text) > 100 or len(text.split()) > 40:
             raise TitleContractError(f"T2 beat {beat_id} too long")
+        is_last = (
+            number == len(plan["stages"]) and index == len(beats)
+        )
+        if is_last:
+            if text != text.rstrip():
+                raise TitleContractError("T2 final video beat must not end with whitespace")
+        elif not (text.endswith("\r\n\r\n") or (
+            text.endswith(" ") and not text.endswith("  ")
+            and not text.endswith("\n ")
+        )):
+            raise TitleContractError(
+                f"T2 beat {beat_id} must end in one space or CRLF twice"
+            )
         words += len(text.split())
         if beat.get("beat_type") not in BEAT_TYPES:
             raise TitleContractError(f"T2 beat type invalid {beat_id}")
@@ -385,8 +398,21 @@ def run(
                         "T1 prior request outcome uncertain; manual reconciliation required"
                     )
                 write(inflight, {"submitted": True, "attempt": attempt})
+                request_history = first
+                if attempt > 1:
+                    prior = read(
+                        output / "T1" / f"response_attempt_{attempt - 1}.json"
+                    )
+                    request_history = [
+                        *first, {"role": "user", "content": (
+                            "The previous T1 response was invalid. Return only "
+                            "one complete b-planner-v1 JSON object. "
+                            f"Last stop reason: {prior.get('stop_reason')}"
+                        )},
+                    ]
                 response = provider(
-                    api_key=api_key, system=prompt("t1_planner.md"), messages=first,
+                    api_key=api_key, system=prompt("t1_planner.md"),
+                    messages=request_history,
                 )
                 write(response_path, response)
                 inflight.unlink()
@@ -465,8 +491,21 @@ def run(
                             "manual reconciliation required"
                         )
                     write(inflight, {"submitted": True, "attempt": attempt})
+                    request_history = history
+                    if attempt > 1:
+                        rejection = read(
+                            root / f"rejection_{attempt - 1}.json"
+                        )
+                        request_history = [
+                            *history, {"role": "user", "content": (
+                                f"Your previous block {number} failed local validation: "
+                                f"{rejection['reason']}. Rewrite block {number} "
+                                "only; all previously accepted blocks are fixed."
+                            )},
+                        ]
                     response = provider(
-                        api_key=api_key, system=prompt("t2_director.md"), messages=history,
+                        api_key=api_key, system=prompt("t2_director.md"),
+                        messages=request_history,
                     )
                     write(attempt_path, response)
                     inflight.unlink()
