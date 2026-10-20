@@ -144,7 +144,7 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
     staging = target / (".outputs-" + uuid4().hex + ".partial")
     staging.mkdir()
     try:
-        for stage in ("B1.1", "B1.2", "B2", "B2.1", "B3", "CTA"):
+        for stage in ("T1", "T2", "B1.1", "B1.2", "B2", "B2.1", "B3", "CTA"):
             folder = work / stage
             if folder.exists():
                 _copy_tree(folder, staging / stage)
@@ -158,7 +158,7 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
             source = canonical if canonical.exists() else legacy
             if source.exists():
                 _copy_tree(source, staging / stage)
-        for name in ("visual_plan.json", "avatar_voice.json"):
+        for name in ("visual_plan.json", "avatar_voice.json", "narracion.txt", "thumbnail.png"):
             source = work / name
             if source.is_symlink():
                 raise PublicationError(f"Linked checkpoint: {source}")
