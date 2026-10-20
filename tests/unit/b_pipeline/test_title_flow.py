@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import copy
+import io
 import json
+from urllib.error import HTTPError
 
 import pytest
 
@@ -153,3 +155,88 @@ def test_title_inputs_refuse_mutation(tmp_path):
             ebook=b"cover", thumbnail=b"thumb", api_key="key", stop="T1",
             provider=plan_only,
         )
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 413, 429])
+def test_http_rejection_shows_status_without_ambiguous_result(status):
+    def http_failure(request, timeout):
+        body = json.dumps({
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Invalid Anthropic request",
+            }
+        }).encode("utf-8")
+        raise HTTPError(
+            request.full_url, status, "Rejected", {},
+            io.BytesIO(body),
+        )
+
+    with pytest.raises(title_flow.ClaudeRequestRejected, match=f"HTTP {status}"):
+        title_flow.call_claude(
+            api_key="invalid", system="test", messages=[
+                {"role": "user", "content": "test"},
+            ], transport=http_failure,
+        )
+
+
+def test_server_error_still_retains_ambiguous_status():
+    def http_failure(request, timeout):
+        raise HTTPError(
+            request.full_url, 503, "Unavailable", {},
+            io.BytesIO(b""),
+        )
+
+    with pytest.raises(title_flow.ClaudeAPIError, match="uncertain"):
+        title_flow.call_claude(
+            api_key="invalid", system="test", messages=[
+                {"role": "user", "content": "test"},
+            ], transport=http_failure,
+        )
+
+
+def test_definitive_t1_rejection_can_retry_after_fix(tmp_path):
+    called = []
+
+    def rejected(*, api_key, system, messages):
+        called.append("rejected")
+        raise title_flow.ClaudeRequestRejected("HTTP 401")
+
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo", "title": "Wrong Number",
+        "ebook": b"cover", "thumbnail": b"thumb", "api_key": "fake",
+        "stop": "T1",
+    }
+    with pytest.raises(title_flow.ClaudeRequestRejected, match="401"):
+        title_flow.run(**kwargs, provider=rejected)
+    assert not (tmp_path / "T1" / "inflight_attempt_1.json").exists()
+    assert (tmp_path / "T1" / "input.json").is_file()
+
+    def working(*, api_key, system, messages):
+        called.append("accepted")
+        return _response(_plan())
+
+    plan, final = title_flow.run(**kwargs, provider=working)
+    assert final is None
+    assert plan == _plan()
+    assert called == ["rejected", "accepted"]
+
+
+def test_definitive_t2_rejection_retains_accepted_t1(tmp_path):
+    kwargs = {
+        "output": tmp_path, "avatar": "Uncle_Enzo", "title": "Wrong Number",
+        "ebook": b"cover", "thumbnail": b"thumb", "api_key": "fake",
+    }
+
+    def preflight(*, api_key, system, messages):
+        return _response(_plan())
+
+    title_flow.run(**kwargs, stop="T1", provider=preflight)
+
+    def rejected(*, api_key, system, messages):
+        raise title_flow.ClaudeRequestRejected("HTTP 429")
+
+    with pytest.raises(title_flow.ClaudeRequestRejected, match="429"):
+        title_flow.run(**kwargs, stop="T2", provider=rejected)
+    t2_root = tmp_path / "T2" / "blocks" / "block_001"
+    assert not (t2_root / "inflight_attempt_1.json").exists()
+    assert (tmp_path / "T1" / "output.json").is_file()
