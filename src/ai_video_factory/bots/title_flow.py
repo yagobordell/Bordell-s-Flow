@@ -6,17 +6,24 @@ import hashlib
 import json
 import re
 import urllib.request
+from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ai_video_factory.bots.contracts import ProfessionalB2Block
 from ai_video_factory.providers.grid_numbering import (
-    alphabetic_sequence_id, format_grid_marker, parse_grid_marker,
+    alphabetic_sequence_id,
+    format_grid_marker,
+    parse_grid_marker,
 )
 
 MODEL = "claude-haiku-5-5"
-BEAT_TYPES = set("setup orientation action evidence claim data question revelation escalation consequence contrast analogy causal_link correction reaction pivot verdict transition return".split())
+BEAT_TYPES = set(
+    "setup orientation action evidence claim data question revelation escalation "
+    "consequence contrast analogy causal_link correction reaction pivot verdict "
+    "transition return".split()
+)
 BLOCK_TYPES = set("intro development pivot correction climax close".split())
 
 
@@ -231,7 +238,10 @@ def validate_block(
         elif visual == "media_image":
             valid = isinstance(p, str) and bool(p.strip()) and v is None and not a
         elif visual == "media_video":
-            valid = isinstance(p, str) and bool(p.strip()) and isinstance(v, str) and bool(v.strip()) and not a
+            valid = (
+                isinstance(p, str) and bool(p.strip())
+                and isinstance(v, str) and bool(v.strip()) and not a
+            )
         else:
             valid = False
         if not valid:
@@ -249,12 +259,15 @@ def validate_block(
             raise TitleContractError(f"T2 non-CTA has CTA metadata {beat_id}")
         marker = parse_grid_marker(p)
         if marker is not None:
-            if marker.style != "lettered" or visual != "media_image" and visual != "media_video" or cta:
+            if marker.style != "lettered" or visual not in {"media_image", "media_video"} or cta:
                 raise TitleContractError(f"T2 invalid grid marker {beat_id}")
             expected = group_counts.get(marker.sequence_id, 0) + 1
             if expected != marker.panel_number or expected > 24:
                 raise TitleContractError(f"T2 invalid {marker.sequence_id} numbering (max 24)")
-            if marker.sequence_id not in group_counts and marker.sequence_id != alphabetic_sequence_id(len(group_counts) + 1):
+            if (
+                marker.sequence_id not in group_counts
+                and marker.sequence_id != alphabetic_sequence_id(len(group_counts) + 1)
+            ):
                 raise TitleContractError(f"T2 new grid letter out of order {beat_id}")
             group_counts[marker.sequence_id] = expected
     if words < stage["word_budget"] * 0.9:
