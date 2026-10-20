@@ -204,8 +204,11 @@ def validate_block(
     cta = is_ebook_cta(stage)
     count_ctas = sum(1 for b in accepted if "cta_group_id" in b["beats"][0])
     group_counts: dict[str, int] = {}
+    groups_before_cta: set[str] = set()
     audio_run = 0
     for prior in accepted:
+        if any("cta_group_id" in item for item in prior["beats"]):
+            groups_before_cta.update(group_counts)
         for beat in prior["beats"]:
             label = parse_grid_marker(beat.get("prompt"))
             if label and label.style == "lettered":
@@ -272,6 +275,10 @@ def validate_block(
             raise TitleContractError(f"T2 non-CTA has CTA metadata {beat_id}")
         marker = parse_grid_marker(p)
         if marker is not None:
+            if marker.sequence_id in groups_before_cta:
+                raise TitleContractError(
+                    f"T2 world {marker.sequence_id} crosses a CTA boundary"
+                )
             if marker.style != "lettered" or visual not in {"media_image", "media_video"} or cta:
                 raise TitleContractError(f"T2 invalid grid marker {beat_id}")
             expected = group_counts.get(marker.sequence_id, 0) + 1
