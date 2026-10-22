@@ -551,6 +551,75 @@ _T1_FACT_REPAIR_SYSTEM = (
 )
 
 
+def _t1_normalize_closing_marker(
+    plan: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Reposition an unambiguous closing_return marker, without changing prose.
+
+    v32 defines closing_return only for the closing stage. The stage list,
+    kinds, narrative content, facts and other markers are immutable.
+    Ambiguous duplicated markers and non-closing final stages are not repaired.
+    """
+    stages = plan.get("stages")
+    if not isinstance(stages, list) or len(stages) < 2:
+        return plan, []
+    if not all(
+        isinstance(stage, dict) and isinstance(stage.get("markers"), list)
+        and all(isinstance(marker, str) for marker in stage["markers"])
+        for stage in stages
+    ):
+        return plan, []
+    if stages[0].get("kind") != "hook" or stages[-1].get("kind") != "closing":
+        return plan, []
+    positions = [
+        i for i, stage in enumerate(stages) if "closing_return" in stage["markers"]
+    ]
+    if len(positions) > 1 or positions == [len(stages) - 1]:
+        return plan, []
+    if positions and stages[positions[0]]["markers"].count("closing_return") != 1:
+        return plan, []
+    corrected = json.loads(json.dumps(plan, ensure_ascii=False))
+    changes: list[dict[str, str]] = []
+    if positions:
+        index = positions[0]
+        corrected["stages"][index]["markers"].remove("closing_return")
+        changes.append({
+            "stage_id": stages[index]["id"],
+            "action": "remove_misplaced_closing_return",
+        })
+    corrected["stages"][-1]["markers"].append("closing_return")
+    changes.append({
+        "stage_id": stages[-1]["id"],
+        "action": "add_closing_return",
+    })
+    return corrected, changes
+
+
+def _record_t1_marker_repair(
+    output: Path, raw: dict[str, Any],
+    corrected: dict[str, Any], changes: list[dict[str, str]],
+) -> None:
+    """Audit a deterministic metadata-only correction after full validation."""
+    if not changes:
+        return
+    marker_path = output / "T1" / "marker_repair.json"
+    record = {
+        "schema_version": "t1-closing-marker-repair-v1",
+        "raw_response_sha256": sha(
+            json.dumps(raw, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ),
+        "corrected_plan_sha256": sha(
+            json.dumps(corrected, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ),
+        "changes": changes,
+    }
+    if marker_path.is_file():
+        if read(marker_path) != record:
+            raise TitleContractError("T1 closing-marker repair checkpoint changed")
+    else:
+        write(marker_path, record)
+
+
 def _t1_fact_repair_diagnostics(plan: dict[str, Any]) -> dict[str, Any]:
     """Explain *all* fact deficits before deciding whether a patch is safe.
 
@@ -563,7 +632,8 @@ def _t1_fact_repair_diagnostics(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(stages, list):
         return {"deficits": {}, "reason": "T1 stages must be a list"}
     missing: dict[str, int] = {}
-    checked = json.loads(json.dumps(plan, ensure_ascii=False))
+    checked, _marker_changes = _t1_normalize_closing_marker(plan)
+    checked = json.loads(json.dumps(checked, ensure_ascii=False))
     for index, stage in enumerate(checked["stages"], 1):
         if not isinstance(stage, dict):
             return {"deficits": {}, "reason": f"T1 stage {index} is not an object"}
@@ -666,14 +736,23 @@ def _recover_t1_fact_deficit(
     A disconnected/uncertain request keeps its inflight marker for manual
     reconciliation. A completed malformed repair never triggers a blind retry.
     """
-    deficits = _t1_repairable_fact_deficits(candidate)
+    normalized, marker_changes = _t1_normalize_closing_marker(candidate)
+    deficits = _t1_repairable_fact_deficits(normalized)
     if not deficits:
+        if marker_changes:
+            # Pure marker placement: no provider call, and no fabricated facts.
+            try:
+                validate_plan(normalized)
+            except TitleContractError:
+                return None
+            _record_t1_marker_repair(output, raw, normalized, marker_changes)
+            return normalized
         return None
     root = output / "T1" / "fact_repair"
     context = {
         "title": title,
-        "narrative_contract": candidate["narrative_contract"],
-        "macro_revelation": candidate["macro_revelation"],
+        "narrative_contract": normalized["narrative_contract"],
+        "macro_revelation": normalized["macro_revelation"],
         "stage_outline": [
             {
                 "id": stage["id"],
@@ -684,7 +763,7 @@ def _recover_t1_fact_deficit(
                 "word_budget": stage["word_budget"],
                 "facts": stage["facts"] if stage["id"] in deficits else [],
             }
-            for stage in candidate["stages"]
+            for stage in normalized["stages"]
         ],
         "missing_facts_by_stage": deficits,
     }
@@ -738,12 +817,13 @@ def _recover_t1_fact_deficit(
         inflight.unlink()
 
     patch = parse(response)
-    repaired = _apply_t1_fact_patch(candidate, patch, deficits)
+    repaired = _apply_t1_fact_patch(normalized, patch, deficits)
     if repaired_path.is_file():
         if read(repaired_path) != repaired:
             raise TitleContractError("T1 saved fact-repair output changed")
     else:
         write(repaired_path, repaired)
+    _record_t1_marker_repair(output, raw, repaired, marker_changes)
     return repaired
 
 
