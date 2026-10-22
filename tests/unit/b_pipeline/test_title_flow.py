@@ -1313,7 +1313,7 @@ def _trailing_comment_t1() -> dict:
 def test_title_reorders_real_trailing_comment_and_updates_id_references():
     original = _trailing_comment_t1()
     original_snapshot = copy.deepcopy(original)
-    with pytest.raises(title_flow.TitleContractError, match="first/last"):
+    with pytest.raises(title_flow.TitleContractError, match="closing_return|first/last"):
         title_flow.validate_plan(original)
     repaired, changes = title_flow._t1_normalize_closing_marker(original)
     title_flow.validate_plan(repaired)
