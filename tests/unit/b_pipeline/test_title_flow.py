@@ -1036,6 +1036,9 @@ def test_v32_closing_return_moved_to_actual_final_stage_offline(tmp_path):
     assert applied == changes
     assert plan == original
     title_flow.validate_plan(corrected)
+    assert title_flow._t1_fact_repair_diagnostics(plan) == {
+        "deficits": {}, "reason": None,
+    }
     assert title_flow._t1_repairable_fact_deficits(plan) == {}
 
     opts = {
