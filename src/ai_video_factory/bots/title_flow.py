@@ -545,41 +545,69 @@ _T1_FACT_REPAIR_SYSTEM = (
 )
 
 
-def _t1_repairable_fact_deficits(plan: dict[str, Any]) -> dict[str, int]:
-    """Allow small factual shortfalls only, after all other v32 checks pass.
+def _t1_fact_repair_diagnostics(plan: dict[str, Any]) -> dict[str, Any]:
+    """Explain *all* fact deficits before deciding whether a patch is safe.
 
-    Temporary placeholders are used *only* for dry-run validation. They are
-    never accepted, persisted, sent to the provider or shown to the user.
+    validate_plan() raises on the first defect, so an otherwise repairable
+    response could appear to have only a single missing fact. Collecting
+    deficits first prevents repeated paid model attempts that uncover errors
+    one by one. This function is strictly offline.
     """
     stages = plan.get("stages")
     if not isinstance(stages, list):
-        return {}
+        return {"deficits": {}, "reason": "T1 stages must be a list"}
     missing: dict[str, int] = {}
     checked = json.loads(json.dumps(plan, ensure_ascii=False))
-    for stage in checked["stages"]:
-        if not isinstance(stage, dict) or not isinstance(stage.get("facts"), list):
-            return {}
+    for index, stage in enumerate(checked["stages"], 1):
+        if not isinstance(stage, dict):
+            return {"deficits": {}, "reason": f"T1 stage {index} is not an object"}
+        facts = stage.get("facts")
+        if not isinstance(facts, list):
+            return {"deficits": {}, "reason": f"T1 stage {index} facts is not a list"}
         if "comment_invitation" in stage.get("markers", []):
             continue
         budget = stage.get("word_budget")
         if type(budget) is not int or budget <= 0:
-            return {}
-        facts = stage["facts"]
-        if not facts or any(not isinstance(fact, str) or not fact.strip() for fact in facts):
-            return {}
+            return {"deficits": {}, "reason": f"T1 stage {index} budget invalid"}
+        if not facts or any(
+            not isinstance(fact, str) or not fact.strip() for fact in facts
+        ):
+            return {
+                "deficits": {}, "reason": (
+                    f"T1 stage {index} contains invalid or missing facts"
+                ),
+            }
         deficit = max(0, (budget + 21) // 22 - len(facts))
         if deficit:
-            if deficit > 2 or not isinstance(stage.get("id"), str):
-                return {}
-            missing[stage["id"]] = deficit
+            stage_id = stage.get("id")
+            if not isinstance(stage_id, str):
+                return {"deficits": {}, "reason": f"T1 stage {index} id invalid"}
+            missing[stage_id] = deficit
             facts.extend(f"VALIDATION_PLACEHOLDER_{n}" for n in range(deficit))
-    if not missing or sum(missing.values()) > 4:
-        return {}
+    if not missing:
+        return {"deficits": {}, "reason": "No fact-count deficits"}
     try:
         validate_plan(checked)
-    except TitleContractError:
-        return {}
-    return missing
+    except TitleContractError as exc:
+        return {
+            "deficits": missing,
+            "reason": f"Other T1 contract error remains after filling facts: {exc}",
+        }
+    # A facts-only repair should not become a full rewrite of an underplanned
+    # story: cap it at 5 facts per stage and 24 in total.
+    if any(n > 5 for n in missing.values()) or sum(missing.values()) > 24:
+        return {
+            "deficits": missing,
+            "reason": "Too many missing facts for bounded T1 repair (max 5/stage, 24 total)",
+        }
+    return {"deficits": missing, "reason": None}
+
+
+def _t1_repairable_fact_deficits(plan: dict[str, Any]) -> dict[str, int]:
+    """Compute safe fact-only patch counts; do not weaken v32 validation."""
+    analysis = _t1_fact_repair_diagnostics(plan)
+    return analysis["deficits"] if analysis["reason"] is None else {}
+
 
 
 def _apply_t1_fact_patch(
@@ -845,9 +873,18 @@ def run(
                         if repaired is not None:
                             accepted_plan = repaired
                             break
+                    detail = ""
+                    if response.get("stop_reason") == "end_turn":
+                        diagnosis = _t1_fact_repair_diagnostics(parse(response))
+                        if diagnosis["deficits"]:
+                            detail = (
+                                f" Repair diagnostic: {diagnosis['reason'] or 'eligible'}; "
+                                f"missing facts by stage: {diagnosis['deficits']}."
+                            )
                     raise TitleContractError(
                         f"T1: {error}; {attempts} attempts exhausted. "
                         "Saved responses remain intact; do not delete checkpoints."
+                        + detail
                     ) from error
                 continue
             accepted_plan = candidate
