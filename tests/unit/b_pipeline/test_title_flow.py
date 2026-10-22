@@ -1260,3 +1260,190 @@ def test_t1_diagnostic_zero_deficits_reports_actual_unrepaired_marker_error():
     diagnosis = title_flow._t1_fact_repair_diagnostics(plan)
     assert diagnosis["deficits"] == {}
     assert "closing" in diagnosis["reason"]
+
+
+
+def _trailing_comment_t1() -> dict:
+    """Reproduce S12 closing + S13 comment from wrong_number_v32."""
+    plan = _plan()
+    stages = []
+    for number in range(1, 14):
+        stage = copy.deepcopy(_plan()["stages"][1])
+        stage["id"] = f"S{number:02d}"
+        stage["kind"] = (
+            "hook" if number == 1
+            else "closing" if number == 12
+            else "aside" if number == 13
+            else "chain"
+        )
+        stage["markers"] = (
+            ["hook"] if number == 1
+            else ["macro_revelation"] if number == 9
+            else ["closing_return"] if number == 12
+            else ["comment_invitation"] if number == 13
+            else []
+        )
+        stage["facts"] = [] if number == 13 else [f"Fact from stage S{number:02d}."]
+        stage["word_budget"] = 2
+        stages.append(stage)
+    plan["stages"] = stages
+    plan["word_budget_total"] = 26
+    plan["macro_revelation"]["stage_id"] = "S09"
+    plan["calls_to_action"] = [
+        {
+            "type": "comment", "stage_id": "S13",
+            "share_of_narration_percent": 1,
+            "function": "Invite viewer experience.",
+            "return_to_story": "A final reconsideration.",
+        },
+    ]
+    plan["continuity_base"]["recurring_people"] = [{
+        "name": "Viewer", "stages": ["S01", "S12", "S13"],
+    }]
+    plan["continuity_base"]["persistent_worlds"] = [{"name": "Viewer"}]
+    plan["continuity_base"]["places"] = [{
+        "name": "Room", "stages": ["S01", "S12"],
+    }]
+    plan["continuity_base"]["devices_and_interfaces"] = [{
+        "name": "Phone", "stages": ["S01", "S13"],
+    }]
+    return plan
+
+
+def test_title_reorders_real_trailing_comment_and_updates_id_references():
+    original = _trailing_comment_t1()
+    original_snapshot = copy.deepcopy(original)
+    with pytest.raises(title_flow.TitleContractError, match="first/last"):
+        title_flow.validate_plan(original)
+    repaired, changes = title_flow._t1_normalize_closing_marker(original)
+    title_flow.validate_plan(repaired)
+    assert len(changes) == 1
+    assert changes[0] == {
+        "action": "move_trailing_comment_before_closing",
+        "old_closing_stage": "S12", "new_closing_stage": "S13",
+        "old_comment_stage": "S13", "new_comment_stage": "S12",
+    }
+    assert repaired["stages"][-2]["id"] == "S12"
+    assert repaired["stages"][-2]["kind"] == "aside"
+    assert repaired["stages"][-2]["markers"] == ["comment_invitation"]
+    assert repaired["stages"][-1]["id"] == "S13"
+    assert repaired["stages"][-1]["kind"] == "closing"
+    assert repaired["stages"][-1]["markers"] == ["closing_return"]
+    assert repaired["stages"][-1]["facts"] == original["stages"][-2]["facts"]
+    assert repaired["calls_to_action"][0]["stage_id"] == "S12"
+    continuity = repaired["continuity_base"]
+    assert continuity["recurring_people"][0]["stages"] == [
+        "S01", "S12", "S13",
+    ]
+    assert continuity["places"][0]["stages"] == ["S01", "S13"]
+    assert continuity["devices_and_interfaces"][0]["stages"] == ["S01", "S12"]
+    assert original == original_snapshot
+    diagnosis = title_flow._t1_fact_repair_diagnostics(original)
+    assert diagnosis == {"deficits": {}, "reason": None}
+
+
+def test_title_trailing_comment_checkpoint_resume_is_fully_offline(tmp_path):
+    original = _trailing_comment_t1()
+    root = tmp_path / "T1"
+    raw = _response(original)
+    title_flow.write(root / "response_attempt_4.json", raw)
+    old_bytes = (root / "response_attempt_4.json").read_bytes()
+    for n in (1, 2, 3):
+        title_flow.write(root / f"response_attempt_{n}.json", {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "long"}],
+            "usage": {"output_tokens": 32000},
+        })
+        title_flow.write(root / f"rejection_attempt_{n}.json", {
+            "reason": "Incomplete Claude response: max_tokens",
+        })
+    # The old validator rejected S05 for insufficient facts; its immutable
+    # rejection is historically correct even after the new rules accept it.
+    saved_old = title_flow._legacy_t1_fact_rejection(original)
+    # Simulate an actual legacy fourth rejection by forcing a prior 200-word
+    # fact stage with nine facts so that the old rejection can be verified.
+    original["stages"][4]["word_budget"] = 200
+    original["stages"][4]["facts"] = [
+        f"S05 fact number {n}." for n in range(9)
+    ]
+    original["word_budget_total"] = 224
+    raw = _response(original)
+    title_flow.write(root / "response_attempt_4.json", raw)
+    old_bytes = (root / "response_attempt_4.json").read_bytes()
+    saved_old = title_flow._legacy_t1_fact_rejection(original)
+    assert "stage 5 only 9 facts for 200 words" in saved_old
+    title_flow.write(root / "rejection_attempt_4.json", {"reason": saved_old})
+    rejection_bytes = (root / "rejection_attempt_4.json").read_bytes()
+
+    args = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    accepted, merged = title_flow.run(
+        **args, provider=lambda **kw: pytest.fail("T1 must not call Claude")
+    )
+    assert merged is None
+    title_flow.validate_plan(accepted)
+    assert accepted["stages"][-1]["kind"] == "closing"
+    assert accepted["stages"][-2]["kind"] == "aside"
+    assert (root / "response_attempt_4.json").read_bytes() == old_bytes
+    assert (root / "rejection_attempt_4.json").read_bytes() == rejection_bytes
+    assert title_flow.read(root / "stage_order_repair.json")["changes"][0][
+        "action"
+    ] == "move_trailing_comment_before_closing"
+    assert not (root / "marker_repair.json").exists()
+    assert (root / "output.json").is_file()
+    accepted2, _ = title_flow.run(
+        **args, provider=lambda **kw: pytest.fail("T1 must stay cached")
+    )
+    assert accepted2 == accepted
+
+
+def test_t2_comment_stage_is_before_last_avatar_close_after_repair():
+    original = _trailing_comment_t1()
+    fixed, _ = title_flow._t1_normalize_closing_marker(original)
+    blocks = []
+    for number, stage in enumerate(fixed["stages"], 1):
+        last = number == len(fixed["stages"])
+        text = "You can understand the phone. " if not last else "Now you know."
+        beat = {
+            "beat_id": f"{number}A", "text": text,
+            "beat_type": "action",
+            "visual_type": "avatar" if last else "media_image",
+            "prompt": None if last else "A phone screen on a desk.",
+            "video_prompt": None,
+            "reference": False, "audio": last,
+        }
+        block = {
+            "block_id": number,
+            "type": "intro" if number == 1 else "close" if last else "development",
+            "emotional_entry": "Curious", "emotional_exit": "Informed",
+            "span": {"first_words": text, "last_words": text},
+            "beats": [beat],
+        }
+        title_flow.validate_block({"block": block}, number, fixed, blocks)
+        blocks.append(block)
+    merged_output = title_flow.merged(fixed, blocks)
+    assert len(merged_output["blocks"]) == 13
+    assert merged_output["blocks"][-1]["type"] == "close"
+    assert merged_output["blocks"][-1]["beats"][-1]["visual_type"] == "avatar"
+    assert merged_output["blocks"][-2]["type"] == "development"
+
+
+def test_title_refuses_inapplicable_final_stage_reordering():
+    plan = _trailing_comment_t1()
+    plan["stages"][-1]["facts"] = ["Unexpected comment fact."]
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == plan
+    plan = _trailing_comment_t1()
+    plan["calls_to_action"][0]["stage_id"] = "S12"
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == plan
+    plan = _trailing_comment_t1()
+    plan["stages"][-2]["bridge"] = {"content_link": "S13", "relation": "then"}
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == plan
