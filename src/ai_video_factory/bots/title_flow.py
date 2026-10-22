@@ -603,24 +603,31 @@ def _t1_normalize_closing_marker(
     positions = [
         i for i, stage in enumerate(stages) if "closing_return" in stage["markers"]
     ]
-    if len(positions) > 1 or positions == [len(stages) - 1]:
+    last_index = len(stages) - 1
+    if positions == [last_index]:
         return plan, []
-    if positions and stages[positions[0]]["markers"].count("closing_return") != 1:
+    # Placement is determined by v32, not by Claude: all nonfinal stage
+    # closing_return markers must be removed, even if the final closing
+    # already has its marker. Do not silently fix *duplicate occurrences*
+    # inside one stage: that is a separate malformed markers list.
+    if any(stages[i]["markers"].count("closing_return") != 1 for i in positions):
         return plan, []
     corrected = json.loads(json.dumps(plan, ensure_ascii=False))
     changes: list[dict[str, str]] = []
-    if positions:
-        index = positions[0]
+    for index in positions:
+        if index == last_index:
+            continue
         corrected["stages"][index]["markers"].remove("closing_return")
         changes.append({
             "stage_id": stages[index]["id"],
             "action": "remove_misplaced_closing_return",
         })
-    corrected["stages"][-1]["markers"].append("closing_return")
-    changes.append({
-        "stage_id": stages[-1]["id"],
-        "action": "add_closing_return",
-    })
+    if last_index not in positions:
+        corrected["stages"][-1]["markers"].append("closing_return")
+        changes.append({
+            "stage_id": stages[-1]["id"],
+            "action": "add_closing_return",
+        })
     return corrected, changes
 
 
