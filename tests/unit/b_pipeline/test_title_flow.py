@@ -822,6 +822,11 @@ def test_t1_repair_facts_from_complete_fourth_turn_without_full_regeneration(tmp
         })
 
     expected_raw = _response(_one_fact_short())
+    # The legacy retry allowance is discovered only after the third paid
+    # response has been checkpointed by a previous invocation.
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**opts, provider=provider)
+    assert len(calls) == 3
     result, nothing = title_flow.run(**opts, provider=provider)
     assert nothing is None
     assert len(calls) == 5
