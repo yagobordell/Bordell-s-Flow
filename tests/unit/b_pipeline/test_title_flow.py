@@ -1432,45 +1432,91 @@ def test_t2_comment_stage_is_before_last_avatar_close_after_repair():
 
 
 
-def test_title_reorder_rejects_nested_implicit_stage_references():
-    # Nested bridge fields were ignored by the previous shallow string check.
-    for value in (
-        {"content_link": "S13", "relation": "then"},
-        {"content_link": {"step": "Return to S12"}},
-        {"content_link": ["arrive", {"target": "S13"}]},
+def test_title_reorder_remaps_nested_stage_references_with_audit():
+    # Keep narrative references consistent with the stage IDs after swapping.
+    for value, expected in (
+        ({"content_link": "S13", "relation": "then"},
+         {"content_link": "S12", "relation": "then"}),
+        ({"content_link": {"step": "Return to S12"}},
+         {"content_link": {"step": "Return to S13"}}),
+        ({"content_link": ["arrive", {"target": "S13"}]},
+         {"content_link": ["arrive", {"target": "S12"}]}),
     ):
         plan = _trailing_comment_t1()
         plan["stages"][-2]["bridge"] = value
         original = copy.deepcopy(plan)
         corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
-        assert moves == []
-        assert corrected == original
+        assert len(moves) == 2
+        assert moves[0]["action"] == "move_trailing_comment_before_closing"
+        assert moves[1]["action"] == "remap_embedded_stage_reference"
+        assert moves[1]["field"].startswith("stages[11].bridge.")
+        assert corrected["stages"][-1]["bridge"] == expected
         assert plan == original
+        title_flow.validate_plan(corrected)
 
 
-def test_title_reorder_rejects_hidden_stage_ids_outside_stages():
+def test_title_reorder_remaps_stage_references_outside_stages():
     scenarios = (
-        lambda plan: plan["calls_to_action"][0].update(
+        (lambda plan: plan["calls_to_action"][0].update(
             {"return_to_story": "Return to S12"}
-        ),
-        lambda plan: plan["macro_revelation"].update(
+        ), "calls_to_action[0].return_to_story", "Return to S13"),
+        (lambda plan: plan["macro_revelation"].update(
             {"statement": "After S13 everything is clear"}
-        ),
-        lambda plan: plan["narrative_contract"].update(
+        ), "macro_revelation.statement", "After S12 everything is clear"),
+        (lambda plan: plan["narrative_contract"].update(
             {"opening_scene": {"notes": ["S12 happens here"]}}
-        ),
-        lambda plan: plan["continuity_base"]["places"][0].update(
+        ), "narrative_contract.opening_scene.notes[0]", "S13 happens here"),
+        (lambda plan: plan["continuity_base"]["places"][0].update(
             {"description": {"notes": ["Location changes in S13"]}}
-        ),
+        ), "continuity_base.places[0].description.notes[0]",
+         "Location changes in S12"),
     )
-    for modify in scenarios:
+    for modify, field, expected in scenarios:
         plan = _trailing_comment_t1()
         modify(plan)
         before = copy.deepcopy(plan)
         corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
-        assert moves == []
-        assert corrected == before
+        assert len(moves) == 2
+        assert moves[1]["field"] == field
+        assert moves[1]["to"] == expected
         assert plan == before
+        title_flow.validate_plan(corrected)
+
+
+def test_title_reorder_refuses_stage_id_keys_that_cannot_be_swapped():
+    plan = _trailing_comment_t1()
+    plan["stages"][-2]["bridge"] = {"S13": "A cross-reference"}
+    before = copy.deepcopy(plan)
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == before
+    assert plan == before
+
+
+def test_t1_reordered_nested_references_are_persisted_in_stage_audit(tmp_path):
+    plan = _trailing_comment_t1()
+    plan["stages"][11]["bridge"] = {
+        "content_link": "Move from S12 to S13",
+    }
+    root = tmp_path / "T1"
+    title_flow.write(root / "response_attempt_1.json", _response(plan))
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    repaired, _ = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Never resubmit paid T1")
+    )
+    title_flow.validate_plan(repaired)
+    assert repaired["stages"][-1]["bridge"]["content_link"] == (
+        "Move from S13 to S12"
+    )
+    audit = title_flow.read(root / "stage_order_repair.json")
+    assert audit["changes"][1]["action"] == "remap_embedded_stage_reference"
+    assert audit["changes"][1]["field"] == "stages[11].bridge.content_link"
+    assert audit["changes"][1]["from"] == "Move from S12 to S13"
+    assert audit["changes"][1]["to"] == "Move from S13 to S12"
 
 
 def test_title_reorder_allows_unaffected_stage_mentions():
@@ -1497,5 +1543,5 @@ def test_title_refuses_inapplicable_final_stage_reordering():
     plan = _trailing_comment_t1()
     plan["stages"][-2]["bridge"] = {"content_link": "S13", "relation": "then"}
     corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
-    assert moves == []
-    assert corrected == plan
+    assert moves and moves[1]["action"] == "remap_embedded_stage_reference"
+    assert corrected["stages"][-1]["bridge"]["content_link"] == "S12"
