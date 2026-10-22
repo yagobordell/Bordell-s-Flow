@@ -944,3 +944,65 @@ def test_t1_repair_transport_uses_medium_effort_and_small_ceiling():
     )
     assert captured[0]["max_tokens"] == 8192
     assert captured[0]["output_config"]["effort"] == "medium"
+
+
+def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
+    """Only missing facts are requested, even when five stages need one each."""
+    plan = _plan()
+    plan["stages"][0]["word_budget"] = 45
+    plan["stages"][1]["word_budget"] = 45
+    plan["stages"][2]["word_budget"] = 23
+    plan["word_budget_total"] = 113
+    expected = {"S01": 2, "S02": 2, "S03": 1}
+    analysis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert analysis == {"deficits": expected, "reason": None}
+    assert title_flow._t1_repairable_fact_deficits(plan) == expected
+    response = _response(plan)
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo", "title": "Wrong Number",
+        "ebook": b"ebook", "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def provider(*, api_key, system, messages):
+        calls.append(system)
+        if len(calls) <= 3:
+            return response
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        request = json.loads(messages[0]["content"])
+        assert request["missing_facts_by_stage"] == expected
+        return _response({
+            "facts_by_stage": [{
+                "stage_id": stage, "facts": [
+                    f"The {stage} detail number {n} is shown on the phone."
+                    for n in range(count)
+                ],
+            } for stage, count in expected.items()],
+        })
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**opts, provider=provider)
+    fixed, _ = title_flow.run(**opts, provider=provider)
+    assert len(calls) == 4
+    assert [len(stage["facts"]) for stage in fixed["stages"]] == [3, 3, 2]
+    assert fixed["word_budget_total"] == 113
+    title_flow.validate_plan(fixed)
+
+
+def test_t1_repair_diagnostic_explains_other_contract_failure():
+    plan = _one_fact_short()
+    plan["macro_revelation"]["stage_id"] = "S03"
+    analysis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert analysis["deficits"] == {"S02": 1}
+    assert "macro_revelation" in analysis["reason"]
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_t1_repair_diagnostic_refuses_rewriting_most_of_plan():
+    plan = _one_fact_short()
+    plan["stages"][1]["word_budget"] = 133
+    plan["word_budget_total"] = 136
+    analysis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert analysis["deficits"] == {"S02": 6}
+    assert "Too many" in analysis["reason"]
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
