@@ -551,7 +551,7 @@ def test_v26_broll_resets_presenter_limit_between_blocks():
     })
     last = dict(base)
     last.update({
-        "beat_id": "3B", "text": "One final line. " * 5,
+        "beat_id": "3B", "text": ("One final line. " * 5).rstrip(),
         "visual_type": "avatar", "prompt": None, "audio": True,
     })
     close["block"]["beats"] = [first, last]
