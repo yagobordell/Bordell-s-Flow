@@ -618,75 +618,70 @@ def _t1_move_trailing_comment_before_closing(
     ]
     if len(comments) != 1 or comments[0].get("stage_id") != old_comment:
         return plan, []
-    # For these final two stages, explicit references can occur in CTA
-    # entries, macro_revelation and continuity lists. Do not guess at
-    # references embedded in free-form narrative strings.
+    # Keep the identity of both stages throughout the entire planning
+    # document. An explicit stage-ID token inside a freeform description,
+    # bridge or nested object must be remapped, not silently left stale.
+    # Restrict substitutions to exact S12/S13-style tokens; never replace
+    # arbitrary substrings in story facts or ordinary words.
     mapping = {old_closing: old_comment, old_comment: old_closing}
-    # Only explicit structured stage references are remapped below. An
-    # implicit mention of S12/S13 in prose (including nested bridge objects
-    # and lists) cannot be updated safely and must block automatic reordering.
-    implicit_stage_ref = re.compile(
+    stage_ref = re.compile(
         rf"(?<![A-Za-z0-9])(?:{re.escape(old_closing)}|"
         rf"{re.escape(old_comment)})(?![A-Za-z0-9])"
     )
+    remapped_fields: list[dict[str, str]] = []
 
-    def mentions_moved_stage(value: Any) -> bool:
+    def remap_embedded(value: Any, path: str) -> Any:
         if isinstance(value, str):
-            return bool(implicit_stage_ref.search(value))
+            changed = stage_ref.sub(lambda match: mapping[match.group(0)], value)
+            if changed != value:
+                remapped_fields.append({
+                    "action": "remap_embedded_stage_reference",
+                    "field": path,
+                    "from": value, "to": changed,
+                })
+            return changed
+        if isinstance(value, list):
+            return [
+                remap_embedded(item, f"{path}[{index}]")
+                for index, item in enumerate(value)
+            ]
         if isinstance(value, dict):
-            return any(
-                mentions_moved_stage(key) or mentions_moved_stage(item)
-                for key, item in value.items()
-            )
-        if isinstance(value, (list, tuple)):
-            return any(mentions_moved_stage(item) for item in value)
-        return False
-
-    for stage in stages:
-        if not isinstance(stage, dict):
-            return plan, []
-        if any(
-            key != "id" and mentions_moved_stage(value)
-            for key, value in stage.items()
-        ):
-            return plan, []
-    # Narrative and CTA prose, macro explanation and continuity descriptions
-    # can also carry implicit stage references. Reject them rather than
-    # silently leaving references pointing at the wrong stage.
-    for key in ("narrative_contract", "packaging_audit"):
-        if mentions_moved_stage(plan.get(key)):
-            return plan, []
-    for item in ctas:
-        if not isinstance(item, dict) or any(
-            key != "stage_id" and mentions_moved_stage(value)
-            for key, value in item.items()
-        ):
-            return plan, []
-    macro_original = plan.get("macro_revelation")
-    if not isinstance(macro_original, dict) or any(
-        key != "stage_id" and mentions_moved_stage(value)
-        for key, value in macro_original.items()
-    ):
-        return plan, []
-    continuity_original = plan.get("continuity_base")
-    if not isinstance(continuity_original, dict):
-        return plan, []
-    for key, value in continuity_original.items():
-        if key in (
-            "recurring_people", "places", "devices_and_interfaces",
-            "persistent_worlds",
-        ):
-            if not isinstance(value, list):
-                return plan, []
-            for entry in value:
-                if not isinstance(entry, dict) or any(
-                    field != "stages" and mentions_moved_stage(item)
-                    for field, item in entry.items()
+            corrected_dict: dict[str, Any] = {}
+            for key, item in value.items():
+                if not isinstance(key, str) or stage_ref.search(key):
+                    raise TitleContractError(
+                        f"T1 stage reordering cannot safely change key at {path}"
+                    )
+                # These are structured references updated below. Do not
+                # accidentally double-swap when handling nested strings.
+                if (
+                    (key == "id" and path.startswith("stages["))
+                    or (key == "stage_id" and path in (
+                        "macro_revelation", *(
+                            f"calls_to_action[{i}]" for i in range(len(ctas))
+                        ),
+                    ))
+                    or (
+                        key == "stages"
+                        and isinstance(item, list)
+                        and all(isinstance(v, str) for v in item)
+                    )
                 ):
-                    return plan, []
-        elif mentions_moved_stage(value):
-            return plan, []
-    corrected = json.loads(json.dumps(plan, ensure_ascii=False))
+                    corrected_dict[key] = item
+                else:
+                    corrected_dict[key] = remap_embedded(item, f"{path}.{key}")
+            return corrected_dict
+        return value
+
+    try:
+        corrected = {
+            key: remap_embedded(value, key)
+            for key, value in plan.items()
+        }
+    except TitleContractError:
+        return plan, []
+    # The direct IDs and continuity stage lists are handled separately after
+    # swapping the stage objects. Every implicit substitution is auditable.
     copied_stages = corrected["stages"]
     copied_stages[-2], copied_stages[-1] = copied_stages[-1], copied_stages[-2]
     copied_stages[-2]["id"] = old_closing
@@ -735,7 +730,7 @@ def _t1_move_trailing_comment_before_closing(
         "new_closing_stage": old_comment,
         "old_comment_stage": old_comment,
         "new_comment_stage": old_closing,
-    }]
+    }, *remapped_fields]
     return corrected, changes
 
 
@@ -800,11 +795,17 @@ def _record_t1_marker_repair(
         return
     stage_changes = [
         entry for entry in changes
-        if entry["action"] == "move_trailing_comment_before_closing"
+        if entry["action"] in (
+            "move_trailing_comment_before_closing",
+            "remap_embedded_stage_reference",
+        )
     ]
     marker_changes = [
         entry for entry in changes
-        if entry["action"] != "move_trailing_comment_before_closing"
+        if entry["action"] not in (
+            "move_trailing_comment_before_closing",
+            "remap_embedded_stage_reference",
+        )
     ]
     if stage_changes:
         path = output / "T1" / "stage_order_repair.json"
