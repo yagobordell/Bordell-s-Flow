@@ -627,7 +627,7 @@ def _t1_move_trailing_comment_before_closing(
             return plan, []
         for key, value in stage.items():
             if key != "id" and isinstance(value, str) and re.search(
-                r"(?<![A-Za-z0-9])S(?:\\d+)(?![A-Za-z0-9])", value
+                r"(?<![A-Za-z0-9])S(?:\d+)(?![A-Za-z0-9])", value
             ):
                 return plan, []
     corrected = json.loads(json.dumps(plan, ensure_ascii=False))
