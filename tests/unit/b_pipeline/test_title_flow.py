@@ -861,13 +861,14 @@ def test_t1_narrow_repair_uncertain_outcome_keeps_inflight_checkpoint(tmp_path):
 
     def provider(*, api_key, system, messages):
         t1_calls.append(system)
-        if len(t1_calls) <= 3:
+        if len(t1_calls) == 1:
             return _response(_one_fact_short())
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
         raise title_flow.ClaudeAPIError("uncertain patch response")
 
     with pytest.raises(title_flow.ClaudeAPIError, match="uncertain patch"):
         title_flow.run(**opts, provider=provider)
-    assert len(t1_calls) == 4
+    assert len(t1_calls) == 2
     assert (tmp_path / "T1" / "fact_repair" / "inflight.json").is_file()
     assert not (tmp_path / "T1" / "output.json").exists()
     with pytest.raises(title_flow.TitleContractError, match="outcome uncertain"):
@@ -947,7 +948,7 @@ def test_t1_repair_transport_uses_medium_effort_and_small_ceiling():
 
 
 def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
-    """Only missing facts are requested, even when five stages need one each."""
+    """Repair all deficits after one full response, without paid rewrites."""
     plan = _plan()
     plan["stages"][0]["word_budget"] = 45
     plan["stages"][1]["word_budget"] = 45
@@ -966,7 +967,7 @@ def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
 
     def provider(*, api_key, system, messages):
         calls.append(system)
-        if len(calls) <= 3:
+        if len(calls) == 1:
             return response
         assert system == title_flow._T1_FACT_REPAIR_SYSTEM
         request = json.loads(messages[0]["content"])
@@ -980,10 +981,8 @@ def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
             } for stage, count in expected.items()],
         })
 
-    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
-        title_flow.run(**opts, provider=provider)
     fixed, _ = title_flow.run(**opts, provider=provider)
-    assert len(calls) == 4
+    assert len(calls) == 2
     assert [len(stage["facts"]) for stage in fixed["stages"]] == [3, 3, 2]
     assert fixed["word_budget_total"] == 113
     title_flow.validate_plan(fixed)
