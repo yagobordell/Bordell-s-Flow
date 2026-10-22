@@ -1404,7 +1404,7 @@ def test_t2_comment_stage_is_before_last_avatar_close_after_repair():
     original = _trailing_comment_t1()
     fixed, _ = title_flow._t1_normalize_closing_marker(original)
     blocks = []
-    for number, stage in enumerate(fixed["stages"], 1):
+    for number, _stage in enumerate(fixed["stages"], 1):
         last = number == len(fixed["stages"])
         text = "You can understand the phone. " if not last else "Now you know."
         beat = {
