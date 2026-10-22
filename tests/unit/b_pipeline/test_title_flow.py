@@ -596,3 +596,60 @@ def test_v26_grid_continuity_can_cross_resource_cta():
     anchor["beat_id"] = "3B"
     close["block"]["beats"] = [still, anchor]
     title_flow.validate_block(close, 3, plan, [prior, cta])
+
+
+def test_v32_t1_retry_explains_saved_validation_failure(tmp_path):
+    """A strict v32 rejection must be actionable, not a repeated paid guess."""
+    calls = []
+
+    def provider(*, api_key, system, messages):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            invalid = _plan()
+            invalid["narrative_contract"].pop("narrator")
+            return _response(invalid)
+        assert "narrator background/manner missing" in messages[-1]["content"]
+        return _response(_plan())
+
+    plan, result = title_flow.run(
+        output=tmp_path, avatar="Uncle_Enzo",
+        title="Wrong Number", ebook=b"cover", thumbnail=b"thumb",
+        api_key="fake", stop="T1", provider=provider,
+    )
+    assert result is None
+    assert plan == _plan()
+    assert len(calls) == 2
+    assert "narrator" in title_flow.read(
+        tmp_path / "T1" / "rejection_attempt_1.json"
+    )["reason"]
+    assert (tmp_path / "T1" / "output.json").is_file()
+
+
+def test_v32_t1_resume_reconstructs_legacy_feedback_without_paid_repeat(tmp_path):
+    invalid = _plan()
+    invalid["stages"][1]["facts"] = []
+    root = tmp_path / "T1"
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def interrupted(*, api_key, system, messages):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            return _response(invalid)
+        raise title_flow.ClaudeAPIError("connection broken")
+
+    with pytest.raises(title_flow.ClaudeAPIError):
+        title_flow.run(**options, provider=interrupted)
+    assert (root / "response_attempt_1.json").is_file()
+    (root / "rejection_attempt_1.json").unlink()
+    # This was an uncertain request; never erase its inflight marker to
+    # replay it. The first response and newly rebuilt rejection are retained.
+    with pytest.raises(title_flow.TitleContractError, match="uncertain"):
+        title_flow.run(**options, provider=lambda **kw: pytest.fail("Must not resend"))
+    assert "only 0 facts" in title_flow.read(
+        root / "rejection_attempt_1.json"
+    )["reason"]
