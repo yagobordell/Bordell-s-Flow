@@ -1129,16 +1129,54 @@ def test_t1_v32_combined_closing_and_fact_repair_uses_one_small_patch(tmp_path):
     assert (tmp_path / "T1" / "fact_repair" / "output.json").is_file()
 
 
-def test_t1_closing_marker_fix_refuses_ambiguity_or_other_issues():
+def test_t1_closing_marker_fix_removes_stray_marker_without_rewriting_final():
     plan = _plan()
     plan["stages"][1]["markers"].append("closing_return")
-    # Two closing_return markers make the position ambiguous.
+    saved = copy.deepcopy(plan)
     corrected, changes = title_flow._t1_normalize_closing_marker(plan)
-    assert corrected == plan and changes == []
+    assert changes == [{
+        "stage_id": "S02", "action": "remove_misplaced_closing_return",
+    }]
+    assert plan == saved
+    assert corrected["stages"][-1]["markers"] == ["closing_return"]
+    title_flow.validate_plan(corrected)
+    assert title_flow._t1_fact_repair_diagnostics(plan) == {
+        "deficits": {}, "reason": None,
+    }
+
+    plan = _plan()
+    plan["stages"][1]["markers"].extend(["closing_return", "closing_return"])
+    unchanged, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert unchanged == plan and changes == []
     plan = _plan()
     plan["stages"][-1]["kind"] = "chain"
-    corrected, changes = title_flow._t1_normalize_closing_marker(plan)
-    assert corrected == plan and changes == []
+    unchanged, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert unchanged == plan and changes == []
+
+
+def test_t1_resume_existing_duplicate_closing_markers_needs_no_paid_call(tmp_path):
+    original = _plan()
+    original["stages"][1]["markers"].append("closing_return")
+    root = tmp_path / "T1"
+    raw = _response(original)
+    title_flow.write(root / "response_attempt_1.json", raw)
+    before = (root / "response_attempt_1.json").read_bytes()
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    fixed, nothing = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Must not call paid T1")
+    )
+    assert nothing is None
+    title_flow.validate_plan(fixed)
+    assert fixed["stages"][1]["markers"] == ["macro_revelation"]
+    assert fixed["stages"][-1]["markers"] == ["closing_return"]
+    assert (root / "response_attempt_1.json").read_bytes() == before
+    assert title_flow.read(root / "marker_repair.json")["changes"] == [{
+        "stage_id": "S02", "action": "remove_misplaced_closing_return",
+    }]
 
 
 
