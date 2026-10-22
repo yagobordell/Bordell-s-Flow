@@ -1197,3 +1197,28 @@ def test_t1_revalidation_rejects_unproven_historical_reason(tmp_path):
             thumbnail=b"thumb", api_key="fake", stop="T1",
             provider=lambda **kw: pytest.fail("Never resend a paid T1 request"),
         )
+
+
+
+def test_t1_diagnostic_zero_deficits_valid_plan_is_not_false_negative():
+    """No missing facts with valid markers means the plan is already valid."""
+    plan = _plan()
+    assert title_flow._t1_fact_repair_diagnostics(plan) == {
+        "deficits": {}, "reason": None,
+    }
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_t1_diagnostic_zero_deficits_reports_actual_unrepaired_marker_error():
+    """No-op closing normalization must not disguise a structural T1 error."""
+    plan = _plan()
+    plan["stages"][-1]["markers"].remove("closing_return")
+    plan["stages"][-1]["kind"] = "chain"
+    # No facts are missing and marker normalization must refuse a
+    # structural change to stage.kind instead of pretending the plan is fine.
+    checked, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert changes == []
+    assert checked == plan
+    diagnosis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert diagnosis["deficits"] == {}
+    assert "closing" in diagnosis["reason"]
