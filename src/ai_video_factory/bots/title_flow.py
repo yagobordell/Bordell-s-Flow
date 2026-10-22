@@ -20,11 +20,13 @@ from ai_video_factory.providers.grid_numbering import (
 )
 
 MODEL = "claude-haiku-5-5"
-T1_MAX_OUTPUT_TOKENS = 32000
-# Haiku 5.5 supports 128k output; adaptive high-effort thinking shares this budget.
-# The cap is not a target: only generated tokens are billed.
+# Adaptive thinking and visible JSON share the max_tokens output budget.
+# Old T1 checkpoints at 32k are still resumable without replaying paid turns.
+T1_MAX_OUTPUT_TOKENS = 128000
 T2_MAX_OUTPUT_TOKENS = 128000
+LEGACY_T1_MAX_OUTPUT_TOKENS = 32000
 LEGACY_T2_MAX_OUTPUT_TOKENS = 32000
+T1_VALIDATION_ATTEMPTS = 3
 T2_VALIDATION_ATTEMPTS = 3
 BEAT_TYPES = set(
     "setup orientation action evidence claim data question revelation escalation "
@@ -557,7 +559,23 @@ def run(
         # A completed HTTP response may have been checkpointed just before
         # the process stopped. Reconcile it, never submit the same turn twice.
         accepted_plan = None
-        for attempt in range(1, 4):
+        # Existing 32k T1 attempts are definitive paid responses, not
+        # uncertain submissions. Recover a legacy exhausted max_tokens third
+        # attempt with ONE 128k attempt; do not grant extra attempts to
+        # ordinary validation errors or new 128k truncations.
+        previous_third = output / "T1" / "response_attempt_3.json"
+        legacy_truncated = False
+        if previous_third.is_file():
+            third = read(previous_third)
+            usage = third.get("usage") or {}
+            output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else None
+            legacy_truncated = (
+                third.get("stop_reason") == "max_tokens"
+                and type(output_tokens) is int
+                and 0 < output_tokens <= LEGACY_T1_MAX_OUTPUT_TOKENS
+            )
+        attempts = T1_VALIDATION_ATTEMPTS + int(legacy_truncated)
+        for attempt in range(1, attempts + 1):
             response_path = output / "T1" / f"response_attempt_{attempt}.json"
             if response_path.is_file():
                 response = read(response_path)
@@ -604,10 +622,16 @@ def run(
                         )},
                     ]
                 try:
-                    response = provider(
-                        api_key=api_key, system=prompt("t1_planner.md"),
-                        messages=request_history,
-                    )
+                    kwargs: dict[str, Any] = {
+                        "api_key": api_key,
+                        "system": prompt("t1_planner.md"),
+                        "messages": request_history,
+                    }
+                    # Injected offline test providers still accept only the
+                    # original three arguments; production gets the new cap.
+                    if provider is call_claude:
+                        kwargs["max_tokens"] = T1_MAX_OUTPUT_TOKENS
+                    response = provider(**kwargs)
                 except ClaudeRequestRejected:
                     # A definite HTTP 4xx cannot have produced a billed turn;
                     # preserve the rejection traceback, but allow correction.
@@ -622,11 +646,16 @@ def run(
                 rejection = output / "T1" / f"rejection_attempt_{attempt}.json"
                 if rejection.is_file():
                     if read(rejection) != {"reason": str(error)}:
-                        raise TitleContractError("T1 validation rejection checkpoint changed")
+                        raise TitleContractError(
+                            "T1 validation rejection checkpoint changed"
+                        ) from error
                 else:
                     write(rejection, {"reason": str(error)})
-                if attempt == 3:
-                    raise
+                if attempt == attempts:
+                    raise TitleContractError(
+                        f"T1: {error}; {attempts} attempts exhausted. "
+                        "Saved responses remain intact; do not delete checkpoints."
+                    ) from error
                 continue
             accepted_plan = candidate
             break
