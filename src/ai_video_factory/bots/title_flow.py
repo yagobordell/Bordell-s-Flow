@@ -571,14 +571,33 @@ def run(
                 write(inflight, {"submitted": True, "attempt": attempt})
                 request_history = first
                 if attempt > 1:
+                    previous = attempt - 1
                     prior = read(
-                        output / "T1" / f"response_attempt_{attempt - 1}.json"
+                        output / "T1" / f"response_attempt_{previous}.json"
                     )
+                    reason_path = output / "T1" / f"rejection_attempt_{previous}.json"
+                    if reason_path.is_file():
+                        reason = read(reason_path).get("reason")
+                    else:
+                        # Legacy checkpoints were saved without a validation
+                        # reason. Recreate it locally; no paid requests.
+                        try:
+                            validate_plan(parse(prior))
+                        except TitleContractError as error:
+                            reason = str(error)
+                            write(reason_path, {"reason": reason})
+                        else:
+                            raise TitleContractError(
+                                "Accepted prior T1 response lacks output checkpoint"
+                            )
+                    if not isinstance(reason, str) or not reason.strip():
+                        raise TitleContractError("Missing saved T1 rejection reason")
                     request_history = [
                         *first, {"role": "user", "content": (
-                            "The previous T1 response was invalid. Return only "
-                            "one complete b-planner-v1 JSON object. "
-                            f"Last stop reason: {prior.get('stop_reason')}"
+                            "The previous T1 response failed local validation: "
+                            f"{reason}. Return only one complete b-planner-v1 "
+                            "JSON object, correcting that concrete defect. "
+                            f"Previous stop reason: {prior.get('stop_reason')}."
                         )},
                     ]
                 try:
@@ -596,7 +615,13 @@ def run(
             try:
                 candidate = parse(response)
                 validate_plan(candidate)
-            except TitleContractError:
+            except TitleContractError as error:
+                rejection = output / "T1" / f"rejection_attempt_{attempt}.json"
+                if rejection.is_file():
+                    if read(rejection) != {"reason": str(error)}:
+                        raise TitleContractError("T1 validation rejection checkpoint changed")
+                else:
+                    write(rejection, {"reason": str(error)})
                 if attempt == 3:
                     raise
                 continue
