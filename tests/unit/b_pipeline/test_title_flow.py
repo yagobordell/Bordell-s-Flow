@@ -563,6 +563,8 @@ def test_v26_first_cta_requires_ebook_cover_reference():
     plan["stages"][1]["kind"] = "aside"
     plan["stages"][1]["markers"] = ["macro_revelation", "cta_intermediate"]
     cta = _block(2)
+    # CTA must be ungrouped: a grid label is independently invalid here.
+    cta["block"]["beats"][0]["prompt"] = "Woman picks up phone at a desk."
     cta["block"]["beats"][0].update({
         "cta_group_id": 1,
         "cta_reference_sources": [],
