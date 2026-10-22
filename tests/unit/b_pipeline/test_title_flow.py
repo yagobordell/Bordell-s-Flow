@@ -1139,3 +1139,61 @@ def test_t1_closing_marker_fix_refuses_ambiguity_or_other_issues():
     plan["stages"][-1]["kind"] = "chain"
     corrected, changes = title_flow._t1_normalize_closing_marker(plan)
     assert corrected == plan and changes == []
+
+
+
+def test_t1_resume_keeps_historical_overstrict_rejection_immutable(tmp_path):
+    """The user's old S05 9/200 rejection must not block corrected replay."""
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 200
+    plan["word_budget_total"] = 203
+    plan["stages"][1]["facts"] = [f"Relevant fact {n}." for n in range(9)]
+    plan["stages"][1]["markers"].append("closing_return")
+    plan["stages"][-1]["markers"].remove("closing_return")
+    response = _response(plan)
+    old_reason = "T1 stage 2 only 9 facts for 200 words (v32: 1/22)"
+    assert title_flow._legacy_t1_fact_rejection(plan) == old_reason
+    root = tmp_path / "T1"
+    title_flow.write(root / "response_attempt_1.json", response)
+    title_flow.write(root / "rejection_attempt_1.json", {"reason": old_reason})
+    previous_bytes = (root / "response_attempt_1.json").read_bytes()
+    rejected_bytes = (root / "rejection_attempt_1.json").read_bytes()
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+
+    repaired, remaining = title_flow.run(
+        **opts, provider=lambda **kwargs: pytest.fail("No paid replay needed")
+    )
+    assert remaining is None
+    title_flow.validate_plan(repaired)
+    assert (root / "response_attempt_1.json").read_bytes() == previous_bytes
+    assert (root / "rejection_attempt_1.json").read_bytes() == rejected_bytes
+    assert repaired["stages"][1]["facts"] == plan["stages"][1]["facts"]
+    assert (root / "marker_repair.json").is_file()
+    audit = title_flow.read(root / "revalidation_attempt_1.json")
+    assert audit["original_reason"] == old_reason
+    assert "closing_return" in audit["current_reason"]
+    title_flow.run(
+        **opts, provider=lambda **kwargs: pytest.fail("Fully cached T1 replay")
+    )
+
+
+def test_t1_revalidation_rejects_unproven_historical_reason(tmp_path):
+    plan = _plan()
+    plan["stages"][1]["markers"].append("closing_return")
+    plan["stages"][-1]["markers"].remove("closing_return")
+    root = tmp_path / "T1"
+    title_flow.write(root / "response_attempt_1.json", _response(plan))
+    title_flow.write(root / "rejection_attempt_1.json", {
+        "reason": "Some other unverified rejection",
+    })
+    with pytest.raises(title_flow.TitleContractError, match="checkpoint changed"):
+        title_flow.run(
+            output=tmp_path, avatar="Uncle_Enzo",
+            title="Wrong Number", ebook=b"cover",
+            thumbnail=b"thumb", api_key="fake", stop="T1",
+            provider=lambda **kw: pytest.fail("Never resend a paid T1 request"),
+        )
