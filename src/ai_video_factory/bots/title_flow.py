@@ -690,18 +690,17 @@ def _t1_fact_repair_diagnostics(plan: dict[str, Any]) -> dict[str, Any]:
             missing[stage_id] = deficit
             facts.extend(f"VALIDATION_PLACEHOLDER_{n}" for n in range(deficit))
     if not missing:
-        if _marker_changes:
-            # A marker-only fix is a valid offline recovery. Report it as
-            # eligible, rather than misleading users with 'repair=False'.
-            try:
-                validate_plan(checked)
-            except TitleContractError as exc:
-                return {
-                    "deficits": {},
-                    "reason": f"Other T1 contract error remains: {exc}",
-                }
-            return {"deficits": {}, "reason": None}
-        return {"deficits": {}, "reason": "No fact-count deficits"}
+        # No fact deficit does not mean an invalid plan. Always validate
+        # even when there were no marker changes, otherwise a fully valid
+        # saved T1 is incorrectly diagnosed as "repair impossible".
+        try:
+            validate_plan(checked)
+        except TitleContractError as exc:
+            return {
+                "deficits": {},
+                "reason": f"Other T1 contract error remains: {exc}",
+            }
+        return {"deficits": {}, "reason": None}
     try:
         validate_plan(checked)
     except TitleContractError as exc:
