@@ -19,12 +19,21 @@ def _plan() -> dict:
         "schema_version": "b-planner-v1",
         "narrative_contract": {
             "central_question": "How?", "final_answer": "This way.",
+            "narrator": {"background": "A protective guide", "manner": "Clear and warm"},
         },
         "word_budget_total": 4,
+        "macro_revelation": {"stage_id": "S02", "statement": "The actual answer"},
+        "continuity_base": {
+            "persistent_worlds": [], "recurring_people": [],
+            "places": [], "devices_and_interfaces": [],
+        },
         "stages": [
-            {"id": "S01", "kind": "hook", "markers": [], "word_budget": 2},
-            {"id": "S02", "kind": "chain", "markers": [], "word_budget": 1},
-            {"id": "S03", "kind": "closing", "markers": [], "word_budget": 1},
+            {"id": "S01", "kind": "hook", "markers": ["hook"],
+             "word_budget": 2, "facts": ["First scene."]},
+            {"id": "S02", "kind": "chain", "markers": ["macro_revelation"],
+             "word_budget": 1, "facts": ["A different fact."]},
+            {"id": "S03", "kind": "closing", "markers": ["closing_return"],
+             "word_budget": 1, "facts": ["Last scene."]},
         ],
     }
 
@@ -487,3 +496,103 @@ def test_resume_after_accepted_retry_reconstructs_exact_signed_prefix(tmp_path):
     assert len(value["blocks"]) == 3
     assert resumed_calls == [2, 3]
     assert (first_root / "response.json").read_bytes() == raw_before
+
+
+def test_v32_rejects_missing_narrator_or_insufficient_facts():
+    plan = _plan()
+    del plan["narrative_contract"]["narrator"]
+    with pytest.raises(title_flow.TitleContractError, match="narrator"):
+        title_flow.validate_plan(plan)
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 45
+    plan["word_budget_total"] = 48
+    with pytest.raises(title_flow.TitleContractError, match="facts"):
+        title_flow.validate_plan(plan)
+
+
+@pytest.mark.parametrize("broken", ["hook_marker", "close_marker", "macro_stage"])
+def test_v32_rejects_broken_stage_markers(broken):
+    plan = _plan()
+    if broken == "hook_marker":
+        plan["stages"][1]["markers"] = ["macro_revelation", "hook"]
+    elif broken == "close_marker":
+        plan["stages"][2]["markers"] = []
+    else:
+        plan["macro_revelation"]["stage_id"] = "S03"
+    with pytest.raises(title_flow.TitleContractError, match="marker|macro"):
+        title_flow.validate_plan(plan)
+
+
+def test_v32_recurring_worlds_cover_three_stage_people():
+    plan = _plan()
+    plan["continuity_base"]["recurring_people"] = [{
+        "name": "Viewer", "stages": ["S01", "S02", "S03"],
+    }]
+    with pytest.raises(title_flow.TitleContractError, match="persistent world"):
+        title_flow.validate_plan(plan)
+    plan["continuity_base"]["persistent_worlds"] = [{"name": "Viewer"}]
+    title_flow.validate_plan(plan)
+
+
+def test_v26_broll_resets_presenter_limit_between_blocks():
+    plan = _plan()
+    prior = _block(2)["block"]
+    prior["beats"][0].update({
+        "text": "Speaking safely. " * 5,
+        "visual_type": "avatar", "prompt": None, "audio": True,
+    })
+    close = _block(3)
+    base = close["block"]["beats"][0]
+    first = dict(base)
+    first.update({
+        "beat_id": "3A", "text": "A visible change. ",
+        "visual_type": "media_image", "prompt": "A note on a wooden desk",
+        "audio": False,
+    })
+    last = dict(base)
+    last.update({
+        "beat_id": "3B", "text": "One final line. " * 5,
+        "visual_type": "avatar", "prompt": None, "audio": True,
+    })
+    close["block"]["beats"] = [first, last]
+    title_flow.validate_block(close, 3, plan, [prior])
+
+
+def test_v26_first_cta_requires_ebook_cover_reference():
+    plan = _plan()
+    plan["stages"][1]["kind"] = "aside"
+    plan["stages"][1]["markers"] = ["macro_revelation", "cta_intermediate"]
+    cta = _block(2)
+    cta["block"]["beats"][0].update({
+        "cta_group_id": 1,
+        "cta_reference_sources": [],
+    })
+    with pytest.raises(title_flow.TitleContractError, match="ebook cover"):
+        title_flow.validate_block(cta, 2, plan, [_block(1)["block"]])
+    cta["block"]["beats"][0]["cta_reference_sources"] = ["ebook"]
+    cta["block"]["beats"][0]["reference"] = True
+    title_flow.validate_block(cta, 2, plan, [_block(1)["block"]])
+
+
+def test_v26_grid_continuity_can_cross_resource_cta():
+    """v26 groups are global and cannot be banned merely for crossing CTA."""
+    plan = _plan()
+    # Existing accepted blocks may contain a legitimate global sequence.
+    prior = _block(1)["block"]
+    cta = _block(2)["block"]
+    cta["beats"][0]["prompt"] = "An unmarked CTA still."
+    cta["beats"][0].update({
+        "cta_group_id": 1, "cta_reference_sources": ["ebook"],
+        "reference": True,
+    })
+    close = _block(3)
+    still = dict(close["block"]["beats"][0])
+    still.update({
+        "beat_id": "3A", "text": "The same phone again. ",
+        "visual_type": "media_image", "prompt": "A2. Woman picks up phone at a desk.",
+        "reference": False, "audio": False,
+    })
+    anchor = dict(close["block"]["beats"][0])
+    anchor["beat_id"] = "3B"
+    close["block"]["beats"] = [still, anchor]
+    title_flow.validate_block(close, 3, plan, [prior, cta])
