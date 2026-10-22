@@ -784,8 +784,8 @@ def test_t1_stream_supports_128k_high_effort():
 
 def _one_fact_short() -> dict:
     plan = _plan()
-    plan["stages"][1]["word_budget"] = 23
-    plan["word_budget_total"] = 26
+    plan["stages"][1]["word_budget"] = 44
+    plan["word_budget_total"] = 47
     return plan
 
 
@@ -950,10 +950,10 @@ def test_t1_repair_transport_uses_medium_effort_and_small_ceiling():
 def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
     """Repair all deficits after one full response, without paid rewrites."""
     plan = _plan()
-    plan["stages"][0]["word_budget"] = 45
-    plan["stages"][1]["word_budget"] = 45
-    plan["stages"][2]["word_budget"] = 23
-    plan["word_budget_total"] = 113
+    plan["stages"][0]["word_budget"] = 66
+    plan["stages"][1]["word_budget"] = 66
+    plan["stages"][2]["word_budget"] = 44
+    plan["word_budget_total"] = 176
     expected = {"S01": 2, "S02": 2, "S03": 1}
     analysis = title_flow._t1_fact_repair_diagnostics(plan)
     assert analysis == {"deficits": expected, "reason": None}
@@ -984,7 +984,7 @@ def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
     fixed, _ = title_flow.run(**opts, provider=provider)
     assert len(calls) == 2
     assert [len(stage["facts"]) for stage in fixed["stages"]] == [3, 3, 2]
-    assert fixed["word_budget_total"] == 113
+    assert fixed["word_budget_total"] == 176
     title_flow.validate_plan(fixed)
 
 
@@ -999,9 +999,140 @@ def test_t1_repair_diagnostic_explains_other_contract_failure():
 
 def test_t1_repair_diagnostic_refuses_rewriting_most_of_plan():
     plan = _one_fact_short()
-    plan["stages"][1]["word_budget"] = 133
-    plan["word_budget_total"] = 136
+    plan["stages"][1]["word_budget"] = 155
+    plan["word_budget_total"] = 158
     analysis = title_flow._t1_fact_repair_diagnostics(plan)
     assert analysis["deficits"] == {"S02": 6}
     assert "Too many" in analysis["reason"]
     assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_v32_explicit_200_word_example_accepts_nine_facts():
+    """The supplied prompt says 200 words => at least NINE facts, not ten."""
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 200
+    plan["word_budget_total"] = 203
+    plan["stages"][1]["facts"] = [f"Known fact {n}." for n in range(9)]
+    title_flow.validate_plan(plan)
+    assert title_flow._t1_required_fact_count(200) == 9
+    plan["stages"][1]["facts"].pop()
+    with pytest.raises(title_flow.TitleContractError, match="requires 9 facts"):
+        title_flow.validate_plan(plan)
+
+
+def test_v32_closing_return_moved_to_actual_final_stage_offline(tmp_path):
+    plan = _plan()
+    plan["stages"][1]["markers"].append("closing_return")
+    plan["stages"][2]["markers"].remove("closing_return")
+    original = copy.deepcopy(plan)
+    with pytest.raises(title_flow.TitleContractError, match="closing_return"):
+        title_flow.validate_plan(plan)
+
+    changes = [
+        {"stage_id": "S02", "action": "remove_misplaced_closing_return"},
+        {"stage_id": "S03", "action": "add_closing_return"},
+    ]
+    corrected, applied = title_flow._t1_normalize_closing_marker(plan)
+    assert applied == changes
+    assert plan == original
+    title_flow.validate_plan(corrected)
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+    def provider(*, api_key, system, messages):
+        calls.append(system)
+        return _response(plan)
+    output, _ = title_flow.run(**opts, provider=provider)
+    assert len(calls) == 1
+    assert output == corrected
+    assert title_flow.read(
+        tmp_path / "T1" / "response_attempt_1.json"
+    ) == _response(plan)
+    audit = title_flow.read(tmp_path / "T1" / "marker_repair.json")
+    assert audit["changes"] == changes
+    assert (tmp_path / "T1" / "output.json").is_file()
+    title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("No paid replay allowed")
+    )
+
+
+def test_t1_v32_combined_closing_and_fact_repair_uses_one_small_patch(tmp_path):
+    """Regression for user's S05=9/200 and misplaced S12 marker."""
+    plan = _plan()
+    stages = [
+        {
+            "id": f"S{index:02d}",
+            "kind": "hook" if index == 1 else "closing" if index == 13 else "chain",
+            "markers": ["hook"] if index == 1 else (
+                ["macro_revelation"] if index == 2 else (
+                    ["closing_return"] if index == 12 else []
+                )
+            ),
+            "word_budget": 200,
+            "facts": [f"S{index:02d} known fact {j}." for j in range(
+                8 if index in {6, 7, 9} else 9
+            )],
+        } for index in range(1, 14)
+    ]
+    plan["stages"] = stages
+    plan["word_budget_total"] = 13 * 200
+    original = copy.deepcopy(plan)
+    assert title_flow._t1_required_fact_count(200) == 9
+    diagnostic = title_flow._t1_fact_repair_diagnostics(plan)
+    assert diagnostic == {
+        "deficits": {"S06": 1, "S07": 1, "S09": 1}, "reason": None,
+    }
+    assert plan == original
+
+    calls = []
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+
+    def provider(*, api_key, system, messages):
+        calls.append(system)
+        if len(calls) == 1:
+            return _response(plan)
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        request = json.loads(messages[0]["content"])
+        assert request["missing_facts_by_stage"] == {
+            "S06": 1, "S07": 1, "S09": 1,
+        }
+        assert request["stage_outline"][4]["facts"] == []
+        return _response({
+            "facts_by_stage": [
+                {"stage_id": stage, "facts": [
+                    f"The {stage} phone screen shows one new confirmed field."
+                ]}
+                for stage in ("S06", "S07", "S09")
+            ]
+        })
+
+    fixed, _ = title_flow.run(**opts, provider=provider)
+    assert len(calls) == 2
+    title_flow.validate_plan(fixed)
+    assert fixed["stages"][4]["facts"] == original["stages"][4]["facts"]
+    assert "closing_return" not in fixed["stages"][11]["markers"]
+    assert "closing_return" in fixed["stages"][12]["markers"]
+    assert "closing_return" in plan["stages"][11]["markers"]
+    assert title_flow.read(tmp_path / "T1" / "marker_repair.json")["changes"]
+    assert (tmp_path / "T1" / "fact_repair" / "output.json").is_file()
+
+
+def test_t1_closing_marker_fix_refuses_ambiguity_or_other_issues():
+    plan = _plan()
+    plan["stages"][1]["markers"].append("closing_return")
+    # Two closing_return markers make the position ambiguous.
+    corrected, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert corrected == plan and changes == []
+    plan = _plan()
+    plan["stages"][-1]["kind"] = "chain"
+    corrected, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert corrected == plan and changes == []
