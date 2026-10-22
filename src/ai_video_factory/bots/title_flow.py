@@ -201,6 +201,35 @@ def _t1_required_fact_count(word_budget: int) -> int:
     return max(1, word_budget // 22)
 
 
+def _legacy_t1_fact_rejection(plan: dict[str, Any]) -> str | None:
+    """Reproduce only the pre-fix ceil(200/22)=10 rejection wording.
+
+    Never relax validation: this is strictly evidence that a saved rejection
+    was issued by the previous validator for exactly the same raw response.
+    """
+    stages = plan.get("stages")
+    if not isinstance(stages, list):
+        return None
+    for index, stage in enumerate(stages, 1):
+        if not isinstance(stage, dict):
+            return None
+        budget = stage.get("word_budget")
+        facts = stage.get("facts")
+        if (
+            type(budget) is not int or budget <= 0
+            or not isinstance(facts, list)
+        ):
+            return None
+        if "comment_invitation" in stage.get("markers", []):
+            continue
+        if len(facts) < (budget + 21) // 22:
+            return (
+                f"T1 stage {index} only {len(facts)} facts for {budget} "
+                "words (v32: 1/22)"
+            )
+    return None
+
+
 def validate_plan(value: dict[str, Any]) -> None:
     """Validate mechanical v32 requirements, not subjective story quality.
 
@@ -954,10 +983,40 @@ def run(
             except TitleContractError as error:
                 rejection = output / "T1" / f"rejection_attempt_{attempt}.json"
                 if rejection.is_file():
-                    if read(rejection) != {"reason": str(error)}:
-                        raise TitleContractError(
-                            "T1 validation rejection checkpoint changed"
-                        ) from error
+                    saved_rejection = read(rejection)
+                    if saved_rejection != {"reason": str(error)}:
+                        # A paid T1 response may have been rejected by the
+                        # earlier, overstrict ceil(200/22)=10 rule. Its raw
+                        # response AND historical rejection remain immutable.
+                        # Record a separate, source-bound revalidation instead.
+                        legacy_reason = (
+                            _legacy_t1_fact_rejection(candidate)
+                            if candidate is not None else None
+                        )
+                        if saved_rejection != {"reason": legacy_reason}:
+                            raise TitleContractError(
+                                "T1 validation rejection checkpoint changed"
+                            ) from error
+                        revalidated = output / "T1" / (
+                            f"revalidation_attempt_{attempt}.json"
+                        )
+                        revalidation_record = {
+                            "schema_version": "t1-validator-revalidation-v1",
+                            "raw_response_sha256": sha(
+                                json.dumps(
+                                    response, ensure_ascii=False, sort_keys=True
+                                ).encode("utf-8")
+                            ),
+                            "original_reason": legacy_reason,
+                            "current_reason": str(error),
+                        }
+                        if revalidated.is_file():
+                            if read(revalidated) != revalidation_record:
+                                raise TitleContractError(
+                                    "T1 revalidation checkpoint changed"
+                                ) from error
+                        else:
+                            write(revalidated, revalidation_record)
                 else:
                     write(rejection, {"reason": str(error)})
                 # Repair a small fact-only defect immediately after the FIRST
