@@ -1283,7 +1283,7 @@ def _trailing_comment_t1() -> dict:
             else ["comment_invitation"] if number == 13
             else []
         )
-        stage["facts"] = [] if number == 13 else [f"Fact from stage S{number:02d}."]
+        stage["facts"] = [] if number == 13 else [f"The {number}th phone event happened."]
         stage["word_budget"] = 2
         stages.append(stage)
     plan["stages"] = stages
