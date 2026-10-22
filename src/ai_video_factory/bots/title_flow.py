@@ -580,6 +580,105 @@ _T1_FACT_REPAIR_SYSTEM = (
 )
 
 
+def _t1_move_trailing_comment_before_closing(
+    plan: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Repair the narrow v32 case: a comment aside AFTER the final closing.
+
+    T2 requires the final block to be "close" (with its final avatar beat).
+    Move the existing comment BEFORE the closing, keeping every original
+    stage field and word budget intact. Remap explicit stage-ID references
+    and reject malformed or ambiguous source plans; never ask Claude to
+    regenerate an expensive, fully completed T1 response.
+    """
+    stages = plan.get("stages")
+    if not isinstance(stages, list) or len(stages) < 3:
+        return plan, []
+    closing, comment = stages[-2:]
+    if not isinstance(closing, dict) or not isinstance(comment, dict):
+        return plan, []
+    if (
+        closing.get("kind") != "closing"
+        or closing.get("markers") != ["closing_return"]
+        or comment.get("kind") != "aside"
+        or comment.get("markers") != ["comment_invitation"]
+        or comment.get("facts") != []
+    ):
+        return plan, []
+    old_closing = f"S{len(stages) - 1:02d}"
+    old_comment = f"S{len(stages):02d}"
+    if closing.get("id") != old_closing or comment.get("id") != old_comment:
+        return plan, []
+    ctas = plan.get("calls_to_action")
+    if not isinstance(ctas, list):
+        return plan, []
+    comments = [
+        item for item in ctas
+        if isinstance(item, dict) and item.get("type") == "comment"
+    ]
+    if len(comments) != 1 or comments[0].get("stage_id") != old_comment:
+        return plan, []
+    # For these final two stages, explicit references can occur in CTA
+    # entries, macro_revelation and continuity lists. Do not guess at
+    # references embedded in free-form narrative strings.
+    mapping = {old_closing: old_comment, old_comment: old_closing}
+    for stage in stages:
+        if not isinstance(stage, dict):
+            return plan, []
+        for key, value in stage.items():
+            if key != "id" and isinstance(value, str) and re.search(
+                r"(?<![A-Za-z0-9])S(?:\\d+)(?![A-Za-z0-9])", value
+            ):
+                return plan, []
+    corrected = json.loads(json.dumps(plan, ensure_ascii=False))
+    copied_stages = corrected["stages"]
+    copied_stages[-2], copied_stages[-1] = copied_stages[-1], copied_stages[-2]
+    copied_stages[-2]["id"] = old_closing
+    copied_stages[-1]["id"] = old_comment
+    for item in corrected["calls_to_action"]:
+        if not isinstance(item, dict):
+            return plan, []
+        stage_id = item.get("stage_id")
+        if stage_id in mapping:
+            item["stage_id"] = mapping[stage_id]
+    macro = corrected.get("macro_revelation")
+    if not isinstance(macro, dict):
+        return plan, []
+    macro_id = macro.get("stage_id")
+    if macro_id in mapping:
+        macro["stage_id"] = mapping[macro_id]
+    continuity = corrected.get("continuity_base")
+    if not isinstance(continuity, dict):
+        return plan, []
+    for collection in (
+        "recurring_people", "places", "devices_and_interfaces",
+        "persistent_worlds",
+    ):
+        entries = continuity.get(collection)
+        if not isinstance(entries, list):
+            return plan, []
+        for item in entries:
+            if not isinstance(item, dict):
+                return plan, []
+            ids = item.get("stages")
+            if not isinstance(ids, list) or any(not isinstance(v, str) for v in ids):
+                return plan, []
+            # Preserve reference semantics; swap their IDs but not the people,
+            # places or device state descriptions attached to them.
+            item["stages"] = [mapping.get(v, v) for v in ids]
+            item["stages"].sort(
+                key=lambda v: int(v[1:]) if re.fullmatch(r"S[0-9]+", v) else 10**9
+            )
+    changes = [{
+        "action": "move_trailing_comment_before_closing",
+        "old_closing_stage": old_closing,
+        "new_closing_stage": old_comment,
+        "old_comment_stage": old_comment,
+        "new_comment_stage": old_closing,
+    }]
+    return corrected, changes
+
+
 def _t1_normalize_closing_marker(
     plan: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -589,7 +688,8 @@ def _t1_normalize_closing_marker(
     kinds, narrative content, facts and other markers are immutable.
     Ambiguous duplicated markers and non-closing final stages are not repaired.
     """
-    stages = plan.get("stages")
+    reordered, stage_changes = _t1_move_trailing_comment_before_closing(plan)
+    stages = reordered.get("stages")
     if not isinstance(stages, list) or len(stages) < 2:
         return plan, []
     if not all(
@@ -605,15 +705,15 @@ def _t1_normalize_closing_marker(
     ]
     last_index = len(stages) - 1
     if positions == [last_index]:
-        return plan, []
+        return reordered, stage_changes
     # Placement is determined by v32, not by Claude: all nonfinal stage
     # closing_return markers must be removed, even if the final closing
     # already has its marker. Do not silently fix *duplicate occurrences*
     # inside one stage: that is a separate malformed markers list.
     if any(stages[i]["markers"].count("closing_return") != 1 for i in positions):
         return plan, []
-    corrected = json.loads(json.dumps(plan, ensure_ascii=False))
-    changes: list[dict[str, str]] = []
+    corrected = json.loads(json.dumps(reordered, ensure_ascii=False))
+    changes: list[dict[str, str]] = list(stage_changes)
     for index in positions:
         if index == last_index:
             continue
@@ -638,6 +738,33 @@ def _record_t1_marker_repair(
     """Audit a deterministic metadata-only correction after full validation."""
     if not changes:
         return
+    stage_changes = [
+        entry for entry in changes
+        if entry["action"] == "move_trailing_comment_before_closing"
+    ]
+    marker_changes = [
+        entry for entry in changes
+        if entry["action"] != "move_trailing_comment_before_closing"
+    ]
+    if stage_changes:
+        path = output / "T1" / "stage_order_repair.json"
+        evidence = {
+            "schema_version": "t1-stage-order-repair-v1",
+            "raw_response_sha256": sha(
+                json.dumps(raw, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ),
+            "corrected_plan_sha256": sha(
+                json.dumps(corrected, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ),
+            "changes": stage_changes,
+        }
+        if path.is_file():
+            if read(path) != evidence:
+                raise TitleContractError("T1 stage-order repair checkpoint changed")
+        else:
+            write(path, evidence)
+    if not marker_changes:
+        return
     marker_path = output / "T1" / "marker_repair.json"
     record = {
         "schema_version": "t1-closing-marker-repair-v1",
@@ -647,7 +774,7 @@ def _record_t1_marker_repair(
         "corrected_plan_sha256": sha(
             json.dumps(corrected, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ),
-        "changes": changes,
+        "changes": marker_changes,
     }
     if marker_path.is_file():
         if read(marker_path) != record:
