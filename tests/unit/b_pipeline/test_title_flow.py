@@ -1431,6 +1431,58 @@ def test_t2_comment_stage_is_before_last_avatar_close_after_repair():
     assert merged_output["blocks"][-2]["type"] == "development"
 
 
+
+def test_title_reorder_rejects_nested_implicit_stage_references():
+    # Nested bridge fields were ignored by the previous shallow string check.
+    for value in (
+        {"content_link": "S13", "relation": "then"},
+        {"content_link": {"step": "Return to S12"}},
+        {"content_link": ["arrive", {"target": "S13"}]},
+    ):
+        plan = _trailing_comment_t1()
+        plan["stages"][-2]["bridge"] = value
+        original = copy.deepcopy(plan)
+        corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+        assert moves == []
+        assert corrected == original
+        assert plan == original
+
+
+def test_title_reorder_rejects_hidden_stage_ids_outside_stages():
+    scenarios = (
+        lambda plan: plan["calls_to_action"][0].update(
+            {"return_to_story": "Return to S12"}
+        ),
+        lambda plan: plan["macro_revelation"].update(
+            {"statement": "After S13 everything is clear"}
+        ),
+        lambda plan: plan["narrative_contract"].update(
+            {"opening_scene": {"notes": ["S12 happens here"]}}
+        ),
+        lambda plan: plan["continuity_base"]["places"][0].update(
+            {"description": {"notes": ["Location changes in S13"]}}
+        ),
+    )
+    for modify in scenarios:
+        plan = _trailing_comment_t1()
+        modify(plan)
+        before = copy.deepcopy(plan)
+        corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+        assert moves == []
+        assert corrected == before
+        assert plan == before
+
+
+def test_title_reorder_allows_unaffected_stage_mentions():
+    plan = _trailing_comment_t1()
+    plan["stages"][0]["bridge"] = {
+        "content_link": {"next": ["The action in S07"]},
+    }
+    corrected, changes = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert changes and changes[0]["action"] == "move_trailing_comment_before_closing"
+    title_flow.validate_plan(corrected)
+
+
 def test_title_refuses_inapplicable_final_stage_reordering():
     plan = _trailing_comment_t1()
     plan["stages"][-1]["facts"] = ["Unexpected comment fact."]
