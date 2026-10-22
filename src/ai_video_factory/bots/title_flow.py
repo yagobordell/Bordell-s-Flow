@@ -196,6 +196,11 @@ _T1_MARKERS = {
 }
 
 
+def _t1_required_fact_count(word_budget: int) -> int:
+    """Match v32: 200 budgeted words require NINE facts, not ten."""
+    return max(1, word_budget // 22)
+
+
 def validate_plan(value: dict[str, Any]) -> None:
     """Validate mechanical v32 requirements, not subjective story quality.
 
@@ -260,9 +265,10 @@ def validate_plan(value: dict[str, Any]) -> None:
         if "comment_invitation" in markers:
             if kind != "aside" or facts:
                 raise TitleContractError(f"T1 comment invitation must have no facts: {i}")
-        elif len(facts) < (n + 21) // 22:
+        elif len(facts) < _t1_required_fact_count(n):
             raise TitleContractError(
-                f"T1 stage {i} only {len(facts)} facts for {n} words (v32: 1/22)"
+                f"T1 stage {i} only {len(facts)} facts for {n} words "
+                f"(v32 requires {_t1_required_fact_count(n)} facts)"
             )
         total += n
     if total != value.get("word_budget_total"):
@@ -577,7 +583,7 @@ def _t1_fact_repair_diagnostics(plan: dict[str, Any]) -> dict[str, Any]:
                     f"T1 stage {index} contains invalid or missing facts"
                 ),
             }
-        deficit = max(0, (budget + 21) // 22 - len(facts))
+        deficit = max(0, _t1_required_fact_count(budget) - len(facts))
         if deficit:
             stage_id = stage.get("id")
             if not isinstance(stage_id, str):
