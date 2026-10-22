@@ -734,6 +734,96 @@ def _t1_move_trailing_comment_before_closing(
     return corrected, changes
 
 
+def _t1_complete_persistent_worlds(
+    plan: dict[str, Any], prior_changes: list[dict[str, str]],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Copy missing recurring-world metadata from the existing T1 plan.
+
+    v32 requires a world for each person/place/device recurring in 3+ stages.
+    Claude can omit that entry while supplying complete canonical details in
+    the corresponding collection. Do not invent appearances, state changes,
+    stages or new narrative facts; preserve the paid raw plan.
+    """
+    continuity = plan.get("continuity_base")
+    if not isinstance(continuity, dict):
+        return plan, prior_changes
+    worlds = continuity.get("persistent_worlds")
+    if not isinstance(worlds, list):
+        return plan, prior_changes
+    if any(
+        not isinstance(world, dict)
+        or not isinstance(world.get("name"), str)
+        or not world["name"].strip()
+        for world in worlds
+    ):
+        return plan, prior_changes
+    existing = {world["name"] for world in worlds}
+    source_stages = plan.get("stages")
+    if not isinstance(source_stages, list):
+        return plan, prior_changes
+    stage_ids = {
+        stage.get("id") for stage in source_stages if isinstance(stage, dict)
+    }
+    additions: list[tuple[str, dict[str, Any]]] = []
+    for collection in ("recurring_people", "places", "devices_and_interfaces"):
+        items = continuity.get(collection)
+        if not isinstance(items, list):
+            return plan, prior_changes
+        for item in items:
+            if not isinstance(item, dict):
+                return plan, prior_changes
+            name, stages = item.get("name"), item.get("stages")
+            if (
+                not isinstance(name, str) or not name.strip()
+                or not isinstance(stages, list)
+                or any(not isinstance(v, str) or v not in stage_ids for v in stages)
+            ):
+                return plan, prior_changes
+            if len(set(stages)) >= 3 and name not in existing:
+                # We must have source metadata to populate the visual-world
+                # entry. A missing description needs editorial intervention,
+                # not a fabricated character/location.
+                description = item.get("description")
+                if not isinstance(description, str) or not description.strip():
+                    return plan, prior_changes
+                additions.append((collection, item))
+                existing.add(name)
+    if not additions:
+        return plan, prior_changes
+
+    updated = json.loads(json.dumps(plan, ensure_ascii=False))
+    pending_worlds = updated["continuity_base"]["persistent_worlds"]
+    changes = list(prior_changes)
+    for collection, item in additions:
+        details = [item["description"].strip()]
+        if collection == "recurring_people":
+            for key, label in (
+                ("apparent_age", "Apparent age"),
+                ("clothing", "Clothing"),
+            ):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    details.append(f"{label}: {value.strip()}")
+        source_changes = item.get("state_changes")
+        state_changes = (
+            source_changes.strip()
+            if isinstance(source_changes, str) and source_changes.strip()
+            else "Not specified in original T1 continuity entry."
+        )
+        pending_worlds.append({
+            "name": item["name"],
+            "elements": "; ".join(details),
+            "stages": list(item["stages"]),
+            "state_changes": state_changes,
+        })
+        changes.append({
+            "action": "add_missing_persistent_world",
+            "collection": collection,
+            "name": item["name"],
+        })
+    return updated, changes
+
+
 def _t1_normalize_closing_marker(
     plan: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
@@ -760,7 +850,7 @@ def _t1_normalize_closing_marker(
     ]
     last_index = len(stages) - 1
     if positions == [last_index]:
-        return reordered, stage_changes
+        return _t1_complete_persistent_worlds(reordered, stage_changes)
     # Placement is determined by v32, not by Claude: all nonfinal stage
     # closing_return markers must be removed, even if the final closing
     # already has its marker. Do not silently fix *duplicate occurrences*
@@ -783,7 +873,7 @@ def _t1_normalize_closing_marker(
             "stage_id": stages[-1]["id"],
             "action": "add_closing_return",
         })
-    return corrected, changes
+    return _t1_complete_persistent_worlds(corrected, changes)
 
 
 def _record_t1_marker_repair(
@@ -800,13 +890,35 @@ def _record_t1_marker_repair(
             "remap_embedded_stage_reference",
         )
     ]
+    continuity_changes = [
+        entry for entry in changes
+        if entry["action"] == "add_missing_persistent_world"
+    ]
     marker_changes = [
         entry for entry in changes
         if entry["action"] not in (
             "move_trailing_comment_before_closing",
             "remap_embedded_stage_reference",
+            "add_missing_persistent_world",
         )
     ]
+    if continuity_changes:
+        path = output / "T1" / "continuity_repair.json"
+        evidence = {
+            "schema_version": "t1-persistent-world-repair-v1",
+            "raw_response_sha256": sha(
+                json.dumps(raw, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ),
+            "corrected_plan_sha256": sha(
+                json.dumps(corrected, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ),
+            "changes": continuity_changes,
+        }
+        if path.is_file():
+            if read(path) != evidence:
+                raise TitleContractError("T1 continuity repair checkpoint changed")
+        else:
+            write(path, evidence)
     if stage_changes:
         path = output / "T1" / "stage_order_repair.json"
         evidence = {
