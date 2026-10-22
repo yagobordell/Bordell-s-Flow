@@ -622,14 +622,70 @@ def _t1_move_trailing_comment_before_closing(
     # entries, macro_revelation and continuity lists. Do not guess at
     # references embedded in free-form narrative strings.
     mapping = {old_closing: old_comment, old_comment: old_closing}
+    # Only explicit structured stage references are remapped below. An
+    # implicit mention of S12/S13 in prose (including nested bridge objects
+    # and lists) cannot be updated safely and must block automatic reordering.
+    implicit_stage_ref = re.compile(
+        rf"(?<![A-Za-z0-9])(?:{re.escape(old_closing)}|"
+        rf"{re.escape(old_comment)})(?![A-Za-z0-9])"
+    )
+
+    def mentions_moved_stage(value: Any) -> bool:
+        if isinstance(value, str):
+            return bool(implicit_stage_ref.search(value))
+        if isinstance(value, dict):
+            return any(
+                mentions_moved_stage(key) or mentions_moved_stage(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, (list, tuple)):
+            return any(mentions_moved_stage(item) for item in value)
+        return False
+
     for stage in stages:
         if not isinstance(stage, dict):
             return plan, []
-        for key, value in stage.items():
-            if key != "id" and isinstance(value, str) and re.search(
-                r"(?<![A-Za-z0-9])S(?:\d+)(?![A-Za-z0-9])", value
-            ):
+        if any(
+            key != "id" and mentions_moved_stage(value)
+            for key, value in stage.items()
+        ):
+            return plan, []
+    # Narrative and CTA prose, macro explanation and continuity descriptions
+    # can also carry implicit stage references. Reject them rather than
+    # silently leaving references pointing at the wrong stage.
+    for key in ("narrative_contract", "packaging_audit"):
+        if mentions_moved_stage(plan.get(key)):
+            return plan, []
+    for item in ctas:
+        if not isinstance(item, dict) or any(
+            key != "stage_id" and mentions_moved_stage(value)
+            for key, value in item.items()
+        ):
+            return plan, []
+    macro_original = plan.get("macro_revelation")
+    if not isinstance(macro_original, dict) or any(
+        key != "stage_id" and mentions_moved_stage(value)
+        for key, value in macro_original.items()
+    ):
+        return plan, []
+    continuity_original = plan.get("continuity_base")
+    if not isinstance(continuity_original, dict):
+        return plan, []
+    for key, value in continuity_original.items():
+        if key in (
+            "recurring_people", "places", "devices_and_interfaces",
+            "persistent_worlds",
+        ):
+            if not isinstance(value, list):
                 return plan, []
+            for entry in value:
+                if not isinstance(entry, dict) or any(
+                    field != "stages" and mentions_moved_stage(item)
+                    for field, item in entry.items()
+                ):
+                    return plan, []
+        elif mentions_moved_stage(value):
+            return plan, []
     corrected = json.loads(json.dumps(plan, ensure_ascii=False))
     copied_stages = corrected["stages"]
     copied_stages[-2], copied_stages[-1] = copied_stages[-1], copied_stages[-2]
