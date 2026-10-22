@@ -850,6 +850,7 @@ def run(
                     raise
                 write(response_path, response)
                 inflight.unlink()
+            candidate: dict[str, Any] | None = None
             try:
                 candidate = parse(response)
                 validate_plan(candidate)
@@ -862,20 +863,22 @@ def run(
                         ) from error
                 else:
                     write(rejection, {"reason": str(error)})
+                # Repair a small fact-only defect immediately after the FIRST
+                # completed response. Three costly T1 full rewrites for one
+                # missing fact are unnecessary. Older fully exhausted runs
+                # transparently reach the same checkpointed path on replay.
+                if candidate is not None:
+                    repaired = _recover_t1_fact_deficit(
+                        output=output, candidate=candidate, raw=response,
+                        title=title, api_key=api_key, provider=provider,
+                    )
+                    if repaired is not None:
+                        accepted_plan = repaired
+                        break
                 if attempt == attempts:
-                    # Only a complete, parseable plan with a very small facts
-                    # deficit qualifies. Preserve all paid raw T1 responses.
-                    if response.get("stop_reason") == "end_turn":
-                        repaired = _recover_t1_fact_deficit(
-                            output=output, candidate=parse(response), raw=response,
-                            title=title, api_key=api_key, provider=provider,
-                        )
-                        if repaired is not None:
-                            accepted_plan = repaired
-                            break
                     detail = ""
-                    if response.get("stop_reason") == "end_turn":
-                        diagnosis = _t1_fact_repair_diagnostics(parse(response))
+                    if candidate is not None:
+                        diagnosis = _t1_fact_repair_diagnostics(candidate)
                         if diagnosis["deficits"]:
                             detail = (
                                 f" Repair diagnostic: {diagnosis['reason'] or 'eligible'}; "
