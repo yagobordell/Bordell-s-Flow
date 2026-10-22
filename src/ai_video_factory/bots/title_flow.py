@@ -661,6 +661,10 @@ def _t1_move_trailing_comment_before_closing(
             if not isinstance(item, dict):
                 return plan, []
             ids = item.get("stages")
+            if collection == "persistent_worlds" and ids is None:
+                # Legacy and already-accepted T1 worlds may omit stages;
+                # do not invent this optional reference during recovery.
+                continue
             if not isinstance(ids, list) or any(not isinstance(v, str) for v in ids):
                 return plan, []
             # Preserve reference semantics; swap their IDs but not the people,
