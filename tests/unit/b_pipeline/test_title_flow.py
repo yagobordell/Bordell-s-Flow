@@ -780,3 +780,162 @@ def test_t1_stream_supports_128k_high_effort():
     assert seen[0]["max_tokens"] == 128000
     assert seen[0]["output_config"]["effort"] == "high"
     assert seen[0]["stream"] is True
+
+
+def _one_fact_short() -> dict:
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 23
+    plan["word_budget_total"] = 26
+    return plan
+
+
+def test_t1_repair_facts_from_complete_fourth_turn_without_full_regeneration(tmp_path):
+    """Real-world recovery: three 32k truncations and a complete 4th near miss."""
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook", "thumbnail": b"thumb",
+        "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def provider(*, api_key, system, messages):
+        calls.append((system, copy.deepcopy(messages)))
+        if len(calls) <= 3:
+            return {
+                "model": title_flow.MODEL, "stop_reason": "max_tokens",
+                "content": [{"type": "thinking", "thinking": "long", "signature": "s"}],
+                "usage": {"input_tokens": 500, "output_tokens": 32000},
+            }
+        if len(calls) == 4:
+            return _response(_one_fact_short())
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        assert len(calls) == 5
+        request = json.loads(messages[0]["content"])
+        assert request["missing_facts_by_stage"] == {"S02": 1}
+        assert request["stage_outline"][1]["facts"] == ["A different fact."]
+        assert request["stage_outline"][0]["facts"] == []
+        return _response({
+            "facts_by_stage": [{
+                "stage_id": "S02",
+                "facts": ["The fictional message enters the recipient's inbox first."],
+            }],
+        })
+
+    expected_raw = _response(_one_fact_short())
+    result, nothing = title_flow.run(**opts, provider=provider)
+    assert nothing is None
+    assert len(calls) == 5
+    assert len(result["stages"][1]["facts"]) == 2
+    assert result["stages"][1]["facts"][0] == "A different fact."
+    title_flow.validate_plan(result)
+    t1_root = tmp_path / "T1"
+    assert title_flow.read(t1_root / "response_attempt_4.json") == expected_raw
+    assert (t1_root / "fact_repair" / "input.json").is_file()
+    assert (t1_root / "fact_repair" / "response.json").is_file()
+    assert title_flow.read(t1_root / "fact_repair" / "output.json") == result
+    assert not (t1_root / "fact_repair" / "inflight.json").exists()
+
+    title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("No new paid T1 request permitted")
+    )
+    (t1_root / "output.json").unlink()
+    recovered, _ = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Checkpoint replay should be local")
+    )
+    assert recovered == result
+    assert len(calls) == 5
+
+
+def test_t1_narrow_repair_uncertain_outcome_keeps_inflight_checkpoint(tmp_path):
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook", "thumbnail": b"thumb",
+        "api_key": "fake", "stop": "T1",
+    }
+    t1_calls = []
+
+    def provider(*, api_key, system, messages):
+        t1_calls.append(system)
+        if len(t1_calls) <= 3:
+            return _response(_one_fact_short())
+        raise title_flow.ClaudeAPIError("uncertain patch response")
+
+    with pytest.raises(title_flow.ClaudeAPIError, match="uncertain patch"):
+        title_flow.run(**opts, provider=provider)
+    assert len(t1_calls) == 4
+    assert (tmp_path / "T1" / "fact_repair" / "inflight.json").is_file()
+    assert not (tmp_path / "T1" / "output.json").exists()
+    with pytest.raises(title_flow.TitleContractError, match="outcome uncertain"):
+        title_flow.run(
+            **opts,
+            provider=lambda **kw: pytest.fail("Ambiguous patch must never be re-sent"),
+        )
+
+
+def test_t1_repair_rejects_invented_fields_and_duplicate_facts():
+    original = _one_fact_short()
+    deficits = title_flow._t1_repairable_fact_deficits(original)
+    assert deficits == {"S02": 1}
+    bad_patches = [
+        {"facts_by_stage": [{"stage_id": "S02",
+                             "facts": ["A different fact."]}]},
+        {"facts_by_stage": [{"stage_id": "S02",
+                             "facts": ["Fresh detail."]}], "narrative_core": {}},
+        {"facts_by_stage": [{"stage_id": "S01",
+                             "facts": ["Fresh detail."]}]},
+    ]
+    for patch in bad_patches:
+        with pytest.raises(title_flow.TitleContractError):
+            title_flow._apply_t1_fact_patch(original, patch, deficits)
+    assert original == _one_fact_short()
+
+
+def test_t1_no_expensive_patch_for_structural_or_large_deficits():
+    plan = _one_fact_short()
+    plan["stages"][1]["word_budget"] = 100
+    plan["word_budget_total"] = 103
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+    plan = _one_fact_short()
+    plan["macro_revelation"]["stage_id"] = "S03"
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_t1_repair_transport_uses_medium_effort_and_small_ceiling():
+    captured = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            events = [
+                {"type": "message_start", "message": {"usage": {"input_tokens": 3}}},
+                {"type": "content_block_start", "index": 0,
+                 "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "text_delta", "text": "{}"}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                 "usage": {"output_tokens": 2}},
+                {"type": "message_stop"},
+            ]
+            return iter(
+                [("data: " + json.dumps(event)).encode() for event in events]
+            )
+
+    def transport(request, timeout):
+        captured.append(json.loads(request.data))
+        return FakeStream()
+
+    title_flow.call_claude(
+        api_key="fake",
+        system=title_flow._T1_FACT_REPAIR_SYSTEM,
+        messages=[{"role": "user", "content": "A short fact patch."}],
+        max_tokens=title_flow._T1_FACT_REPAIR_MAX_OUTPUT_TOKENS,
+        effort=title_flow._T1_FACT_REPAIR_EFFORT,
+        transport=transport,
+    )
+    assert captured[0]["max_tokens"] == 8192
+    assert captured[0]["output_config"]["effort"] == "medium"
