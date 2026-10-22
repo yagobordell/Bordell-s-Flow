@@ -898,8 +898,8 @@ def test_t1_repair_rejects_invented_fields_and_duplicate_facts():
 
 def test_t1_no_expensive_patch_for_structural_or_large_deficits():
     plan = _one_fact_short()
-    plan["stages"][1]["word_budget"] = 100
-    plan["word_budget_total"] = 103
+    plan["stages"][1]["word_budget"] = 155
+    plan["word_budget_total"] = 158
     assert title_flow._t1_repairable_fact_deficits(plan) == {}
     plan = _one_fact_short()
     plan["macro_revelation"]["stage_id"] = "S03"
