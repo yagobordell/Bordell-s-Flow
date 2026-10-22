@@ -187,7 +187,19 @@ def image(data: bytes) -> dict[str, Any]:
     }}
 
 
+_T1_MARKERS = {
+    "hook", "pattern_change", "macro_revelation", "concrete_actions",
+    "cta_intermediate", "cta_final", "comment_invitation", "closing_return",
+}
+
+
 def validate_plan(value: dict[str, Any]) -> None:
+    """Validate mechanical v32 requirements, not subjective story quality.
+
+    The planner explicitly permits departures from editorial tendencies.
+    Guard the machine-readable contract and let Claude apply storytelling
+    judgment rather than rejecting an otherwise useful plan by heuristics.
+    """
     if value.get("schema_version") != "b-planner-v1":
         raise TitleContractError("T1 wrong schema")
     core = value.get("narrative_contract")
@@ -196,21 +208,95 @@ def validate_plan(value: dict[str, Any]) -> None:
         for k in ("central_question", "final_answer")
     ):
         raise TitleContractError("T1 narrative contract missing")
+    narrator = core.get("narrator")
+    if not isinstance(narrator, dict) or not all(
+        isinstance(narrator.get(k), str) and narrator[k].strip()
+        for k in ("background", "manner")
+    ):
+        raise TitleContractError("T1 narrator background/manner missing (v32)")
     stages = value.get("stages")
     if not isinstance(stages, list) or not stages:
         raise TitleContractError("T1 has no stages")
     total = 0
+    seen_marker: dict[str, list[str]] = {}
+    stage_ids: set[str] = set()
     for i, stage in enumerate(stages, 1):
         if not isinstance(stage, dict) or stage.get("id") != f"S{i:02d}":
             raise TitleContractError(f"T1 bad stage {i}")
-        if stage.get("kind") not in ("hook", "chain", "aside", "closing"):
+        stage_ids.add(stage["id"])
+        kind = stage.get("kind")
+        if kind not in ("hook", "chain", "aside", "closing"):
             raise TitleContractError(f"T1 bad kind {i}")
+        if (i == 1 and kind != "hook") or (i == len(stages) and kind != "closing"):
+            raise TitleContractError("T1 first/last stage must be hook/closing")
         n = stage.get("word_budget")
-        if type(n) is not int or n <= 0 or not isinstance(stage.get("markers"), list):
+        markers = stage.get("markers")
+        if type(n) is not int or n <= 0 or not isinstance(markers, list):
             raise TitleContractError(f"T1 bad stage budget/markers {i}")
+        if (
+            any(not isinstance(m, str) or m not in _T1_MARKERS for m in markers)
+            or len(set(markers)) != len(markers)
+        ):
+            raise TitleContractError(f"T1 invalid markers in stage {i}")
+        for marker in markers:
+            seen_marker.setdefault(marker, []).append(stage["id"])
+        if ("hook" in markers) != (i == 1):
+            raise TitleContractError(f"T1 hook marker mismatch at stage {i}")
+        if ("closing_return" in markers) != (i == len(stages)):
+            raise TitleContractError(f"T1 closing_return marker mismatch at stage {i}")
+        if any(m in markers for m in ("cta_intermediate", "cta_final", "comment_invitation")) and kind != "aside":
+            raise TitleContractError(f"T1 CTA marker must belong to aside {i}")
+        facts = stage.get("facts")
+        if not isinstance(facts, list) or any(
+            not isinstance(fact, str) or not fact.strip() for fact in facts
+        ):
+            raise TitleContractError(f"T1 stage {i} facts must be nonempty strings")
+        if "comment_invitation" in markers:
+            if kind != "aside" or facts:
+                raise TitleContractError(f"T1 comment invitation must have no facts: {i}")
+        elif len(facts) < (n + 21) // 22:
+            raise TitleContractError(
+                f"T1 stage {i} only {len(facts)} facts for {n} words (v32: 1/22)"
+            )
         total += n
     if total != value.get("word_budget_total"):
         raise TitleContractError("T1 budgets do not sum")
+    for marker in ("hook", "closing_return", "macro_revelation"):
+        if len(seen_marker.get(marker, [])) != 1:
+            raise TitleContractError(f"T1 requires one {marker} marker")
+    macro = value.get("macro_revelation")
+    if not isinstance(macro, dict) or (
+        macro.get("stage_id") != seen_marker["macro_revelation"][0]
+        or not isinstance(macro.get("statement"), str)
+        or not macro["statement"].strip()
+    ):
+        raise TitleContractError("T1 macro_revelation stage/marker mismatch")
+    continuity = value.get("continuity_base")
+    if not isinstance(continuity, dict):
+        raise TitleContractError("T1 continuity_base missing")
+    persistent = continuity.get("persistent_worlds")
+    if not isinstance(persistent, list):
+        raise TitleContractError("T1 persistent_worlds missing")
+    names: set[str] = set()
+    for world in persistent:
+        if not isinstance(world, dict) or not isinstance(world.get("name"), str):
+            raise TitleContractError("T1 malformed persistent world")
+        names.add(world["name"])
+    for collection in ("recurring_people", "places", "devices_and_interfaces"):
+        entries = continuity.get(collection)
+        if not isinstance(entries, list):
+            raise TitleContractError(f"T1 {collection} must be a list")
+        for item in entries:
+            if not isinstance(item, dict) or not isinstance(item.get("stages"), list):
+                raise TitleContractError(f"T1 malformed {collection}")
+            listed = item["stages"]
+            if any(not isinstance(x, str) or x not in stage_ids for x in listed):
+                raise TitleContractError(f"T1 {collection} references unknown stage")
+            if len(set(listed)) >= 3 and item.get("name") not in names:
+                raise TitleContractError(
+                    f"T1 recurring {collection} item lacks persistent world: {item.get('name')}"
+                )
+
 
 
 def is_ebook_cta(stage: dict[str, Any]) -> bool:
@@ -239,16 +325,13 @@ def validate_block(
     cta = is_ebook_cta(stage)
     count_ctas = sum(1 for b in accepted if "cta_group_id" in b["beats"][0])
     group_counts: dict[str, int] = {}
-    groups_before_cta: set[str] = set()
     audio_run = 0
     for prior in accepted:
-        if any("cta_group_id" in item for item in prior["beats"]):
-            groups_before_cta.update(group_counts)
         for beat in prior["beats"]:
             label = parse_grid_marker(beat.get("prompt"))
             if label and label.style == "lettered":
                 group_counts[label.sequence_id] = group_counts.get(label.sequence_id, 0) + 1
-            audio_run = audio_run + len(beat["text"].strip()) if beat["audio"] else 0
+            audio_run = (audio_run + len(beat["text"].strip())) if beat["audio"] else 0
     words = 0
     for index, beat in enumerate(beats, 1):
         if not isinstance(beat, dict):
@@ -297,12 +380,14 @@ def validate_block(
             valid = False
         if not valid:
             raise TitleContractError(f"T2 visual contract invalid {beat_id}")
-        audio_run = audio_run + len(text.strip()) if a else 0
+        audio_run = (audio_run + len(text.strip())) if a else 0
         if audio_run > 120:
             raise TitleContractError(f"T2 presenter sequence >120 chars at {beat_id}")
         if cta:
             sources = beat.get("cta_reference_sources")
-            if beat.get("cta_group_id") != count_ctas + 1 or sources not in ([], ["ebook"]):
+            if (type(beat.get("cta_group_id")) is not int
+                    or beat["cta_group_id"] != count_ctas + 1
+                    or sources not in ([], ["ebook"])):
                 raise TitleContractError(f"T2 CTA metadata invalid {beat_id}")
             if ref != (sources == ["ebook"]):
                 raise TitleContractError(f"T2 CTA reference mismatch {beat_id}")
@@ -310,10 +395,6 @@ def validate_block(
             raise TitleContractError(f"T2 non-CTA has CTA metadata {beat_id}")
         marker = parse_grid_marker(p)
         if marker is not None:
-            if marker.sequence_id in groups_before_cta:
-                raise TitleContractError(
-                    f"T2 world {marker.sequence_id} crosses a CTA boundary"
-                )
             if marker.style != "lettered" or visual not in {"media_image", "media_video"} or cta:
                 raise TitleContractError(f"T2 invalid grid marker {beat_id}")
             expected = group_counts.get(marker.sequence_id, 0) + 1
@@ -325,6 +406,10 @@ def validate_block(
             ):
                 raise TitleContractError(f"T2 new grid letter out of order {beat_id}")
             group_counts[marker.sequence_id] = expected
+    if cta and count_ctas == 0 and not any(
+        beat.get("cta_reference_sources") == ["ebook"] for beat in beats
+    ):
+        raise TitleContractError("T2 first resource CTA must show authentic ebook cover")
     if words < stage["word_budget"] * 0.9:
         raise TitleContractError(f"T2 block {number} only {words}/{stage['word_budget']} words")
     if block["type"] == "close":
