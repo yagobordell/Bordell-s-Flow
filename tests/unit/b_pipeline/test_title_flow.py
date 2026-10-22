@@ -1545,3 +1545,160 @@ def test_title_refuses_inapplicable_final_stage_reordering():
     corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
     assert moves and moves[1]["action"] == "remap_embedded_stage_reference"
     assert corrected["stages"][-1]["bridge"]["content_link"] == "S12"
+
+
+
+def _trailing_comment_missing_worlds() -> dict:
+    """Production-shaped continuity omissions after S12/S13 reordering."""
+    plan = _trailing_comment_t1()
+    plan["continuity_base"]["recurring_people"] = [{
+        "name": "The viewer ('you')",
+        "description": "Viewer seen checking the same phone in their room.",
+        "apparent_age": "about 30", "clothing": "plain blue shirt",
+        "stages": ["S01", "S06", "S12", "S13"],
+    }]
+    plan["continuity_base"]["places"] = [{
+        "name": "Bedroom", "description": "Quiet room with wooden table.",
+        "stages": ["S01", "S05", "S13"],
+    }]
+    plan["continuity_base"]["devices_and_interfaces"] = [{
+        "name": "Phone", "description": "Cracked phone showing the contact.",
+        "state_changes": "Unknown caller appears, then number is checked.",
+        "stages": ["S01", "S03", "S07", "S12"],
+    }]
+    plan["continuity_base"]["persistent_worlds"] = []
+    return plan
+
+
+def test_v32_missing_persistent_worlds_are_copied_from_source_without_invention():
+    original = _trailing_comment_missing_worlds()
+    snapshot = copy.deepcopy(original)
+    corrected, changes = title_flow._t1_normalize_closing_marker(original)
+    title_flow.validate_plan(corrected)
+    assert original == snapshot
+    assert changes[0]["action"] == "move_trailing_comment_before_closing"
+    assert [entry["name"] for entry in changes[1:]] == [
+        "The viewer ('you')", "Bedroom", "Phone",
+    ]
+    assert all(
+        entry["action"] == "add_missing_persistent_world"
+        for entry in changes[1:]
+    )
+    worlds = corrected["continuity_base"]["persistent_worlds"]
+    assert [world["name"] for world in worlds] == [
+        "The viewer ('you')", "Bedroom", "Phone",
+    ]
+    viewer, bedroom, phone = worlds
+    assert viewer["stages"] == ["S01", "S06", "S12", "S13"]
+    assert "plain blue shirt" in viewer["elements"]
+    assert "Viewer seen checking the same phone" in viewer["elements"]
+    assert viewer["state_changes"] == (
+        "Not specified in original T1 continuity entry."
+    )
+    assert bedroom["stages"] == ["S01", "S05", "S12"]
+    assert bedroom["elements"] == "Quiet room with wooden table."
+    assert phone["stages"] == ["S01", "S03", "S07", "S13"]
+    assert phone["state_changes"] == (
+        "Unknown caller appears, then number is checked."
+    )
+    assert title_flow._t1_fact_repair_diagnostics(original) == {
+        "deficits": {}, "reason": None,
+    }
+
+
+def test_t1_recover_real_viewer_continuity_omission_from_4_paid_turns(tmp_path):
+    """Reordered S12/S13 plus absent viewer world: zero provider calls."""
+    plan = _trailing_comment_missing_worlds()
+    plan["stages"][4]["word_budget"] = 200
+    plan["stages"][4]["facts"] = [
+        f"Known stage five fact {n}." for n in range(9)
+    ]
+    plan["word_budget_total"] = 224
+    raw = _response(plan)
+    root = tmp_path / "T1"
+    for index in (1, 2, 3):
+        title_flow.write(root / f"response_attempt_{index}.json", {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "previous"}],
+            "usage": {"output_tokens": 32000},
+        })
+    title_flow.write(root / "response_attempt_4.json", raw)
+    reason = title_flow._legacy_t1_fact_rejection(plan)
+    assert "stage 5 only 9 facts for 200 words" in reason
+    title_flow.write(root / "rejection_attempt_4.json", {"reason": reason})
+    previous_bytes = (root / "response_attempt_4.json").read_bytes()
+    rejected_bytes = (root / "rejection_attempt_4.json").read_bytes()
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    result, remaining = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Do not regenerate T1")
+    )
+    assert remaining is None
+    title_flow.validate_plan(result)
+    assert result["stages"][-1]["kind"] == "closing"
+    assert result["continuity_base"]["persistent_worlds"][0]["name"] == (
+        "The viewer ('you')"
+    )
+    assert (root / "response_attempt_4.json").read_bytes() == previous_bytes
+    assert (root / "rejection_attempt_4.json").read_bytes() == rejected_bytes
+    assert title_flow.read(root / "continuity_repair.json")["changes"] == [
+        {
+            "action": "add_missing_persistent_world",
+            "collection": "recurring_people",
+            "name": "The viewer ('you')",
+        },
+        {
+            "action": "add_missing_persistent_world",
+            "collection": "places", "name": "Bedroom",
+        },
+        {
+            "action": "add_missing_persistent_world",
+            "collection": "devices_and_interfaces", "name": "Phone",
+        },
+    ]
+    assert (root / "stage_order_repair.json").is_file()
+    assert (root / "output.json").is_file()
+    replay, _ = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("T1 must stay cached")
+    )
+    assert replay == result
+
+
+def test_v32_world_completion_refuses_missing_visual_source_description():
+    plan = _trailing_comment_missing_worlds()
+    plan["continuity_base"]["recurring_people"][0].pop("description")
+    before = copy.deepcopy(plan)
+    checked, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert plan == before
+    assert not any(
+        row["action"] == "add_missing_persistent_world" for row in changes
+    )
+    with pytest.raises(title_flow.TitleContractError, match="persistent world"):
+        title_flow.validate_plan(checked)
+
+
+def test_v32_world_completion_preserves_existing_worlds_exactly():
+    plan = _trailing_comment_missing_worlds()
+    preexisting = {
+        "name": "The viewer ('you')",
+        "elements": "Precisely as planned by T1",
+        "state_changes": "Picks up the phone",
+        "stages": ["S01", "S06", "S12", "S13"],
+    }
+    plan["continuity_base"]["persistent_worlds"] = [preexisting]
+    checked, changes = title_flow._t1_normalize_closing_marker(plan)
+    title_flow.validate_plan(checked)
+    assert checked["continuity_base"]["persistent_worlds"][0] == {
+        **preexisting, "stages": ["S01", "S06", "S12", "S13"],
+    }
+    assert sum(
+        world["name"] == "The viewer ('you')"
+        for world in checked["continuity_base"]["persistent_worlds"]
+    ) == 1
+    assert all(
+        change.get("name") != "The viewer ('you')"
+        for change in changes
+    )
