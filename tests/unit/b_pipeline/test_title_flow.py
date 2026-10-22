@@ -19,12 +19,21 @@ def _plan() -> dict:
         "schema_version": "b-planner-v1",
         "narrative_contract": {
             "central_question": "How?", "final_answer": "This way.",
+            "narrator": {"background": "A protective guide", "manner": "Clear and warm"},
         },
         "word_budget_total": 4,
+        "macro_revelation": {"stage_id": "S02", "statement": "The actual answer"},
+        "continuity_base": {
+            "persistent_worlds": [], "recurring_people": [],
+            "places": [], "devices_and_interfaces": [],
+        },
         "stages": [
-            {"id": "S01", "kind": "hook", "markers": [], "word_budget": 2},
-            {"id": "S02", "kind": "chain", "markers": [], "word_budget": 1},
-            {"id": "S03", "kind": "closing", "markers": [], "word_budget": 1},
+            {"id": "S01", "kind": "hook", "markers": ["hook"],
+             "word_budget": 2, "facts": ["First scene."]},
+            {"id": "S02", "kind": "chain", "markers": ["macro_revelation"],
+             "word_budget": 1, "facts": ["A different fact."]},
+            {"id": "S03", "kind": "closing", "markers": ["closing_return"],
+             "word_budget": 1, "facts": ["Last scene."]},
         ],
     }
 
@@ -487,3 +496,1209 @@ def test_resume_after_accepted_retry_reconstructs_exact_signed_prefix(tmp_path):
     assert len(value["blocks"]) == 3
     assert resumed_calls == [2, 3]
     assert (first_root / "response.json").read_bytes() == raw_before
+
+
+def test_v32_rejects_missing_narrator_or_insufficient_facts():
+    plan = _plan()
+    del plan["narrative_contract"]["narrator"]
+    with pytest.raises(title_flow.TitleContractError, match="narrator"):
+        title_flow.validate_plan(plan)
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 45
+    plan["word_budget_total"] = 48
+    with pytest.raises(title_flow.TitleContractError, match="facts"):
+        title_flow.validate_plan(plan)
+
+
+@pytest.mark.parametrize("broken", ["hook_marker", "close_marker", "macro_stage"])
+def test_v32_rejects_broken_stage_markers(broken):
+    plan = _plan()
+    if broken == "hook_marker":
+        plan["stages"][1]["markers"] = ["macro_revelation", "hook"]
+    elif broken == "close_marker":
+        plan["stages"][2]["markers"] = []
+    else:
+        plan["macro_revelation"]["stage_id"] = "S03"
+    with pytest.raises(title_flow.TitleContractError, match="marker|macro"):
+        title_flow.validate_plan(plan)
+
+
+def test_v32_recurring_worlds_cover_three_stage_people():
+    plan = _plan()
+    plan["continuity_base"]["recurring_people"] = [{
+        "name": "Viewer", "stages": ["S01", "S02", "S03"],
+    }]
+    with pytest.raises(title_flow.TitleContractError, match="persistent world"):
+        title_flow.validate_plan(plan)
+    plan["continuity_base"]["persistent_worlds"] = [{"name": "Viewer"}]
+    title_flow.validate_plan(plan)
+
+
+def test_v26_broll_resets_presenter_limit_between_blocks():
+    plan = _plan()
+    prior = _block(2)["block"]
+    prior["beats"][0].update({
+        "text": "Speaking safely. " * 5,
+        "visual_type": "avatar", "prompt": None, "audio": True,
+    })
+    close = _block(3)
+    base = close["block"]["beats"][0]
+    first = dict(base)
+    first.update({
+        "beat_id": "3A", "text": "A visible change. ",
+        "visual_type": "media_image", "prompt": "A note on a wooden desk",
+        "audio": False,
+    })
+    last = dict(base)
+    last.update({
+        "beat_id": "3B", "text": ("One final line. " * 5).rstrip(),
+        "visual_type": "avatar", "prompt": None, "audio": True,
+    })
+    close["block"]["beats"] = [first, last]
+    title_flow.validate_block(close, 3, plan, [prior])
+
+
+def test_v26_first_cta_requires_ebook_cover_reference():
+    plan = _plan()
+    plan["stages"][1]["kind"] = "aside"
+    plan["stages"][1]["markers"] = ["macro_revelation", "cta_intermediate"]
+    cta = _block(2)
+    # CTA must be ungrouped: a grid label is independently invalid here.
+    cta["block"]["beats"][0]["prompt"] = "Woman picks up phone at a desk."
+    cta["block"]["beats"][0].update({
+        "cta_group_id": 1,
+        "cta_reference_sources": [],
+    })
+    with pytest.raises(title_flow.TitleContractError, match="ebook cover"):
+        title_flow.validate_block(cta, 2, plan, [_block(1)["block"]])
+    cta["block"]["beats"][0]["cta_reference_sources"] = ["ebook"]
+    cta["block"]["beats"][0]["reference"] = True
+    title_flow.validate_block(cta, 2, plan, [_block(1)["block"]])
+
+
+def test_v26_grid_continuity_can_cross_resource_cta():
+    """v26 groups are global and cannot be banned merely for crossing CTA."""
+    plan = _plan()
+    # Existing accepted blocks may contain a legitimate global sequence.
+    prior = _block(1)["block"]
+    cta = _block(2)["block"]
+    cta["beats"][0]["prompt"] = "An unmarked CTA still."
+    cta["beats"][0].update({
+        "cta_group_id": 1, "cta_reference_sources": ["ebook"],
+        "reference": True,
+    })
+    close = _block(3)
+    still = dict(close["block"]["beats"][0])
+    still.update({
+        "beat_id": "3A", "text": "The same phone again. ",
+        "visual_type": "media_image", "prompt": "A2. Woman picks up phone at a desk.",
+        "reference": False, "audio": False,
+    })
+    anchor = dict(close["block"]["beats"][0])
+    anchor["beat_id"] = "3B"
+    close["block"]["beats"] = [still, anchor]
+    title_flow.validate_block(close, 3, plan, [prior, cta])
+
+
+def test_v32_t1_retry_explains_saved_validation_failure(tmp_path):
+    """A strict v32 rejection must be actionable, not a repeated paid guess."""
+    calls = []
+
+    def provider(*, api_key, system, messages):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            invalid = _plan()
+            invalid["narrative_contract"].pop("narrator")
+            return _response(invalid)
+        assert "narrator background/manner missing" in messages[-1]["content"]
+        return _response(_plan())
+
+    plan, result = title_flow.run(
+        output=tmp_path, avatar="Uncle_Enzo",
+        title="Wrong Number", ebook=b"cover", thumbnail=b"thumb",
+        api_key="fake", stop="T1", provider=provider,
+    )
+    assert result is None
+    assert plan == _plan()
+    assert len(calls) == 2
+    assert "narrator" in title_flow.read(
+        tmp_path / "T1" / "rejection_attempt_1.json"
+    )["reason"]
+    assert (tmp_path / "T1" / "output.json").is_file()
+
+
+def test_v32_t1_resume_reconstructs_legacy_feedback_without_paid_repeat(tmp_path):
+    invalid = _plan()
+    invalid["stages"][1]["facts"] = []
+    root = tmp_path / "T1"
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def interrupted(*, api_key, system, messages):
+        calls.append(copy.deepcopy(messages))
+        if len(calls) == 1:
+            return _response(invalid)
+        raise title_flow.ClaudeAPIError("connection broken")
+
+    with pytest.raises(title_flow.ClaudeAPIError):
+        title_flow.run(**options, provider=interrupted)
+    assert (root / "response_attempt_1.json").is_file()
+    (root / "rejection_attempt_1.json").unlink()
+    # This was an uncertain request; never erase its inflight marker to
+    # replay it. The first response and newly rebuilt rejection are retained.
+    with pytest.raises(title_flow.TitleContractError, match="uncertain"):
+        title_flow.run(**options, provider=lambda **kw: pytest.fail("Must not resend"))
+    assert "only 0 facts" in title_flow.read(
+        root / "rejection_attempt_1.json"
+    )["reason"]
+
+
+
+def test_t1_legacy_32k_max_tokens_resumes_with_only_one_new_128k_request(tmp_path):
+    """The user's original three paid T1 turns remain byte-for-byte intact."""
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    old_calls = []
+
+    def old(*, api_key, system, messages):
+        old_calls.append(copy.deepcopy(messages))
+        return {
+            "model": title_flow.MODEL, "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "capped", "signature": "sig"}],
+            "usage": {"input_tokens": 500, "output_tokens": 32000},
+        }
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, provider=old)
+    assert len(old_calls) == 3
+    root = tmp_path / "T1"
+    original = [
+        (root / f"response_attempt_{n}.json").read_bytes()
+        for n in (1, 2, 3)
+    ]
+
+    calls = []
+
+    def resumed(*, api_key, system, messages):
+        calls.append(copy.deepcopy(messages))
+        assert "previous T1 response failed" in messages[-1]["content"]
+        assert "max_tokens" in messages[-1]["content"]
+        return _response(_plan())
+
+    accepted, result = title_flow.run(**options, provider=resumed)
+    assert accepted == _plan()
+    assert result is None
+    assert len(calls) == 1
+    assert (root / "response_attempt_4.json").is_file()
+    assert all(
+        (root / f"response_attempt_{n}.json").read_bytes() == original[n-1]
+        for n in (1, 2, 3)
+    )
+    assert (root / "output.json").is_file()
+
+    title_flow.run(
+        **options, provider=lambda **kwargs: pytest.fail(
+            "T1 must not be re-submitted after validation"
+        ),
+    )
+
+
+def test_new_128k_t1_max_tokens_does_not_grant_fourth_request(tmp_path):
+    options = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def exhausted(*, api_key, system, messages):
+        calls.append(1)
+        return {
+            "model": title_flow.MODEL, "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "large", "signature": "sig"}],
+            "usage": {
+                "input_tokens": 500,
+                "output_tokens": title_flow.T1_MAX_OUTPUT_TOKENS,
+            },
+        }
+
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**options, provider=exhausted)
+    assert len(calls) == 3
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(
+            **options,
+            provider=lambda **kwargs: pytest.fail(
+                "128k T1 attempts exhausted; paid request must not replay"
+            ),
+        )
+    assert not (tmp_path / "T1" / "response_attempt_4.json").exists()
+
+
+def test_t1_stream_supports_128k_high_effort():
+    seen = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            events = [
+                {"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                {"type": "content_block_start", "index": 0,
+                 "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "text_delta", "text": "{}"}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                 "usage": {"output_tokens": 2}},
+                {"type": "message_stop"},
+            ]
+            return iter(
+                [("data: " + json.dumps(item)).encode() for item in events]
+            )
+
+    def transport(request, timeout):
+        seen.append(json.loads(request.data))
+        return FakeStream()
+
+    reply = title_flow.call_claude(
+        api_key="fake", system="T1", messages=[
+            {"role": "user", "content": "Plan this story."},
+        ], max_tokens=title_flow.T1_MAX_OUTPUT_TOKENS, transport=transport,
+    )
+    assert reply["stop_reason"] == "end_turn"
+    assert seen[0]["max_tokens"] == 128000
+    assert seen[0]["output_config"]["effort"] == "high"
+    assert seen[0]["stream"] is True
+
+
+def _one_fact_short() -> dict:
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 44
+    plan["word_budget_total"] = 47
+    return plan
+
+
+def test_t1_repair_facts_from_complete_fourth_turn_without_full_regeneration(tmp_path):
+    """Real-world recovery: three 32k truncations and a complete 4th near miss."""
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook", "thumbnail": b"thumb",
+        "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def provider(*, api_key, system, messages):
+        calls.append((system, copy.deepcopy(messages)))
+        if len(calls) <= 3:
+            return {
+                "model": title_flow.MODEL, "stop_reason": "max_tokens",
+                "content": [{"type": "thinking", "thinking": "long", "signature": "s"}],
+                "usage": {"input_tokens": 500, "output_tokens": 32000},
+            }
+        if len(calls) == 4:
+            return _response(_one_fact_short())
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        assert len(calls) == 5
+        request = json.loads(messages[0]["content"])
+        assert request["missing_facts_by_stage"] == {"S02": 1}
+        assert request["stage_outline"][1]["facts"] == ["A different fact."]
+        assert request["stage_outline"][0]["facts"] == []
+        return _response({
+            "facts_by_stage": [{
+                "stage_id": "S02",
+                "facts": ["The fictional message enters the recipient's inbox first."],
+            }],
+        })
+
+    expected_raw = _response(_one_fact_short())
+    # The legacy retry allowance is discovered only after the third paid
+    # response has been checkpointed by a previous invocation.
+    with pytest.raises(title_flow.TitleContractError, match="3 attempts exhausted"):
+        title_flow.run(**opts, provider=provider)
+    assert len(calls) == 3
+    result, nothing = title_flow.run(**opts, provider=provider)
+    assert nothing is None
+    assert len(calls) == 5
+    assert len(result["stages"][1]["facts"]) == 2
+    assert result["stages"][1]["facts"][0] == "A different fact."
+    title_flow.validate_plan(result)
+    t1_root = tmp_path / "T1"
+    assert title_flow.read(t1_root / "response_attempt_4.json") == expected_raw
+    assert (t1_root / "fact_repair" / "input.json").is_file()
+    assert (t1_root / "fact_repair" / "response.json").is_file()
+    assert title_flow.read(t1_root / "fact_repair" / "output.json") == result
+    assert not (t1_root / "fact_repair" / "inflight.json").exists()
+
+    title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("No new paid T1 request permitted")
+    )
+    (t1_root / "output.json").unlink()
+    recovered, _ = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Checkpoint replay should be local")
+    )
+    assert recovered == result
+    assert len(calls) == 5
+
+
+def test_t1_narrow_repair_uncertain_outcome_keeps_inflight_checkpoint(tmp_path):
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook", "thumbnail": b"thumb",
+        "api_key": "fake", "stop": "T1",
+    }
+    t1_calls = []
+
+    def provider(*, api_key, system, messages):
+        t1_calls.append(system)
+        if len(t1_calls) == 1:
+            return _response(_one_fact_short())
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        raise title_flow.ClaudeAPIError("uncertain patch response")
+
+    with pytest.raises(title_flow.ClaudeAPIError, match="uncertain patch"):
+        title_flow.run(**opts, provider=provider)
+    assert len(t1_calls) == 2
+    assert (tmp_path / "T1" / "fact_repair" / "inflight.json").is_file()
+    assert not (tmp_path / "T1" / "output.json").exists()
+    with pytest.raises(title_flow.TitleContractError, match="outcome uncertain"):
+        title_flow.run(
+            **opts,
+            provider=lambda **kw: pytest.fail("Ambiguous patch must never be re-sent"),
+        )
+
+
+def test_t1_repair_rejects_invented_fields_and_duplicate_facts():
+    original = _one_fact_short()
+    deficits = title_flow._t1_repairable_fact_deficits(original)
+    assert deficits == {"S02": 1}
+    bad_patches = [
+        {"facts_by_stage": [{"stage_id": "S02",
+                             "facts": ["A different fact."]}]},
+        {"facts_by_stage": [{"stage_id": "S02",
+                             "facts": ["Fresh detail."]}], "narrative_core": {}},
+        {"facts_by_stage": [{"stage_id": "S01",
+                             "facts": ["Fresh detail."]}]},
+    ]
+    for patch in bad_patches:
+        with pytest.raises(title_flow.TitleContractError):
+            title_flow._apply_t1_fact_patch(original, patch, deficits)
+    assert original == _one_fact_short()
+
+
+def test_t1_no_expensive_patch_for_structural_or_large_deficits():
+    plan = _one_fact_short()
+    plan["stages"][1]["word_budget"] = 155
+    plan["word_budget_total"] = 158
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+    plan = _one_fact_short()
+    plan["macro_revelation"]["stage_id"] = "S03"
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_t1_repair_transport_uses_medium_effort_and_small_ceiling():
+    captured = []
+
+    class FakeStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def __iter__(self):
+            events = [
+                {"type": "message_start", "message": {"usage": {"input_tokens": 3}}},
+                {"type": "content_block_start", "index": 0,
+                 "content_block": {"type": "text", "text": ""}},
+                {"type": "content_block_delta", "index": 0,
+                 "delta": {"type": "text_delta", "text": "{}"}},
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                 "usage": {"output_tokens": 2}},
+                {"type": "message_stop"},
+            ]
+            return iter(
+                [("data: " + json.dumps(event)).encode() for event in events]
+            )
+
+    def transport(request, timeout):
+        captured.append(json.loads(request.data))
+        return FakeStream()
+
+    title_flow.call_claude(
+        api_key="fake",
+        system=title_flow._T1_FACT_REPAIR_SYSTEM,
+        messages=[{"role": "user", "content": "A short fact patch."}],
+        max_tokens=title_flow._T1_FACT_REPAIR_MAX_OUTPUT_TOKENS,
+        effort=title_flow._T1_FACT_REPAIR_EFFORT,
+        transport=transport,
+    )
+    assert captured[0]["max_tokens"] == 8192
+    assert captured[0]["output_config"]["effort"] == "medium"
+
+
+def test_t1_repair_across_multiple_stages_over_old_four_fact_limit(tmp_path):
+    """Repair all deficits after one full response, without paid rewrites."""
+    plan = _plan()
+    plan["stages"][0]["word_budget"] = 66
+    plan["stages"][1]["word_budget"] = 66
+    plan["stages"][2]["word_budget"] = 44
+    plan["word_budget_total"] = 176
+    expected = {"S01": 2, "S02": 2, "S03": 1}
+    analysis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert analysis == {"deficits": expected, "reason": None}
+    assert title_flow._t1_repairable_fact_deficits(plan) == expected
+    response = _response(plan)
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo", "title": "Wrong Number",
+        "ebook": b"ebook", "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+
+    def provider(*, api_key, system, messages):
+        calls.append(system)
+        if len(calls) == 1:
+            return response
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        request = json.loads(messages[0]["content"])
+        assert request["missing_facts_by_stage"] == expected
+        return _response({
+            "facts_by_stage": [{
+                "stage_id": stage, "facts": [
+                    f"The {stage} detail number {n} is shown on the phone."
+                    for n in range(count)
+                ],
+            } for stage, count in expected.items()],
+        })
+
+    fixed, _ = title_flow.run(**opts, provider=provider)
+    assert len(calls) == 2
+    assert [len(stage["facts"]) for stage in fixed["stages"]] == [3, 3, 2]
+    assert fixed["word_budget_total"] == 176
+    title_flow.validate_plan(fixed)
+
+
+def test_t1_repair_diagnostic_explains_other_contract_failure():
+    plan = _one_fact_short()
+    plan["macro_revelation"]["stage_id"] = "S03"
+    analysis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert analysis["deficits"] == {"S02": 1}
+    assert "macro_revelation" in analysis["reason"]
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_t1_repair_diagnostic_refuses_rewriting_most_of_plan():
+    plan = _one_fact_short()
+    plan["stages"][1]["word_budget"] = 155
+    plan["word_budget_total"] = 158
+    analysis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert analysis["deficits"] == {"S02": 6}
+    assert "Too many" in analysis["reason"]
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_v32_explicit_200_word_example_accepts_nine_facts():
+    """The supplied prompt says 200 words => at least NINE facts, not ten."""
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 200
+    plan["word_budget_total"] = 203
+    plan["stages"][1]["facts"] = [f"Known fact {n}." for n in range(9)]
+    title_flow.validate_plan(plan)
+    assert title_flow._t1_required_fact_count(200) == 9
+    plan["stages"][1]["facts"].pop()
+    with pytest.raises(title_flow.TitleContractError, match="requires 9 facts"):
+        title_flow.validate_plan(plan)
+
+
+def test_v32_closing_return_moved_to_actual_final_stage_offline(tmp_path):
+    plan = _plan()
+    plan["stages"][1]["markers"].append("closing_return")
+    plan["stages"][2]["markers"].remove("closing_return")
+    original = copy.deepcopy(plan)
+    with pytest.raises(title_flow.TitleContractError, match="closing_return"):
+        title_flow.validate_plan(plan)
+
+    changes = [
+        {"stage_id": "S02", "action": "remove_misplaced_closing_return"},
+        {"stage_id": "S03", "action": "add_closing_return"},
+    ]
+    corrected, applied = title_flow._t1_normalize_closing_marker(plan)
+    assert applied == changes
+    assert plan == original
+    title_flow.validate_plan(corrected)
+    assert title_flow._t1_fact_repair_diagnostics(plan) == {
+        "deficits": {}, "reason": None,
+    }
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    calls = []
+    def provider(*, api_key, system, messages):
+        calls.append(system)
+        return _response(plan)
+    output, _ = title_flow.run(**opts, provider=provider)
+    assert len(calls) == 1
+    assert output == corrected
+    assert title_flow.read(
+        tmp_path / "T1" / "response_attempt_1.json"
+    ) == _response(plan)
+    audit = title_flow.read(tmp_path / "T1" / "marker_repair.json")
+    assert audit["changes"] == changes
+    assert (tmp_path / "T1" / "output.json").is_file()
+    title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("No paid replay allowed")
+    )
+
+
+def test_t1_v32_combined_closing_and_fact_repair_uses_one_small_patch(tmp_path):
+    """Regression for user's S05=9/200 and misplaced S12 marker."""
+    plan = _plan()
+    stages = [
+        {
+            "id": f"S{index:02d}",
+            "kind": "hook" if index == 1 else "closing" if index == 13 else "chain",
+            "markers": ["hook"] if index == 1 else (
+                ["macro_revelation"] if index == 2 else (
+                    ["closing_return"] if index == 12 else []
+                )
+            ),
+            "word_budget": 200,
+            "facts": [f"S{index:02d} known fact {j}." for j in range(
+                8 if index in {6, 7, 9} else 9
+            )],
+        } for index in range(1, 14)
+    ]
+    plan["stages"] = stages
+    plan["word_budget_total"] = 13 * 200
+    original = copy.deepcopy(plan)
+    assert title_flow._t1_required_fact_count(200) == 9
+    diagnostic = title_flow._t1_fact_repair_diagnostics(plan)
+    assert diagnostic == {
+        "deficits": {"S06": 1, "S07": 1, "S09": 1}, "reason": None,
+    }
+    assert plan == original
+
+    calls = []
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+
+    def provider(*, api_key, system, messages):
+        calls.append(system)
+        if len(calls) == 1:
+            return _response(plan)
+        assert system == title_flow._T1_FACT_REPAIR_SYSTEM
+        request = json.loads(messages[0]["content"])
+        assert request["missing_facts_by_stage"] == {
+            "S06": 1, "S07": 1, "S09": 1,
+        }
+        assert request["stage_outline"][4]["facts"] == []
+        return _response({
+            "facts_by_stage": [
+                {"stage_id": stage, "facts": [
+                    f"The {stage} phone screen shows one new confirmed field."
+                ]}
+                for stage in ("S06", "S07", "S09")
+            ]
+        })
+
+    fixed, _ = title_flow.run(**opts, provider=provider)
+    assert len(calls) == 2
+    title_flow.validate_plan(fixed)
+    assert fixed["stages"][4]["facts"] == original["stages"][4]["facts"]
+    assert "closing_return" not in fixed["stages"][11]["markers"]
+    assert "closing_return" in fixed["stages"][12]["markers"]
+    assert "closing_return" in plan["stages"][11]["markers"]
+    assert title_flow.read(tmp_path / "T1" / "marker_repair.json")["changes"]
+    assert (tmp_path / "T1" / "fact_repair" / "output.json").is_file()
+
+
+def test_t1_closing_marker_fix_removes_stray_marker_without_rewriting_final():
+    plan = _plan()
+    plan["stages"][1]["markers"].append("closing_return")
+    saved = copy.deepcopy(plan)
+    corrected, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert changes == [{
+        "stage_id": "S02", "action": "remove_misplaced_closing_return",
+    }]
+    assert plan == saved
+    assert corrected["stages"][-1]["markers"] == ["closing_return"]
+    title_flow.validate_plan(corrected)
+    assert title_flow._t1_fact_repair_diagnostics(plan) == {
+        "deficits": {}, "reason": None,
+    }
+
+    plan = _plan()
+    plan["stages"][1]["markers"].extend(["closing_return", "closing_return"])
+    unchanged, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert unchanged == plan and changes == []
+    plan = _plan()
+    plan["stages"][-1]["kind"] = "chain"
+    unchanged, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert unchanged == plan and changes == []
+
+
+def test_t1_resume_existing_duplicate_closing_markers_needs_no_paid_call(tmp_path):
+    original = _plan()
+    original["stages"][1]["markers"].append("closing_return")
+    root = tmp_path / "T1"
+    raw = _response(original)
+    title_flow.write(root / "response_attempt_1.json", raw)
+    before = (root / "response_attempt_1.json").read_bytes()
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    fixed, nothing = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Must not call paid T1")
+    )
+    assert nothing is None
+    title_flow.validate_plan(fixed)
+    assert fixed["stages"][1]["markers"] == ["macro_revelation"]
+    assert fixed["stages"][-1]["markers"] == ["closing_return"]
+    assert (root / "response_attempt_1.json").read_bytes() == before
+    assert title_flow.read(root / "marker_repair.json")["changes"] == [{
+        "stage_id": "S02", "action": "remove_misplaced_closing_return",
+    }]
+
+
+
+def test_t1_resume_keeps_historical_overstrict_rejection_immutable(tmp_path):
+    """The user's old S05 9/200 rejection must not block corrected replay."""
+    plan = _plan()
+    plan["stages"][1]["word_budget"] = 200
+    plan["word_budget_total"] = 203
+    plan["stages"][1]["facts"] = [f"Relevant fact {n}." for n in range(9)]
+    plan["stages"][1]["markers"].append("closing_return")
+    plan["stages"][-1]["markers"].remove("closing_return")
+    response = _response(plan)
+    old_reason = "T1 stage 2 only 9 facts for 200 words (v32: 1/22)"
+    assert title_flow._legacy_t1_fact_rejection(plan) == old_reason
+    root = tmp_path / "T1"
+    title_flow.write(root / "response_attempt_1.json", response)
+    title_flow.write(root / "rejection_attempt_1.json", {"reason": old_reason})
+    previous_bytes = (root / "response_attempt_1.json").read_bytes()
+    rejected_bytes = (root / "rejection_attempt_1.json").read_bytes()
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+
+    repaired, remaining = title_flow.run(
+        **opts, provider=lambda **kwargs: pytest.fail("No paid replay needed")
+    )
+    assert remaining is None
+    title_flow.validate_plan(repaired)
+    assert (root / "response_attempt_1.json").read_bytes() == previous_bytes
+    assert (root / "rejection_attempt_1.json").read_bytes() == rejected_bytes
+    assert repaired["stages"][1]["facts"] == plan["stages"][1]["facts"]
+    assert (root / "marker_repair.json").is_file()
+    audit = title_flow.read(root / "revalidation_attempt_1.json")
+    assert audit["original_reason"] == old_reason
+    assert "closing_return" in audit["current_reason"]
+    title_flow.run(
+        **opts, provider=lambda **kwargs: pytest.fail("Fully cached T1 replay")
+    )
+
+
+def test_t1_revalidation_rejects_unproven_historical_reason(tmp_path):
+    plan = _plan()
+    plan["stages"][1]["markers"].append("closing_return")
+    plan["stages"][-1]["markers"].remove("closing_return")
+    root = tmp_path / "T1"
+    title_flow.write(root / "response_attempt_1.json", _response(plan))
+    title_flow.write(root / "rejection_attempt_1.json", {
+        "reason": "Some other unverified rejection",
+    })
+    with pytest.raises(title_flow.TitleContractError, match="checkpoint changed"):
+        title_flow.run(
+            output=tmp_path, avatar="Uncle_Enzo",
+            title="Wrong Number", ebook=b"cover",
+            thumbnail=b"thumb", api_key="fake", stop="T1",
+            provider=lambda **kw: pytest.fail("Never resend a paid T1 request"),
+        )
+
+
+
+def test_t1_diagnostic_zero_deficits_valid_plan_is_not_false_negative():
+    """No missing facts with valid markers means the plan is already valid."""
+    plan = _plan()
+    assert title_flow._t1_fact_repair_diagnostics(plan) == {
+        "deficits": {}, "reason": None,
+    }
+    assert title_flow._t1_repairable_fact_deficits(plan) == {}
+
+
+def test_t1_diagnostic_zero_deficits_reports_actual_unrepaired_marker_error():
+    """No-op closing normalization must not disguise a structural T1 error."""
+    plan = _plan()
+    plan["stages"][-1]["markers"].remove("closing_return")
+    plan["stages"][-1]["kind"] = "chain"
+    # No facts are missing and marker normalization must refuse a
+    # structural change to stage.kind instead of pretending the plan is fine.
+    checked, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert changes == []
+    assert checked == plan
+    diagnosis = title_flow._t1_fact_repair_diagnostics(plan)
+    assert diagnosis["deficits"] == {}
+    assert "closing" in diagnosis["reason"]
+
+
+
+def _trailing_comment_t1() -> dict:
+    """Reproduce S12 closing + S13 comment from wrong_number_v32."""
+    plan = _plan()
+    stages = []
+    for number in range(1, 14):
+        stage = copy.deepcopy(_plan()["stages"][1])
+        stage["id"] = f"S{number:02d}"
+        stage["kind"] = (
+            "hook" if number == 1
+            else "closing" if number == 12
+            else "aside" if number == 13
+            else "chain"
+        )
+        stage["markers"] = (
+            ["hook"] if number == 1
+            else ["macro_revelation"] if number == 9
+            else ["closing_return"] if number == 12
+            else ["comment_invitation"] if number == 13
+            else []
+        )
+        stage["facts"] = [] if number == 13 else [f"The {number}th phone event happened."]
+        stage["word_budget"] = 2
+        stages.append(stage)
+    plan["stages"] = stages
+    plan["word_budget_total"] = 26
+    plan["macro_revelation"]["stage_id"] = "S09"
+    plan["calls_to_action"] = [
+        {
+            "type": "comment", "stage_id": "S13",
+            "share_of_narration_percent": 1,
+            "function": "Invite viewer experience.",
+            "return_to_story": "A final reconsideration.",
+        },
+    ]
+    plan["continuity_base"]["recurring_people"] = [{
+        "name": "Viewer", "stages": ["S01", "S12", "S13"],
+    }]
+    plan["continuity_base"]["persistent_worlds"] = [{"name": "Viewer"}]
+    plan["continuity_base"]["places"] = [{
+        "name": "Room", "stages": ["S01", "S12"],
+    }]
+    plan["continuity_base"]["devices_and_interfaces"] = [{
+        "name": "Phone", "stages": ["S01", "S13"],
+    }]
+    return plan
+
+
+def test_title_reorders_real_trailing_comment_and_updates_id_references():
+    original = _trailing_comment_t1()
+    original_snapshot = copy.deepcopy(original)
+    with pytest.raises(title_flow.TitleContractError, match="closing_return|first/last"):
+        title_flow.validate_plan(original)
+    repaired, changes = title_flow._t1_normalize_closing_marker(original)
+    title_flow.validate_plan(repaired)
+    assert len(changes) == 1
+    assert changes[0] == {
+        "action": "move_trailing_comment_before_closing",
+        "old_closing_stage": "S12", "new_closing_stage": "S13",
+        "old_comment_stage": "S13", "new_comment_stage": "S12",
+    }
+    assert repaired["stages"][-2]["id"] == "S12"
+    assert repaired["stages"][-2]["kind"] == "aside"
+    assert repaired["stages"][-2]["markers"] == ["comment_invitation"]
+    assert repaired["stages"][-1]["id"] == "S13"
+    assert repaired["stages"][-1]["kind"] == "closing"
+    assert repaired["stages"][-1]["markers"] == ["closing_return"]
+    assert repaired["stages"][-1]["facts"] == original["stages"][-2]["facts"]
+    assert repaired["calls_to_action"][0]["stage_id"] == "S12"
+    continuity = repaired["continuity_base"]
+    assert continuity["recurring_people"][0]["stages"] == [
+        "S01", "S12", "S13",
+    ]
+    assert continuity["places"][0]["stages"] == ["S01", "S13"]
+    assert continuity["devices_and_interfaces"][0]["stages"] == ["S01", "S12"]
+    assert original == original_snapshot
+    diagnosis = title_flow._t1_fact_repair_diagnostics(original)
+    assert diagnosis == {"deficits": {}, "reason": None}
+
+
+def test_title_trailing_comment_checkpoint_resume_is_fully_offline(tmp_path):
+    original = _trailing_comment_t1()
+    root = tmp_path / "T1"
+    raw = _response(original)
+    title_flow.write(root / "response_attempt_4.json", raw)
+    old_bytes = (root / "response_attempt_4.json").read_bytes()
+    for n in (1, 2, 3):
+        title_flow.write(root / f"response_attempt_{n}.json", {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "long"}],
+            "usage": {"output_tokens": 32000},
+        })
+        title_flow.write(root / f"rejection_attempt_{n}.json", {
+            "reason": "Incomplete Claude response: max_tokens",
+        })
+    # The old validator rejected S05 for insufficient facts; its immutable
+    # rejection is historically correct even after the new rules accept it.
+    saved_old = title_flow._legacy_t1_fact_rejection(original)
+    # Simulate an actual legacy fourth rejection by forcing a prior 200-word
+    # fact stage with nine facts so that the old rejection can be verified.
+    original["stages"][4]["word_budget"] = 200
+    original["stages"][4]["facts"] = [
+        f"S05 fact number {n}." for n in range(9)
+    ]
+    original["word_budget_total"] = 224
+    raw = _response(original)
+    title_flow.write(root / "response_attempt_4.json", raw)
+    old_bytes = (root / "response_attempt_4.json").read_bytes()
+    saved_old = title_flow._legacy_t1_fact_rejection(original)
+    assert "stage 5 only 9 facts for 200 words" in saved_old
+    title_flow.write(root / "rejection_attempt_4.json", {"reason": saved_old})
+    rejection_bytes = (root / "rejection_attempt_4.json").read_bytes()
+
+    args = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"ebook",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    accepted, merged = title_flow.run(
+        **args, provider=lambda **kw: pytest.fail("T1 must not call Claude")
+    )
+    assert merged is None
+    title_flow.validate_plan(accepted)
+    assert accepted["stages"][-1]["kind"] == "closing"
+    assert accepted["stages"][-2]["kind"] == "aside"
+    assert (root / "response_attempt_4.json").read_bytes() == old_bytes
+    assert (root / "rejection_attempt_4.json").read_bytes() == rejection_bytes
+    assert title_flow.read(root / "stage_order_repair.json")["changes"][0][
+        "action"
+    ] == "move_trailing_comment_before_closing"
+    assert not (root / "marker_repair.json").exists()
+    assert (root / "output.json").is_file()
+    accepted2, _ = title_flow.run(
+        **args, provider=lambda **kw: pytest.fail("T1 must stay cached")
+    )
+    assert accepted2 == accepted
+
+
+def test_t2_comment_stage_is_before_last_avatar_close_after_repair():
+    original = _trailing_comment_t1()
+    fixed, _ = title_flow._t1_normalize_closing_marker(original)
+    blocks = []
+    for number, _stage in enumerate(fixed["stages"], 1):
+        last = number == len(fixed["stages"])
+        text = "You can understand the phone. " if not last else "Now you know."
+        beat = {
+            "beat_id": f"{number}A", "text": text,
+            "beat_type": "action",
+            "visual_type": "avatar" if last else "media_image",
+            "prompt": None if last else "A phone screen on a desk.",
+            "video_prompt": None,
+            "reference": False, "audio": last,
+        }
+        block = {
+            "block_id": number,
+            "type": "intro" if number == 1 else "close" if last else "development",
+            "emotional_entry": "Curious", "emotional_exit": "Informed",
+            "span": {"first_words": text, "last_words": text},
+            "beats": [beat],
+        }
+        title_flow.validate_block({"block": block}, number, fixed, blocks)
+        blocks.append(block)
+    merged_output = title_flow.merged(fixed, blocks)
+    assert len(merged_output["blocks"]) == 13
+    assert merged_output["blocks"][-1]["type"] == "close"
+    assert merged_output["blocks"][-1]["beats"][-1]["visual_type"] == "avatar"
+    assert merged_output["blocks"][-2]["type"] == "development"
+
+
+
+def test_title_reorder_remaps_nested_stage_references_with_audit():
+    # Keep narrative references consistent with the stage IDs after swapping.
+    for value, expected in (
+        ({"content_link": "S13", "relation": "then"},
+         {"content_link": "S12", "relation": "then"}),
+        ({"content_link": {"step": "Return to S12"}},
+         {"content_link": {"step": "Return to S13"}}),
+        ({"content_link": ["arrive", {"target": "S13"}]},
+         {"content_link": ["arrive", {"target": "S12"}]}),
+    ):
+        plan = _trailing_comment_t1()
+        plan["stages"][-2]["bridge"] = value
+        original = copy.deepcopy(plan)
+        corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+        assert len(moves) == 2
+        assert moves[0]["action"] == "move_trailing_comment_before_closing"
+        assert moves[1]["action"] == "remap_embedded_stage_reference"
+        assert moves[1]["field"].startswith("stages[11].bridge.")
+        assert corrected["stages"][-1]["bridge"] == expected
+        assert plan == original
+        title_flow.validate_plan(corrected)
+
+
+def test_title_reorder_remaps_stage_references_outside_stages():
+    scenarios = (
+        (lambda plan: plan["calls_to_action"][0].update(
+            {"return_to_story": "Return to S12"}
+        ), "calls_to_action[0].return_to_story", "Return to S13"),
+        (lambda plan: plan["macro_revelation"].update(
+            {"statement": "After S13 everything is clear"}
+        ), "macro_revelation.statement", "After S12 everything is clear"),
+        (lambda plan: plan["narrative_contract"].update(
+            {"opening_scene": {"notes": ["S12 happens here"]}}
+        ), "narrative_contract.opening_scene.notes[0]", "S13 happens here"),
+        (lambda plan: plan["continuity_base"]["places"][0].update(
+            {"description": {"notes": ["Location changes in S13"]}}
+        ), "continuity_base.places[0].description.notes[0]",
+         "Location changes in S12"),
+    )
+    for modify, field, expected in scenarios:
+        plan = _trailing_comment_t1()
+        modify(plan)
+        before = copy.deepcopy(plan)
+        corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+        assert len(moves) == 2
+        assert moves[1]["field"] == field
+        assert moves[1]["to"] == expected
+        assert plan == before
+        title_flow.validate_plan(corrected)
+
+
+def test_title_reorder_refuses_stage_id_keys_that_cannot_be_swapped():
+    plan = _trailing_comment_t1()
+    plan["stages"][-2]["bridge"] = {"S13": "A cross-reference"}
+    before = copy.deepcopy(plan)
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == before
+    assert plan == before
+
+
+def test_t1_reordered_nested_references_are_persisted_in_stage_audit(tmp_path):
+    plan = _trailing_comment_t1()
+    plan["stages"][11]["bridge"] = {
+        "content_link": "Move from S12 to S13",
+    }
+    root = tmp_path / "T1"
+    title_flow.write(root / "response_attempt_1.json", _response(plan))
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    repaired, _ = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Never resubmit paid T1")
+    )
+    title_flow.validate_plan(repaired)
+    assert repaired["stages"][-1]["bridge"]["content_link"] == (
+        "Move from S13 to S12"
+    )
+    audit = title_flow.read(root / "stage_order_repair.json")
+    assert audit["changes"][1]["action"] == "remap_embedded_stage_reference"
+    assert audit["changes"][1]["field"] == "stages[11].bridge.content_link"
+    assert audit["changes"][1]["from"] == "Move from S12 to S13"
+    assert audit["changes"][1]["to"] == "Move from S13 to S12"
+
+
+def test_title_reorder_allows_unaffected_stage_mentions():
+    plan = _trailing_comment_t1()
+    plan["stages"][0]["bridge"] = {
+        "content_link": {"next": ["The action in S07"]},
+    }
+    corrected, changes = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert changes and changes[0]["action"] == "move_trailing_comment_before_closing"
+    title_flow.validate_plan(corrected)
+
+
+def test_title_refuses_inapplicable_final_stage_reordering():
+    plan = _trailing_comment_t1()
+    plan["stages"][-1]["facts"] = ["Unexpected comment fact."]
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == plan
+    plan = _trailing_comment_t1()
+    plan["calls_to_action"][0]["stage_id"] = "S12"
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves == []
+    assert corrected == plan
+    plan = _trailing_comment_t1()
+    plan["stages"][-2]["bridge"] = {"content_link": "S13", "relation": "then"}
+    corrected, moves = title_flow._t1_move_trailing_comment_before_closing(plan)
+    assert moves and moves[1]["action"] == "remap_embedded_stage_reference"
+    assert corrected["stages"][-1]["bridge"]["content_link"] == "S12"
+
+
+
+def _trailing_comment_missing_worlds() -> dict:
+    """Production-shaped continuity omissions after S12/S13 reordering."""
+    plan = _trailing_comment_t1()
+    plan["continuity_base"]["recurring_people"] = [{
+        "name": "The viewer ('you')",
+        "description": "Viewer seen checking the same phone in their room.",
+        "apparent_age": "about 30", "clothing": "plain blue shirt",
+        "stages": ["S01", "S06", "S12", "S13"],
+    }]
+    plan["continuity_base"]["places"] = [{
+        "name": "Bedroom", "description": "Quiet room with wooden table.",
+        "stages": ["S01", "S05", "S13"],
+    }]
+    plan["continuity_base"]["devices_and_interfaces"] = [{
+        "name": "Phone", "description": "Cracked phone showing the contact.",
+        "state_changes": "Unknown caller appears, then number is checked.",
+        "stages": ["S01", "S03", "S07", "S12"],
+    }]
+    plan["continuity_base"]["persistent_worlds"] = []
+    return plan
+
+
+def test_v32_missing_persistent_worlds_are_copied_from_source_without_invention():
+    original = _trailing_comment_missing_worlds()
+    snapshot = copy.deepcopy(original)
+    corrected, changes = title_flow._t1_normalize_closing_marker(original)
+    title_flow.validate_plan(corrected)
+    assert original == snapshot
+    assert changes[0]["action"] == "move_trailing_comment_before_closing"
+    assert [entry["name"] for entry in changes[1:]] == [
+        "The viewer ('you')", "Bedroom", "Phone",
+    ]
+    assert all(
+        entry["action"] == "add_missing_persistent_world"
+        for entry in changes[1:]
+    )
+    worlds = corrected["continuity_base"]["persistent_worlds"]
+    assert [world["name"] for world in worlds] == [
+        "The viewer ('you')", "Bedroom", "Phone",
+    ]
+    viewer, bedroom, phone = worlds
+    assert viewer["stages"] == ["S01", "S06", "S12", "S13"]
+    assert "plain blue shirt" in viewer["elements"]
+    assert "Viewer seen checking the same phone" in viewer["elements"]
+    assert viewer["state_changes"] == (
+        "Not specified in original T1 continuity entry."
+    )
+    assert bedroom["stages"] == ["S01", "S05", "S12"]
+    assert bedroom["elements"] == "Quiet room with wooden table."
+    assert phone["stages"] == ["S01", "S03", "S07", "S13"]
+    assert phone["state_changes"] == (
+        "Unknown caller appears, then number is checked."
+    )
+    assert title_flow._t1_fact_repair_diagnostics(original) == {
+        "deficits": {}, "reason": None,
+    }
+
+
+def test_t1_recover_real_viewer_continuity_omission_from_4_paid_turns(tmp_path):
+    """Reordered S12/S13 plus absent viewer world: zero provider calls."""
+    plan = _trailing_comment_missing_worlds()
+    plan["stages"][4]["word_budget"] = 200
+    plan["stages"][4]["facts"] = [
+        f"Known stage five fact {n}." for n in range(9)
+    ]
+    plan["word_budget_total"] = 224
+    raw = _response(plan)
+    root = tmp_path / "T1"
+    for index in (1, 2, 3):
+        title_flow.write(root / f"response_attempt_{index}.json", {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "thinking", "thinking": "previous"}],
+            "usage": {"output_tokens": 32000},
+        })
+    title_flow.write(root / "response_attempt_4.json", raw)
+    reason = title_flow._legacy_t1_fact_rejection(plan)
+    assert "stage 5 only 9 facts for 200 words" in reason
+    title_flow.write(root / "rejection_attempt_4.json", {"reason": reason})
+    previous_bytes = (root / "response_attempt_4.json").read_bytes()
+    rejected_bytes = (root / "rejection_attempt_4.json").read_bytes()
+    opts = {
+        "output": tmp_path, "avatar": "Uncle_Enzo",
+        "title": "Wrong Number", "ebook": b"cover",
+        "thumbnail": b"thumb", "api_key": "fake", "stop": "T1",
+    }
+    result, remaining = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("Do not regenerate T1")
+    )
+    assert remaining is None
+    title_flow.validate_plan(result)
+    assert result["stages"][-1]["kind"] == "closing"
+    assert result["continuity_base"]["persistent_worlds"][0]["name"] == (
+        "The viewer ('you')"
+    )
+    assert (root / "response_attempt_4.json").read_bytes() == previous_bytes
+    assert (root / "rejection_attempt_4.json").read_bytes() == rejected_bytes
+    assert title_flow.read(root / "continuity_repair.json")["changes"] == [
+        {
+            "action": "add_missing_persistent_world",
+            "collection": "recurring_people",
+            "name": "The viewer ('you')",
+        },
+        {
+            "action": "add_missing_persistent_world",
+            "collection": "places", "name": "Bedroom",
+        },
+        {
+            "action": "add_missing_persistent_world",
+            "collection": "devices_and_interfaces", "name": "Phone",
+        },
+    ]
+    assert (root / "stage_order_repair.json").is_file()
+    assert (root / "output.json").is_file()
+    replay, _ = title_flow.run(
+        **opts, provider=lambda **kw: pytest.fail("T1 must stay cached")
+    )
+    assert replay == result
+
+
+def test_v32_world_completion_refuses_missing_visual_source_description():
+    plan = _trailing_comment_missing_worlds()
+    plan["continuity_base"]["recurring_people"][0].pop("description")
+    before = copy.deepcopy(plan)
+    checked, changes = title_flow._t1_normalize_closing_marker(plan)
+    assert plan == before
+    assert not any(
+        row["action"] == "add_missing_persistent_world" for row in changes
+    )
+    with pytest.raises(title_flow.TitleContractError, match="persistent world"):
+        title_flow.validate_plan(checked)
+
+
+def test_v32_world_completion_preserves_existing_worlds_exactly():
+    plan = _trailing_comment_missing_worlds()
+    preexisting = {
+        "name": "The viewer ('you')",
+        "elements": "Precisely as planned by T1",
+        "state_changes": "Picks up the phone",
+        "stages": ["S01", "S06", "S12", "S13"],
+    }
+    plan["continuity_base"]["persistent_worlds"] = [preexisting]
+    checked, changes = title_flow._t1_normalize_closing_marker(plan)
+    title_flow.validate_plan(checked)
+    assert checked["continuity_base"]["persistent_worlds"][0] == {
+        **preexisting, "stages": ["S01", "S06", "S12", "S13"],
+    }
+    assert sum(
+        world["name"] == "The viewer ('you')"
+        for world in checked["continuity_base"]["persistent_worlds"]
+    ) == 1
+    assert all(
+        change.get("name") != "The viewer ('you')"
+        for change in changes
+    )
