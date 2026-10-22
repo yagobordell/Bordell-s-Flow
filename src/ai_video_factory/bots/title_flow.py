@@ -244,7 +244,10 @@ def validate_plan(value: dict[str, Any]) -> None:
             raise TitleContractError(f"T1 hook marker mismatch at stage {i}")
         if ("closing_return" in markers) != (i == len(stages)):
             raise TitleContractError(f"T1 closing_return marker mismatch at stage {i}")
-        if any(m in markers for m in ("cta_intermediate", "cta_final", "comment_invitation")) and kind != "aside":
+        if (
+            any(m in markers for m in ("cta_intermediate", "cta_final", "comment_invitation"))
+            and kind != "aside"
+        ):
             raise TitleContractError(f"T1 CTA marker must belong to aside {i}")
         facts = stage.get("facts")
         if not isinstance(facts, list) or any(
