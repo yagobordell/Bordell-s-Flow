@@ -238,11 +238,11 @@ def test_manual_video_shorter_than_second_half_rejected_before_checkpoint(
     folder = avatar.parent / "meta" / "cta"
     folder.mkdir()
     (folder / "motion_manual.mp4").write_bytes(b"manual fake")
-    _stub_ffprobe(monkeypatch, duration=13.5)
+    _stub_ffprobe(monkeypatch, duration=16.5)
     avatar_cta_motion.ensure_avatar_cta_motion(avatar, "manual", interactive=False)
-    # Defensive check if a future TTS implementation exceeds its 12s maximum.
+    # Defensive check if a future TTS implementation exceeds its 15s maximum.
     with pytest.raises(CaseroCTAError, match="necesita al menos"):
-        _adopt_manual_motion(folder, half=12.5)
+        _adopt_manual_motion(folder, half=15.5)
     assert not (folder / "motion_manual_state.json").exists()
     _adopt_manual_motion(folder, half=10.0)
     assert (folder / "motion_manual_state.json").is_file()
@@ -320,7 +320,7 @@ def test_pending_manual_identity_updates_only_before_checkpoint(
     folder.mkdir()
     file = folder / "motion_manual.mp4"
     file.write_bytes(b"first video too short for actual CTA")
-    _stub_ffprobe(monkeypatch, duration=13.5)
+    _stub_ffprobe(monkeypatch, duration=16.5)
     record = avatar_cta_motion.ensure_avatar_cta_motion(
         avatar, "manual", interactive=False,
     )
@@ -349,7 +349,7 @@ def test_manual_motion_preflight_rejects_short_clip_before_paid_cta(
     folder.mkdir()
     (folder / "motion_manual.mp4").write_bytes(b"valid encoding, too short")
     _stub_ffprobe(monkeypatch, duration=8.0)
-    with pytest.raises(SystemExit, match="mínimo 13.5 segundos"):
+    with pytest.raises(SystemExit, match="mínimo 16.5 segundos"):
         avatar_cta_motion.ensure_avatar_cta_motion(avatar, "manual", interactive=False)
     assert not (folder / "motion_source.json").exists()
     assert not (folder / "identity.json").exists()

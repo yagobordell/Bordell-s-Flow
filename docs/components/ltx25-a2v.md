@@ -254,7 +254,7 @@ resubmitted, and the old manifest is preserved as superseded. Missing
 or incompatible completed outputs block paid regeneration instead of
 silently charging twice. The failed beat receives a new v5 job ID.
 
-The 12-second avatar-group ceiling already exists and is unchanged;
+The avatar-group ceiling (raised from 12 to 15 seconds on branch a2v-15s) is unchanged here;
 this fix does not segment speech or alter successful videos.
 Offline tests cover the fallback, blocking copy and v4 reuse, but
 **no paid v5 GPU success is claimed**.
@@ -398,7 +398,7 @@ conditioning waveform with the silence needed to cover that grid. The Audio VAE 
 must contain enough latent positions for the selected video duration; latent tensors are
 not padded synthetically.
 
-The reference profile currently accepts at most 12 seconds of effective decoded speech.
+The reference profile currently accepts at most 15 seconds of effective decoded speech (raised from 12 s; 12-15 s at 1080p is not yet GPU-validated).
 A longer narration must be segmented by orchestration rather than cut arbitrarily inside
 the worker.
 

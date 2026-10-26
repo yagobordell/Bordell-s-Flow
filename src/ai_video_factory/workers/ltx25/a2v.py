@@ -133,7 +133,7 @@ LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
 )
 LTX_A2V_SAFE_TILING_BUDGET_BYTES = 2 * 1024**3  # legacy v2 only
 LTX_A2V_SAFE_TILING_RESERVE_BYTES = 1 * 1024**3  # extra margin above upstream reserves
-LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
+LTX_A2V_RECOMMENDED_MAX_SECONDS = 15.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
     "A medium close-up talking head of the person in the reference image, speaking "
@@ -725,7 +725,7 @@ def _prepare_reference_pipeline_audio(
     if decoded_duration - LTX_A2V_RECOMMENDED_MAX_SECONDS > sample_tolerance:
         raise _input_error(
             "UNSUPPORTED_DURATION",
-            "reference A2V speech exceeds the validated 12-second contract: "
+            "reference A2V speech exceeds the 15-second contract: "
             f"{decoded_duration:.6f}s > {LTX_A2V_RECOMMENDED_MAX_SECONDS:.3f}s",
         )
 

@@ -46,12 +46,12 @@ def probe_manual_motion(file: Path) -> float:
         ):
             raise ValueError("H.264, yuv420p, 1920x1080, 30 FPS")
         duration = float(info["format"]["duration"])
-        # The maximum supported A2V first-half is 12 seconds. Preflight a
-        # 13.5-second tail before ANY paid CTA request so that speech of any
+        # The maximum supported A2V first-half is 15 seconds. Preflight a
+        # 16.5-second tail before ANY paid CTA request so that speech of any
         # supported length cannot make the manually supplied clip too short.
-        if not 13.5 <= duration < 3600:
+        if not 16.5 <= duration < 3600:
             raise ValueError(
-                "mínimo 13.5 segundos (12.0 s A2V máximo + 1.5 s cola). "
+                "mínimo 16.5 segundos (15.0 s A2V máximo + 1.5 s cola). "
                 "El compositor recorta automáticamente el vídeo sobrante"
             )
         return duration
