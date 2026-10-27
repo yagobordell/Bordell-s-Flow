@@ -398,7 +398,10 @@ conditioning waveform with the silence needed to cover that grid. The Audio VAE 
 must contain enough latent positions for the selected video duration; latent tensors are
 not padded synthetically.
 
-The reference profile currently accepts at most 15 seconds of effective decoded speech (raised from 12 s; 12-15 s at 1080p is not yet GPU-validated).
+The reference profile currently accepts at most 15 seconds of effective decoded speech (raised from 12 s).
+12-15 s at 1080p was GPU-validated on 2026-10-27 on one RTX 5090 (Salad): four clips of
+12.40-13.82 s audio finished without OOM in 350-391 s worker time, about 20 s of inference
+per second of audio, the same rate as shorter clips.
 A longer narration must be segmented by orchestration rather than cut arbitrarily inside
 the worker.
 
